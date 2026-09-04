@@ -1,0 +1,3616 @@
+﻿(function () {
+  "use strict";
+  var DB_KEY = "recto_v1";
+
+  /* ---------------- Storage ---------------- */
+  function loadDB() {
+    try {
+      var raw = localStorage.getItem(DB_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return { users: {}, currentUser: null, data: {} };
+  }
+  function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
+  var DB = loadDB();
+
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  async function sha256(text) {
+    var enc = new TextEncoder().encode(text);
+    var buf = await crypto.subtle.digest("SHA-256", enc);
+    return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  function userData() {
+    var u = DB.currentUser;
+    if (!DB.data[u]) DB.data[u] = { subjects: [] };
+    if (!DB.data[u].importedExercises) DB.data[u].importedExercises = [];
+    return DB.data[u];
+  }
+
+  /* ---------------- Toasts ---------------- */
+  var toastErrorDetails = {};
+  function toast(msg, errDetail) {
+    var stack = document.getElementById("toastStack");
+    var el = document.createElement("div");
+    el.className = "toast";
+    if (errDetail && (errDetail.status || errDetail.detail)) {
+      var tid = uid();
+      toastErrorDetails[tid] = errDetail;
+      var span = document.createElement("span");
+      span.textContent = msg;
+      el.appendChild(span);
+      var btn = document.createElement("span");
+      btn.className = "toast-detail-btn";
+      btn.textContent = "Détails";
+      btn.onclick = function () { window.App.showErrorDetailRaw(tid); };
+      el.appendChild(btn);
+      stack.appendChild(el);
+      setTimeout(function () { el.remove(); delete toastErrorDetails[tid]; }, 8000);
+    } else {
+      el.textContent = msg;
+      stack.appendChild(el);
+      setTimeout(function () { el.remove(); }, 2600);
+    }
+  }
+
+  /* ---------------- Image import (JPEG/PNG/WebP/TIFF/HEIC) ---------------- */
+  var IMG_MAX_W = 700;
+  function isHeicFile(file) {
+    return /heic|heif/i.test(file.type || "") || /\.hei[cf]$/i.test(file.name || "");
+  }
+  function isTiffFile(file) {
+    return /tiff/i.test(file.type || "") || /\.tiff?$/i.test(file.name || "");
+  }
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function (ev) { resolve(ev.target.result); };
+      reader.onerror = function () { reject(new Error("Lecture du fichier impossible.")); };
+      reader.readAsDataURL(file);
+    });
+  }
+  function loadImageEl(url) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error("Format d'image non supporté par le navigateur.")); };
+      img.src = url;
+    });
+  }
+  function drawSourceToJpegDataUrl(source, w, h) {
+    var scale = Math.min(1, IMG_MAX_W / w);
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.72);
+  }
+  function decodeTiffFile(file) {
+    if (typeof UTIF === "undefined") return Promise.reject(new Error("Le support TIFF n'a pas pu se charger."));
+    return file.arrayBuffer().then(function (buf) {
+      var ifds = UTIF.decode(buf);
+      if (!ifds.length) throw new Error("Fichier TIFF illisible.");
+      UTIF.decodeImage(buf, ifds[0]);
+      var rgba = UTIF.toRGBA8(ifds[0]);
+      var w = ifds[0].width, h = ifds[0].height;
+      var canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext("2d");
+      var imageData = ctx.createImageData(w, h);
+      imageData.data.set(rgba);
+      ctx.putImageData(imageData, 0, 0);
+      return drawSourceToJpegDataUrl(canvas, w, h);
+    });
+  }
+  function decodeHeicFile(file) {
+    if (typeof heic2any === "undefined") return Promise.reject(new Error("Le support HEIC n'a pas pu se charger."));
+    return heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 }).then(function (out) {
+      var blob = Array.isArray(out) ? out[0] : out;
+      return readFileAsDataUrl(blob);
+    }).then(loadImageEl).then(function (img) {
+      return drawSourceToJpegDataUrl(img, img.width, img.height);
+    });
+  }
+  function processImageFile(file) {
+    if (isHeicFile(file)) return decodeHeicFile(file);
+    if (isTiffFile(file)) return decodeTiffFile(file);
+    return readFileAsDataUrl(file).then(loadImageEl).then(function (img) {
+      return drawSourceToJpegDataUrl(img, img.width, img.height);
+    });
+  }
+
+  /* ---------------- Gemini AI generation ---------------- */
+  var API_KEY_STORAGE = "studino_gemini_key";
+  var GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
+
+  function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ""; }
+  function setApiKey(k) { if (k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }
+
+  var VOLUME_MUSIC_STORAGE = "studino_volume_music";
+  var VOLUME_SFX_STORAGE = "studino_volume_sfx";
+  function getVolumeMusic() { var v = localStorage.getItem(VOLUME_MUSIC_STORAGE); return v === null ? 70 : parseInt(v, 10); }
+  function getVolumeSfx() { var v = localStorage.getItem(VOLUME_SFX_STORAGE); return v === null ? 70 : parseInt(v, 10); }
+
+  var COURSE_SCHEMA = {
+    type: "object",
+    properties: {
+      transcription: { type: "string", description: "Retranscription Markdown structurée du cours." },
+      explanation: { type: "string", description: "Explication simple et claire du cours, en Markdown." },
+      videoQueries: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { label: { type: "string" }, query: { type: "string" } },
+          required: ["label", "query"]
+        }
+      },
+      flashcards: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { q: { type: "string" }, a: { type: "string" } },
+          required: ["q", "a"]
+        }
+      },
+      quizQuestions: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", description: "\"qcm\" ou \"ouverte\"" },
+            category: { type: "string", description: "\"definition\", \"formule\" ou \"application\"" },
+            prompt: { type: "string" },
+            choices: { type: "array", items: { type: "string" } },
+            correctIndex: { type: "integer" },
+            answer: { type: "string" },
+            explanation: { type: "string" }
+          },
+          required: ["type", "category", "prompt", "choices", "correctIndex", "answer", "explanation"]
+        }
+      },
+      exercises: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            prompt: { type: "string" },
+            solution: { type: "string" }
+          },
+          required: ["prompt", "solution"]
+        }
+      }
+    },
+    required: ["transcription", "explanation", "videoQueries", "flashcards", "quizQuestions", "exercises"]
+  };
+
+  function buildCoursePrompt(title, subjectName, chapterName, imageCount) {
+    var step1;
+    if (imageCount === 0) {
+      step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
+    } else if (imageCount === 1) {
+      step1 = "Retranscris fidèlement et proprement le contenu visible sur la photo, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si la photo contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
+    } else {
+      step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
+    }
+    return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
+      "1. " + step1 + "\n" +
+      "2. Rédige une explication simple, claire et concrète du contenu pour un élève qui ne comprend pas bien, en français, avec un exemple si utile.\n" +
+      "3. Propose 3 requêtes de recherche YouTube pertinentes pour approfondir ce cours (un label court + la requête de recherche).\n" +
+      "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota.\n" +
+      "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Parmi ces questions, environ 70% de type \"qcm\" (4 choix, un seul indice correct de 0 à 3) et environ 30% de type \"ouverte\" (le joueur tape une réponse courte — laisse \"choices\" vide, \"correctIndex\" à 0, et renseigne \"answer\" avec la réponse attendue). Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
+      "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n\n" +
+      "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
+      "Pour toute formule ou notation mathématique/scientifique (dans n'importe quel champ), utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+
+  async function callGemini(parts, schema) {
+    var apiKey = getApiKey();
+    if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+    var body = JSON.stringify({
+      contents: [{ role: "user", parts: parts }],
+      generationConfig: { response_mime_type: "application/json", response_schema: schema }
+    });
+    var lastErr = null;
+    for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
+      var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
+      if (res.ok) {
+        var data = await res.json();
+        if (data.promptFeedback && data.promptFeedback.blockReason) {
+          var blockErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
+          blockErr.status = res.status;
+          blockErr.detail = JSON.stringify(data, null, 2);
+          throw blockErr;
+        }
+        var cand = data.candidates && data.candidates[0];
+        if (!cand || !cand.content || !cand.content.parts || !cand.content.parts[0]) {
+          var emptyErr = new Error("Réponse vide de l'API.");
+          emptyErr.status = res.status;
+          emptyErr.detail = JSON.stringify(data, null, 2);
+          throw emptyErr;
+        }
+        return JSON.parse(cand.content.parts[0].text);
+      }
+      var errBody = await res.json().catch(function () { return {}; });
+      var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
+      var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
+      lastErr = new Error(msg);
+      lastErr.status = res.status;
+      lastErr.detail = JSON.stringify(errBody, null, 2);
+      if (!retryable) throw lastErr;
+    }
+    throw lastErr;
+  }
+
+  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName) {
+    var images = (imageDataUrls || []).map(function (url) {
+      var m = /^data:(image\/[a-zA-Z+]+);base64,(.+)$/.exec(url || "");
+      return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
+    }).filter(Boolean);
+    var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length) }]);
+    return callGemini(parts, COURSE_SCHEMA);
+  }
+
+  var EXERCISE_GRADE_SCHEMA = {
+    type: "object",
+    properties: {
+      correct: { type: "boolean" },
+      feedback: { type: "string" }
+    },
+    required: ["correct", "feedback"]
+  };
+  function buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) {
+    return "Tu es un correcteur pédagogique pour un élève francophone. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
+      "Exercice : " + exercisePrompt + "\n\n" +
+      "Solution de référence : " + referenceSolution + "\n\n" +
+      "Réponse de l'élève : " + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie)") + "\n\n" +
+      "Détermine si la réponse de l'élève est correcte : le raisonnement et/ou le résultat final doivent être justes sur le fond (une formulation différente ou incomplète mais juste sur le fond peut compter comme correcte ; une réponse vide, hors sujet ou clairement fausse doit être jugée incorrecte). Donne ensuite un feedback court, bienveillant et constructif en français expliquant pourquoi c'est juste ou faux, et ce qui manque le cas échéant.\n\n" +
+      "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
+    var parts = [{ text: buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) }];
+    return callGemini(parts, EXERCISE_GRADE_SCHEMA);
+  }
+
+  var IMPORTED_EXERCISE_SCHEMA = {
+    type: "object",
+    properties: {
+      subjectGuess: { type: "string", description: "Matière probable de l'exercice, en un ou deux mots (ex. \"Mathématiques\", \"Histoire\")." },
+      statement: { type: "string", description: "Retranscription fidèle de l'énoncé de l'exercice, en Markdown." },
+      solution: { type: "string", description: "Solution de référence complète et détaillée, rédigée par toi, avec le résultat final." }
+    },
+    required: ["subjectGuess", "statement", "solution"]
+  };
+  function buildImportedExercisePrompt(imageCount) {
+    var step1 = imageCount === 1
+      ? "Voici la photo d'un exercice pris par un élève."
+      : "Voici " + imageCount + " photos qui font partie du même exercice, dans l'ordre.";
+    return step1 + " Ne réponds pas encore à l'exercice ici : \n" +
+      "1. Retranscris fidèlement l'énoncé en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact.\n" +
+      "2. Devine la matière probable de cet exercice.\n" +
+      "3. Rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — c'est cette solution qui servira ensuite à corriger la réponse de l'élève.\n\n" +
+      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  async function generateImportedExercise(imageDataUrls) {
+    var images = (imageDataUrls || []).map(function (url) {
+      var m = /^data:(image\/[a-zA-Z+]+);base64,(.+)$/.exec(url || "");
+      return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
+    }).filter(Boolean);
+    var parts = images.concat([{ text: buildImportedExercisePrompt(images.length) }]);
+    return callGemini(parts, IMPORTED_EXERCISE_SCHEMA);
+  }
+  function runImportedExerciseGeneration(entry) {
+    entry.status = "processing";
+    entry.error = null;
+    saveDB(); render();
+    generateImportedExercise(entry.images).then(function (data) {
+      entry.subjectGuess = data.subjectGuess || "";
+      entry.statement = data.statement || "";
+      entry.solution = data.solution || "";
+      entry.status = "ready";
+      entry.answerStatus = "unanswered";
+      saveDB();
+      toast("Exercice importé · " + entry.title);
+      render();
+    }).catch(function (err) {
+      entry.status = "error";
+      entry.error = err.message || "Erreur inconnue";
+      entry.errorStatus = err.status || null;
+      entry.errorDetail = err.detail || null;
+      saveDB();
+      toast("Échec de l'import : " + entry.error, { status: entry.errorStatus, detail: entry.errorDetail });
+      render();
+    });
+  }
+
+  function runCourseGeneration(course, subjectName, chapterName) {
+    course.status = "processing";
+    course.error = null;
+    saveDB(); render();
+    generateCourseContent(course.images, course.title, subjectName, chapterName).then(function (data) {
+      course.transcription = data.transcription;
+      course.explanation = data.explanation;
+      course.videos = (data.videoQueries || []).map(function (v) {
+        return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
+      });
+      course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
+      course.quizQuestions = (data.quizQuestions || []).map(function (q) {
+        return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation };
+      });
+      course.exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution }; });
+      course.status = "ready";
+      saveDB();
+      toast("Cours généré · " + course.title);
+      render();
+    }).catch(function (err) {
+      course.status = "error";
+      course.error = err.message || "Erreur inconnue";
+      course.errorStatus = err.status || null;
+      course.errorDetail = err.detail || null;
+      saveDB();
+      toast("Échec de la génération : " + course.error, { status: course.errorStatus, detail: course.errorDetail });
+      render();
+    });
+  }
+
+
+  /* ---------------- Router state ---------------- */
+  var modal = null; // { type: 'subject'|'chapter'|'course'|'confirmDelete'|'dinoFiche', ... }
+  var dpMerchantZone = null; // zoneId of the currently open full-screen merchant, or null
+  var dpMerchantMode = "eggs"; // "eggs" | "objects"
+  var dpSellMode = false;
+  var dpSellSelectedDinoId = null;
+  var quizState = {}; // per courseId: { idx, answers: [] }
+  var fcState = {}; // per courseId: { idx, flipped }
+  var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
+  var dtState = { mode: "setup", durationMin: 25, enclosureId: null }; // DinoTime sub-navigation
+  var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
+  var dtTimerInterval = null;
+  var dtWalkRaf = null;
+
+  function parseHash() {
+    var h = location.hash.replace(/^#\/?/, "");
+    var parts = h.split("/").filter(Boolean);
+    return parts;
+  }
+  function navigate(hash) { location.hash = hash; }
+
+  function findSubject(id) { return userData().subjects.find(function (s) { return s.id === id; }); }
+  function findChapter(subj, id) { return subj && subj.chapters.find(function (c) { return c.id === id; }); }
+  function findCourse(chap, id) { return chap && chap.courses.find(function (c) { return c.id === id; }); }
+
+  function locateCourse(courseId) {
+    var subs = userData().subjects;
+    for (var i = 0; i < subs.length; i++) {
+      for (var j = 0; j < subs[i].chapters.length; j++) {
+        var c = subs[i].chapters[j].courses.find(function (x) { return x.id === courseId; });
+        if (c) return { subject: subs[i], chapter: subs[i].chapters[j], course: c };
+      }
+    }
+    return null;
+  }
+
+  /* ---------------- Icons (inline SVG) ---------------- */
+  function icon(name) {
+    var icons = {
+      home: '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
+      plus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
+      chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>',
+      chevronDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>',
+      trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0l-1 13a2 2 0 01-2 2H8a2 2 0 01-2-2L5 7"/></svg>',
+      book: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>',
+      folder: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+      doc: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/></svg>',
+      play: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+      camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7l2-3h4l2 3"/><circle cx="12" cy="13.5" r="3.2"/></svg>',
+      clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 3.5"/></svg>'
+    };
+    return icons[name] || "";
+  }
+
+  /* ---------------- Pixel sprites ---------------- */
+  var spriteCache = {};
+  function drawSprite(rows, palette, px) {
+    var w = rows[0].length, h = rows.length;
+    var canvas = document.createElement("canvas");
+    canvas.width = w * px; canvas.height = h * px;
+    var ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var ch = rows[y][x];
+        if (ch === "." || !palette[ch]) continue;
+        ctx.fillStyle = palette[ch];
+        ctx.fillRect(x * px, y * px, px, px);
+      }
+    }
+    return canvas.toDataURL("image/png");
+  }
+  var SPRITES = {
+    dino: {
+      rows: [
+        "..ss..ss..",
+        ".obbbbbbo.",
+        "obbbbbbbbo",
+        "obbebbbbbo",
+        "obbbbbbbbo",
+        "obbbbbbbbo",
+        ".obbbbbbo.",
+        "..oooooo.."
+      ],
+      palette: { o: "#2F4A26", b: "#5DA157", e: "#1B2412", s: "#E8862B" }
+    },
+    dinoBig: {
+      rows: [
+        ".....oo.....",
+        "....obbo....",
+        "...obbebo...",
+        "..oobbbboo..",
+        ".o.sbbbbs.o.",
+        "obbbbbbbbbbo",
+        "obbbbbbbbbbo",
+        "obbhhhhhhbbo",
+        "obbhhhhhhbbo",
+        "obbbbbbbbbbo",
+        ".obb.oo.bbo.",
+        "..oo....oo.."
+      ],
+      palette: { o: "#2F4A26", b: "#5DA157", e: "#1B2412", s: "#E8862B", h: "#EFE7C4" }
+    },
+    fern: {
+      rows: [
+        "...ll...",
+        "..llll..",
+        ".ll..ll.",
+        "...ll...",
+        "..llll..",
+        ".ll..ll.",
+        "...ll...",
+        "...ll...",
+        "...ll...",
+        "...tt..."
+      ],
+      palette: { l: "#4C8C4A", t: "#6B4A2A" }
+    },
+    egg: {
+      rows: [
+        "..bbbb..",
+        ".bbbbbb.",
+        "bbbsbbbb",
+        "bbbbbbbb",
+        "bbsbbbsb",
+        "bbbbbbbb",
+        "bbbbsbbb",
+        ".bbbbbb.",
+        ".bbbbbb.",
+        "..bbbb.."
+      ],
+      palette: { b: "#EFE1B8", s: "#8A5A2B" }
+    },
+    footprint: {
+      rows: [
+        ".o.o.o.",
+        "ooooooo",
+        "ooooooo",
+        ".ooooo.",
+        "..ooo.."
+      ],
+      palette: { o: "#3A5A32" }
+    }
+  };
+  function sprite(name, px, opts) {
+    opts = opts || {};
+    var key = name + "_" + px;
+    if (!spriteCache[key]) {
+      var s = SPRITES[name];
+      spriteCache[key] = drawSprite(s.rows, s.palette, px);
+    }
+    var w = SPRITES[name].rows[0].length * px, h = SPRITES[name].rows.length * px;
+    var cls = "sprite" + (opts.bob ? " sprite-bob" : "") + (opts.className ? " " + opts.className : "");
+    return '<img class="' + cls + '" src="' + spriteCache[key] + '" width="' + w + '" height="' + h + '" alt="" style="' + (opts.style || "") + '">';
+  }
+
+  /* ---------------- Dino Park : data ---------------- */
+  var DP_ZONES = [
+    { id: "foret", name: "Forêt", emoji: "🌳", cost: 0, color: "#3E7A3F" },
+    { id: "plaine", name: "Plaine", emoji: "🌾", cost: 750, color: "#B7A23A" },
+    { id: "desert", name: "Désert", emoji: "🏜️", cost: 1500, color: "#D9A253" },
+    { id: "arctique", name: "Arctique", emoji: "❄️", cost: 3000, color: "#8FC7E0" },
+    { id: "marine", name: "Marine", emoji: "🌊", cost: 5000, color: "#2E7BAA" },
+    { id: "volcanique", name: "Volcanique", emoji: "🌋", cost: 8000, color: "#B14A2E" }
+  ];
+  function dpZone(id) { return DP_ZONES.find(function (z) { return z.id === id; }); }
+  var DP_PORTAL_ZONE_FILE = { foret: "Foret", plaine: "Plaine", desert: "Desert", arctique: "Artique", marine: "Marin", volcanique: "Volcanique" };
+  function dpPortalArtPath(zoneId, locked) {
+    return "assets/objects/portaille/Portaille_" + DP_PORTAL_ZONE_FILE[zoneId] + (locked ? "_silhouette" : "") + ".png";
+  }
+  function dpZoneEnclosureCost(zoneId) {
+    var idx = DP_ZONES.findIndex(function (z) { return z.id === zoneId; });
+    return DP_ENCLOSURE_BUILD_COST + Math.max(0, idx) * 10;
+  }
+
+  var DP_RARITY = {
+    commun: { label: "Commun", weight: 80, price: 150, hatch: 20 },
+    rare: { label: "Rare", weight: 30, price: 400, hatch: 40 },
+    epique: { label: "Épique", weight: 10, price: 900, hatch: 70 },
+    legendaire: { label: "Légendaire", weight: 1, price: 2000, hatch: 120 }
+  };
+
+  var DP_PORTIONS_PER_CRATE = 20;
+  var DP_DOSES_PER_CRATE = 3;
+  var DP_FOOD_ITEMS = [
+    { id: "herbe", name: "Herbe", diet: "herbivore", dietLabel: "Herbivores", emoji: "🌿", price: 40, img: "assets/objects/ui/caisse_herbe.png", unitImg: "assets/objects/ui/herbe.png" },
+    { id: "fruit", name: "Fruit", diet: "frugivore", dietLabel: "Frugivores", emoji: "🍓", price: 45, img: "assets/objects/ui/caisse_fruit.png", unitImg: "assets/objects/ui/fruit.png" },
+    { id: "insecte", name: "Insectes", diet: "insectivore", dietLabel: "Insectivores", emoji: "🐛", price: 45, img: "assets/objects/ui/caisse_insecte.png", unitImg: "assets/objects/ui/insecte.png" },
+    { id: "poisson", name: "Poisson", diet: "piscivore", dietLabel: "Piscivores", emoji: "🐟", price: 55, img: "assets/objects/ui/caisse_poisson.png", unitImg: "assets/objects/ui/poisson.png" },
+    { id: "viande", name: "Viande", diet: "carnivore", dietLabel: "Carnivores", emoji: "🍖", price: 60, img: "assets/objects/ui/caisse_viande.png", unitImg: "assets/objects/ui/viande.png" }
+  ];
+  var DP_MEDICINE_ITEMS = [
+    { id: "soin", name: "Soins", emoji: "💊", price: 70, img: "assets/objects/ui/caisse_soin.png", unitImg: "assets/objects/ui/bandage.png" }
+  ];
+  function dpFoodItem(id) { return DP_FOOD_ITEMS.find(function (i) { return i.id === id; }); }
+  function dpMedicineItem(id) { return DP_MEDICINE_ITEMS.find(function (i) { return i.id === id; }); }
+  function dpFoodPortionsNeeded(weightKg) {
+    if (weightKg < 10) return 1;
+    if (weightKg < 100) return 2;
+    if (weightKg < 1000) return 4;
+    if (weightKg < 5000) return 7;
+    if (weightKg < 15000) return 10;
+    return 15;
+  }
+  function dpWeightLabel(weightKg) {
+    return weightKg >= 1000 ? (Math.round(weightKg / 100) / 10) + " t" : weightKg + " kg";
+  }
+  var DP_DINO_MIN_SCALE = 0.55, DP_DINO_MAX_SCALE = 1.4, DP_DINO_MAX_WEIGHT_LOG = Math.log(40000);
+  function dpDinoSizeScale(weightKg) {
+    var t = Math.log(Math.max(1, weightKg || 1)) / DP_DINO_MAX_WEIGHT_LOG;
+    t = Math.max(0, Math.min(1, t));
+    return DP_DINO_MIN_SCALE + t * (DP_DINO_MAX_SCALE - DP_DINO_MIN_SCALE);
+  }
+
+  var DP_SPECIES = [
+    { id: "compsognathus", name: "Compsognathus", zone: "foret", diet: "insectivore", weightKg: 3, rarity: "commun" },
+    { id: "iguanodon", name: "Iguanodon", zone: "foret", diet: "herbivore", weightKg: 3000, rarity: "commun" },
+    { id: "archaeopteryx", name: "Archaeopteryx", zone: "foret", diet: "insectivore", weightKg: 1, rarity: "commun" },
+    { id: "sinosauropteryx", name: "Sinosauropteryx", zone: "foret", diet: "insectivore", weightKg: 1, rarity: "commun" },
+    { id: "caudipteryx", name: "Caudipteryx", zone: "foret", diet: "omnivore", weightKg: 5, rarity: "commun" },
+    { id: "anchiornis", name: "Anchiornis", zone: "foret", diet: "insectivore", weightKg: 1, rarity: "commun" },
+    { id: "coelophysis", name: "Coelophysis", zone: "foret", diet: "carnivore", weightKg: 25, rarity: "commun" },
+    { id: "hypsilophodon", name: "Hypsilophodon", zone: "foret", diet: "frugivore", weightKg: 20, rarity: "commun" },
+    { id: "dryosaurus", name: "Dryosaurus", zone: "foret", diet: "herbivore", weightKg: 90, rarity: "commun" },
+    { id: "camptosaurus", name: "Camptosaurus", zone: "foret", diet: "herbivore", weightKg: 1000, rarity: "commun" },
+    { id: "heterodontosaurus", name: "Heterodontosaurus", zone: "foret", diet: "frugivore", weightKg: 3, rarity: "commun" },
+    { id: "scutellosaurus", name: "Scutellosaurus", zone: "foret", diet: "frugivore", weightKg: 10, rarity: "commun" },
+    { id: "velociraptor", name: "Vélociraptor", zone: "foret", diet: "carnivore", weightKg: 15, rarity: "rare" },
+    { id: "stegosaure", name: "Stégosaure", zone: "foret", diet: "herbivore", weightKg: 3500, rarity: "rare" },
+    { id: "kentrosaure", name: "Kentrosaure", zone: "foret", diet: "herbivore", weightKg: 1000, rarity: "rare" },
+    { id: "huayangosaure", name: "Huayangosaure", zone: "foret", diet: "herbivore", weightKg: 700, rarity: "rare" },
+    { id: "tuojiangosaure", name: "Tuojiangosaure", zone: "foret", diet: "herbivore", weightKg: 1000, rarity: "rare" },
+    { id: "ornitholestes", name: "Ornitholestes", zone: "foret", diet: "carnivore", weightKg: 12, rarity: "rare" },
+    { id: "citipati", name: "Citipati", zone: "foret", diet: "omnivore", weightKg: 75, rarity: "rare" },
+    { id: "khaan", name: "Khaan", zone: "foret", diet: "omnivore", weightKg: 20, rarity: "rare" },
+    { id: "sinornithosaure", name: "Sinornithosaurus", zone: "foret", diet: "insectivore", weightKg: 1, rarity: "rare" },
+    { id: "massospondylus", name: "Massospondylus", zone: "foret", diet: "herbivore", weightKg: 300, rarity: "rare" },
+    { id: "deinonychus", name: "Deinonychus", zone: "foret", diet: "carnivore", weightKg: 70, rarity: "epique" },
+    { id: "plateosaure", name: "Plateosaurus", zone: "foret", diet: "herbivore", weightKg: 700, rarity: "epique" },
+    { id: "diplodocus", name: "Diplodocus", zone: "foret", diet: "herbivore", weightKg: 15000, rarity: "epique" },
+    { id: "camarasaure", name: "Camarasaurus", zone: "foret", diet: "herbivore", weightKg: 18000, rarity: "epique" },
+    { id: "apatosaure", name: "Apatosaure", zone: "foret", diet: "herbivore", weightKg: 25000, rarity: "epique" },
+    { id: "dracorex", name: "Dracorex", zone: "foret", diet: "frugivore", weightKg: 20, rarity: "epique" },
+    { id: "brachiosaure", name: "Brachiosaure", zone: "foret", diet: "herbivore", weightKg: 40000, rarity: "legendaire" },
+    { id: "saurornitholestes", name: "Saurornitholestes", zone: "foret", diet: "carnivore", weightKg: 10, rarity: "legendaire" },
+    { id: "gallimimus", name: "Gallimimus", zone: "plaine", diet: "omnivore", weightKg: 440, rarity: "commun" },
+    { id: "triceratops", name: "Tricératops", zone: "plaine", diet: "herbivore", weightKg: 9000, rarity: "commun" },
+    { id: "styracosaure", name: "Styracosaure", zone: "plaine", diet: "herbivore", weightKg: 2700, rarity: "commun" },
+    { id: "pachycephalosaure", name: "Pachycéphalosaure", zone: "plaine", diet: "frugivore", weightKg: 450, rarity: "commun" },
+    { id: "centrosaure", name: "Centrosaure", zone: "plaine", diet: "herbivore", weightKg: 2300, rarity: "commun" },
+    { id: "maiasaura", name: "Maiasaura", zone: "plaine", diet: "herbivore", weightKg: 3000, rarity: "commun" },
+    { id: "corythosaure", name: "Corythosaure", zone: "plaine", diet: "herbivore", weightKg: 3800, rarity: "commun" },
+    { id: "lambeosaure", name: "Lambeosaure", zone: "plaine", diet: "herbivore", weightKg: 4000, rarity: "commun" },
+    { id: "saurolophus", name: "Saurolophus", zone: "plaine", diet: "herbivore", weightKg: 2000, rarity: "commun" },
+    { id: "ornithomimus", name: "Ornithomimus", zone: "plaine", diet: "omnivore", weightKg: 170, rarity: "commun" },
+    { id: "struthiomimus", name: "Struthiomimus", zone: "plaine", diet: "omnivore", weightKg: 150, rarity: "commun" },
+    { id: "thescelosaure", name: "Thescelosaure", zone: "plaine", diet: "frugivore", weightKg: 270, rarity: "commun" },
+    { id: "ankylosaure", name: "Ankylosaure", zone: "plaine", diet: "herbivore", weightKg: 6000, rarity: "rare" },
+    { id: "allosaure", name: "Allosaure", zone: "plaine", diet: "carnivore", weightKg: 2300, rarity: "rare" },
+    { id: "chasmosaure", name: "Chasmosaure", zone: "plaine", diet: "herbivore", weightKg: 2200, rarity: "rare" },
+    { id: "torosaure", name: "Torosaure", zone: "plaine", diet: "herbivore", weightKg: 8000, rarity: "rare" },
+    { id: "deinocheirus", name: "Deinocheirus", zone: "plaine", diet: "omnivore", weightKg: 6000, rarity: "rare" },
+    { id: "gorgosaure", name: "Gorgosaure", zone: "plaine", diet: "carnivore", weightKg: 2400, rarity: "rare" },
+    { id: "albertosaure", name: "Albertosaure", zone: "plaine", diet: "carnivore", weightKg: 2500, rarity: "rare" },
+    { id: "edmontonia", name: "Edmontonia", zone: "plaine", diet: "herbivore", weightKg: 3000, rarity: "rare" },
+    { id: "euoplocephale", name: "Euoplocéphale", zone: "plaine", diet: "herbivore", weightKg: 2700, rarity: "rare" },
+    { id: "leptoceratops", name: "Leptoceratops", zone: "plaine", diet: "frugivore", weightKg: 70, rarity: "rare" },
+    { id: "parasaurolophus", name: "Parasaurolophus", zone: "plaine", diet: "herbivore", weightKg: 2500, rarity: "epique" },
+    { id: "avaceratops", name: "Avaceratops", zone: "plaine", diet: "frugivore", weightKg: 400, rarity: "epique" },
+    { id: "anchiceratops", name: "Anchiceratops", zone: "plaine", diet: "herbivore", weightKg: 3000, rarity: "epique" },
+    { id: "hypacrosaure", name: "Hypacrosaure", zone: "plaine", diet: "herbivore", weightKg: 4000, rarity: "epique" },
+    { id: "brachylophosaure", name: "Brachylophosaure", zone: "plaine", diet: "herbivore", weightKg: 2300, rarity: "epique" },
+    { id: "nodosaure", name: "Nodosaure", zone: "plaine", diet: "herbivore", weightKg: 2500, rarity: "epique" },
+    { id: "tyrannosaure", name: "Tyrannosaure", zone: "plaine", diet: "carnivore", weightKg: 7000, rarity: "legendaire" },
+    { id: "daspletosaure", name: "Daspletosaure", zone: "plaine", diet: "carnivore", weightKg: 3000, rarity: "legendaire" },
+    { id: "protoceratops", name: "Protoceratops", zone: "desert", diet: "frugivore", weightKg: 180, rarity: "commun" },
+    { id: "oviraptor", name: "Oviraptor", zone: "desert", diet: "omnivore", weightKg: 33, rarity: "commun" },
+    { id: "mononykus", name: "Mononykus", zone: "desert", diet: "insectivore", weightKg: 3, rarity: "commun" },
+    { id: "shuvuuia", name: "Shuvuuia", zone: "desert", diet: "insectivore", weightKg: 3, rarity: "commun" },
+    { id: "nemegtosaure", name: "Nemegtosaure", zone: "desert", diet: "herbivore", weightKg: 15000, rarity: "commun" },
+    { id: "pinacosaure", name: "Pinacosaure", zone: "desert", diet: "herbivore", weightKg: 1000, rarity: "commun" },
+    { id: "bagaceratops", name: "Bagaceratops", zone: "desert", diet: "frugivore", weightKg: 20, rarity: "commun" },
+    { id: "archaeoceratops", name: "Archaeoceratops", zone: "desert", diet: "frugivore", weightKg: 15, rarity: "commun" },
+    { id: "psittacosaure", name: "Psittacosaure", zone: "desert", diet: "frugivore", weightKg: 20, rarity: "commun" },
+    { id: "avimimus", name: "Avimimus", zone: "desert", diet: "omnivore", weightKg: 15, rarity: "commun" },
+    { id: "elmisaurus", name: "Elmisaurus", zone: "desert", diet: "omnivore", weightKg: 25, rarity: "commun" },
+    { id: "conchoraptor", name: "Conchoraptor", zone: "desert", diet: "omnivore", weightKg: 20, rarity: "commun" },
+    { id: "carnotaurus", name: "Carnotaurus", zone: "desert", diet: "carnivore", weightKg: 1500, rarity: "rare" },
+    { id: "pentaceratops", name: "Pentaceratops", zone: "desert", diet: "herbivore", weightKg: 5500, rarity: "rare" },
+    { id: "saichania", name: "Saichania", zone: "desert", diet: "herbivore", weightKg: 2000, rarity: "rare" },
+    { id: "tarchia", name: "Tarchia", zone: "desert", diet: "herbivore", weightKg: 4000, rarity: "rare" },
+    { id: "segnosaure", name: "Segnosaure", zone: "desert", diet: "herbivore", weightKg: 1300, rarity: "rare" },
+    { id: "erlikosaure", name: "Erlikosaure", zone: "desert", diet: "herbivore", weightKg: 200, rarity: "rare" },
+    { id: "alxasaure", name: "Alxasaure", zone: "desert", diet: "herbivore", weightKg: 400, rarity: "rare" },
+    { id: "rinchenia", name: "Rinchenia", zone: "desert", diet: "omnivore", weightKg: 40, rarity: "rare" },
+    { id: "nemegtomaia", name: "Nemegtomaia", zone: "desert", diet: "omnivore", weightKg: 40, rarity: "rare" },
+    { id: "bactrosaure", name: "Bactrosaure", zone: "desert", diet: "herbivore", weightKg: 2000, rarity: "rare" },
+    { id: "nigersaurus", name: "Nigersaurus", zone: "desert", diet: "herbivore", weightKg: 4000, rarity: "epique" },
+    { id: "gigantoraptor", name: "Gigantoraptor", zone: "desert", diet: "omnivore", weightKg: 1400, rarity: "epique" },
+    { id: "alioramus", name: "Alioramus", zone: "desert", diet: "carnivore", weightKg: 500, rarity: "epique" },
+    { id: "gobisaure", name: "Gobisaure", zone: "desert", diet: "herbivore", weightKg: 1000, rarity: "epique" },
+    { id: "shamosaure", name: "Shamosaure", zone: "desert", diet: "herbivore", weightKg: 3000, rarity: "epique" },
+    { id: "linhenykus", name: "Linhenykus", zone: "desert", diet: "insectivore", weightKg: 1, rarity: "epique" },
+    { id: "spinosaure", name: "Spinosaure", zone: "desert", diet: "piscivore", weightKg: 12000, rarity: "legendaire" },
+    { id: "tarbosaure", name: "Tarbosaure", zone: "desert", diet: "carnivore", weightKg: 5000, rarity: "legendaire" },
+    { id: "pachyrhinosaure", name: "Pachyrhinosaure", zone: "arctique", diet: "herbivore", weightKg: 3000, rarity: "commun" },
+    { id: "troodon", name: "Troodon", zone: "arctique", diet: "carnivore", weightKg: 50, rarity: "commun" },
+    { id: "leaellynasaura", name: "Leaellynasaura", zone: "arctique", diet: "frugivore", weightKg: 10, rarity: "commun" },
+    { id: "qantassaure", name: "Qantassaure", zone: "arctique", diet: "frugivore", weightKg: 15, rarity: "commun" },
+    { id: "atlascopcosaure", name: "Atlascopcosaure", zone: "arctique", diet: "frugivore", weightKg: 10, rarity: "commun" },
+    { id: "fulgurotherium", name: "Fulgurotherium", zone: "arctique", diet: "frugivore", weightKg: 10, rarity: "commun" },
+    { id: "galleonosaure", name: "Galleonosaure", zone: "arctique", diet: "frugivore", weightKg: 15, rarity: "commun" },
+    { id: "weewarrasaure", name: "Weewarrasaure", zone: "arctique", diet: "frugivore", weightKg: 15, rarity: "commun" },
+    { id: "gasparinisaura", name: "Gasparinisaura", zone: "arctique", diet: "frugivore", weightKg: 8, rarity: "commun" },
+    { id: "timimus", name: "Timimus", zone: "arctique", diet: "carnivore", weightKg: 200, rarity: "commun" },
+    { id: "ozraptor", name: "Ozraptor", zone: "arctique", diet: "insectivore", weightKg: 20, rarity: "commun" },
+    { id: "rapator", name: "Rapator", zone: "arctique", diet: "carnivore", weightKg: 300, rarity: "commun" },
+    { id: "nanuqsaurus", name: "Nanuqsaurus", zone: "arctique", diet: "carnivore", weightKg: 900, rarity: "rare" },
+    { id: "edmontosaure", name: "Edmontosaure", zone: "arctique", diet: "herbivore", weightKg: 4000, rarity: "rare" },
+    { id: "muttaburrasaure", name: "Muttaburrasaure", zone: "arctique", diet: "herbivore", weightKg: 2800, rarity: "rare" },
+    { id: "diamantinasaure", name: "Diamantinasaure", zone: "arctique", diet: "herbivore", weightKg: 20000, rarity: "rare" },
+    { id: "austrosaure", name: "Austrosaure", zone: "arctique", diet: "herbivore", weightKg: 20000, rarity: "rare" },
+    { id: "wintonotitan", name: "Wintonotitan", zone: "arctique", diet: "herbivore", weightKg: 18000, rarity: "rare" },
+    { id: "minmi", name: "Minmi", zone: "arctique", diet: "herbivore", weightKg: 300, rarity: "rare" },
+    { id: "kunbarrasaure", name: "Kunbarrasaure", zone: "arctique", diet: "frugivore", weightKg: 400, rarity: "rare" },
+    { id: "diluvicursor", name: "Diluvicursor", zone: "arctique", diet: "herbivore", weightKg: 200, rarity: "rare" },
+    { id: "austrocheirus", name: "Austrocheirus", zone: "arctique", diet: "carnivore", weightKg: 40, rarity: "rare" },
+    { id: "cryolophosaure", name: "Cryolophosaure", zone: "arctique", diet: "carnivore", weightKg: 500, rarity: "epique" },
+    { id: "glacialisaure", name: "Glacialisaure", zone: "arctique", diet: "herbivore", weightKg: 4000, rarity: "epique" },
+    { id: "antarctopelta", name: "Antarctopelta", zone: "arctique", diet: "herbivore", weightKg: 1000, rarity: "epique" },
+    { id: "serendipaceratops", name: "Serendipaceratops", zone: "arctique", diet: "frugivore", weightKg: 100, rarity: "epique" },
+    { id: "trinisaura", name: "Trinisaura", zone: "arctique", diet: "frugivore", weightKg: 10, rarity: "epique" },
+    { id: "morrosaure", name: "Morrosaure", zone: "arctique", diet: "herbivore", weightKg: 5000, rarity: "epique" },
+    { id: "yutyrannus", name: "Yutyrannus", zone: "arctique", diet: "carnivore", weightKg: 1400, rarity: "legendaire" },
+    { id: "imperobator", name: "Imperobator", zone: "arctique", diet: "carnivore", weightKg: 20, rarity: "legendaire" },
+    { id: "ichtyosaure", name: "Ichtyosaure", zone: "marine", diet: "piscivore", weightKg: 90, rarity: "commun" },
+    { id: "plesiosaure", name: "Plésiosaure", zone: "marine", diet: "piscivore", weightKg: 450, rarity: "commun" },
+    { id: "pliosaure", name: "Pliosaure", zone: "marine", diet: "piscivore", weightKg: 5000, rarity: "commun" },
+    { id: "nothosaure", name: "Nothosaure", zone: "marine", diet: "piscivore", weightKg: 130, rarity: "commun" },
+    { id: "cryptoclidus", name: "Cryptoclidus", zone: "marine", diet: "piscivore", weightKg: 800, rarity: "commun" },
+    { id: "dolichorhynchops", name: "Dolichorhynchops", zone: "marine", diet: "piscivore", weightKg: 200, rarity: "commun" },
+    { id: "rhomaleosaure", name: "Rhomaleosaure", zone: "marine", diet: "piscivore", weightKg: 2000, rarity: "commun" },
+    { id: "simolestes", name: "Simolestes", zone: "marine", diet: "piscivore", weightKg: 3000, rarity: "commun" },
+    { id: "peloneustes", name: "Peloneustes", zone: "marine", diet: "piscivore", weightKg: 500, rarity: "commun" },
+    { id: "stenopterygius", name: "Stenopterygius", zone: "marine", diet: "piscivore", weightKg: 300, rarity: "commun" },
+    { id: "eurhinosaure", name: "Eurhinosaure", zone: "marine", diet: "piscivore", weightKg: 500, rarity: "commun" },
+    { id: "ophthalmosaure", name: "Ophthalmosaure", zone: "marine", diet: "piscivore", weightKg: 950, rarity: "commun" },
+    { id: "elasmosaure", name: "Élasmosaure", zone: "marine", diet: "piscivore", weightKg: 2000, rarity: "rare" },
+    { id: "kronosaure", name: "Kronosaure", zone: "marine", diet: "piscivore", weightKg: 7000, rarity: "rare" },
+    { id: "temnodontosaure", name: "Temnodontosaure", zone: "marine", diet: "piscivore", weightKg: 1000, rarity: "rare" },
+    { id: "shonisaure", name: "Shonisaure", zone: "marine", diet: "piscivore", weightKg: 30000, rarity: "rare" },
+    { id: "thalassomedon", name: "Thalassomedon", zone: "marine", diet: "piscivore", weightKg: 5000, rarity: "rare" },
+    { id: "styxosaure", name: "Styxosaure", zone: "marine", diet: "piscivore", weightKg: 4000, rarity: "rare" },
+    { id: "attenborosaure", name: "Attenborosaure", zone: "marine", diet: "piscivore", weightKg: 500, rarity: "rare" },
+    { id: "hauffiopteryx", name: "Hauffiopteryx", zone: "marine", diet: "piscivore", weightKg: 200, rarity: "rare" },
+    { id: "platypterygius", name: "Platypterygius", zone: "marine", diet: "piscivore", weightKg: 900, rarity: "rare" },
+    { id: "globidens", name: "Globidens", zone: "marine", diet: "piscivore", weightKg: 400, rarity: "rare" },
+    { id: "liopleurodon", name: "Liopleurodon", zone: "marine", diet: "piscivore", weightKg: 10000, rarity: "epique" },
+    { id: "plotosaure", name: "Plotosaure", zone: "marine", diet: "piscivore", weightKg: 1000, rarity: "epique" },
+    { id: "clidastes", name: "Clidastes", zone: "marine", diet: "piscivore", weightKg: 400, rarity: "epique" },
+    { id: "prognathodon", name: "Prognathodon", zone: "marine", diet: "piscivore", weightKg: 6000, rarity: "epique" },
+    { id: "dakosaure", name: "Dakosaure", zone: "marine", diet: "piscivore", weightKg: 3000, rarity: "epique" },
+    { id: "metriorhynchus", name: "Metriorhynchus", zone: "marine", diet: "piscivore", weightKg: 1000, rarity: "epique" },
+    { id: "mosasaure", name: "Mosasaure", zone: "marine", diet: "piscivore", weightKg: 15000, rarity: "legendaire" },
+    { id: "tylosaure", name: "Tylosaure", zone: "marine", diet: "piscivore", weightKg: 12000, rarity: "legendaire" },
+    { id: "ceratosaure", name: "Ceratosaure", zone: "volcanique", diet: "carnivore", weightKg: 700, rarity: "commun" },
+    { id: "dilophosaure", name: "Dilophosaure", zone: "volcanique", diet: "carnivore", weightKg: 400, rarity: "commun" },
+    { id: "baryonyx", name: "Baryonyx", zone: "volcanique", diet: "piscivore", weightKg: 1700, rarity: "commun" },
+    { id: "suchomimus", name: "Suchomimus", zone: "volcanique", diet: "piscivore", weightKg: 3800, rarity: "commun" },
+    { id: "irritator", name: "Irritator", zone: "volcanique", diet: "piscivore", weightKg: 1000, rarity: "commun" },
+    { id: "eocarcharia", name: "Eocarcharia", zone: "volcanique", diet: "carnivore", weightKg: 1000, rarity: "commun" },
+    { id: "rugops", name: "Rugops", zone: "volcanique", diet: "carnivore", weightKg: 500, rarity: "commun" },
+    { id: "masiakasaure", name: "Masiakasaure", zone: "volcanique", diet: "insectivore", weightKg: 20, rarity: "commun" },
+    { id: "eustreptospondyle", name: "Eustreptospondyle", zone: "volcanique", diet: "carnivore", weightKg: 500, rarity: "commun" },
+    { id: "metriacanthosaure", name: "Metriacanthosaure", zone: "volcanique", diet: "carnivore", weightKg: 1500, rarity: "commun" },
+    { id: "piatnitzkysaure", name: "Piatnitzkysaure", zone: "volcanique", diet: "carnivore", weightKg: 500, rarity: "commun" },
+    { id: "condorraptor", name: "Condorraptor", zone: "volcanique", diet: "carnivore", weightKg: 400, rarity: "commun" },
+    { id: "yangchuanosaure", name: "Yangchuanosaure", zone: "volcanique", diet: "carnivore", weightKg: 2000, rarity: "rare" },
+    { id: "concavenator", name: "Concavenator", zone: "volcanique", diet: "carnivore", weightKg: 1000, rarity: "rare" },
+    { id: "majungasaure", name: "Majungasaure", zone: "volcanique", diet: "carnivore", weightKg: 1100, rarity: "rare" },
+    { id: "skorpiovenator", name: "Skorpiovenator", zone: "volcanique", diet: "carnivore", weightKg: 500, rarity: "rare" },
+    { id: "neovenator", name: "Neovenator", zone: "volcanique", diet: "carnivore", weightKg: 1000, rarity: "rare" },
+    { id: "sinraptor", name: "Sinraptor", zone: "volcanique", diet: "carnivore", weightKg: 1500, rarity: "rare" },
+    { id: "monolophosaure", name: "Monolophosaure", zone: "volcanique", diet: "carnivore", weightKg: 700, rarity: "rare" },
+    { id: "afrovenator", name: "Afrovenator", zone: "volcanique", diet: "carnivore", weightKg: 500, rarity: "rare" },
+    { id: "veterupristisaure", name: "Veterupristisaure", zone: "volcanique", diet: "carnivore", weightKg: 1000, rarity: "rare" },
+    { id: "lourinhanosaure", name: "Lourinhanosaure", zone: "volcanique", diet: "carnivore", weightKg: 800, rarity: "rare" },
+    { id: "giganotosaure", name: "Giganotosaure", zone: "volcanique", diet: "carnivore", weightKg: 8000, rarity: "epique" },
+    { id: "tyrannotitan", name: "Tyrannotitan", zone: "volcanique", diet: "carnivore", weightKg: 7000, rarity: "epique" },
+    { id: "mapusaure", name: "Mapusaure", zone: "volcanique", diet: "carnivore", weightKg: 5000, rarity: "epique" },
+    { id: "acrocanthosaure", name: "Acrocanthosaure", zone: "volcanique", diet: "carnivore", weightKg: 5500, rarity: "epique" },
+    { id: "berberosaure", name: "Berberosaure", zone: "volcanique", diet: "carnivore", weightKg: 3000, rarity: "epique" },
+    { id: "chilantaisaure", name: "Chilantaisaure", zone: "volcanique", diet: "carnivore", weightKg: 2000, rarity: "epique" },
+    { id: "torvosaure", name: "Torvosaure", zone: "volcanique", diet: "carnivore", weightKg: 4000, rarity: "legendaire" },
+    { id: "saurophaganax", name: "Saurophaganax", zone: "volcanique", diet: "carnivore", weightKg: 3000, rarity: "legendaire" }
+  ];
+  function dpSpecies(id) { return DP_SPECIES.find(function (s) { return s.id === id; }); }
+  function dpSpeciesByZone(zoneId) { return DP_SPECIES.filter(function (s) { return s.zone === zoneId; }); }
+
+  function dpHashColor(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return "hsl(" + (h % 360) + ", 58%, 46%)";
+  }
+
+  var DP_ART = {
+    tyrannosaure: { folder: "T-rex", face: "Tyrannosaurus_rex_face.png", profil: "Tyrannosaurus_rex_profil.png" },
+    compsognathus: { folder: "Compsognathus", face: "Compsognathus_face.png", profil: "Compsognathus_profil.png" },
+    stegosaure: { folder: "Stegosaure", face: "Stegosaure_face.png", profil: "Stegosaure_profil.png" },
+    iguanodon: { folder: "Iguanodon", face: "Iguanodon_face.png", profil: "Iguanodon_profil.png" },
+    velociraptor: { folder: "Velociraptor", face: "Velociraptor_face.png", profil: "Velociraptor_profil.png" },
+    deinonychus: { folder: "Deinonychus", face: "Deinonychus_face.png", profil: "Deinonychus_profil.png" },
+    brachiosaure: { folder: "Brachiosaure", face: "Brachiosaure_face.png", profil: "Brachiosaure_profil.png" },
+    sinosauropteryx: { folder: "Sinosauropteryx", face: "Sinosauropteryx_face.png", profil: "Sinosauropteryx_profil.png" },
+    archaeopteryx: { folder: "Archaeopteryx", face: "Archaeopteryx_face.png", profil: "Archaeopteryx_profil.png" },
+    caudipteryx: { folder: "Caudipteryx", face: "Caudipteryx_face.png", profil: "Caudipteryx_profil.png" },
+    anchiornis: { folder: "Anchiornis", face: "Anchiornis_face.png", profil: "Anchiornis_profil.png" },
+    camptosaurus: { folder: "Camptosaurus", face: "Camptosaurus_face.png", profil: "Camptosaurus_profil.png" },
+    coelophysis: { folder: "Coelophysis", face: "Coelophysis_face.png", profil: "Coelophysis_profil.png" },
+    dryosaurus: { folder: "Dryosaurus", face: "Dryosaurus_face.png", profil: "Dryosaurus_profil.png" },
+    heterodontosaurus: { folder: "Heterodontosaurus", face: "Heterodontosaurus_face.png", profil: "Heterodontosaurus_profil.png" },
+    huayangosaure: { folder: "Huayangosaure", face: "Huayangosaure_face.png", profil: "Huayangosaure_profil.png" },
+    hypsilophodon: { folder: "Hypsilophodon", face: "Hypsilophodon_face.png", profil: "Hypsilophodon_profil.png" },
+    kentrosaure: { folder: "Kentrosaure", face: "Kentrosaure_face.png", profil: "Kentrosaure_profil.png" },
+    scutellosaurus: { folder: "Scutellosaurus", face: "Scutellosaurus_face.png", profil: "Scutellosaurus_profil.png" },
+    tuojiangosaure: { folder: "Tuojiangosaure", face: "Tuojiangosaure_face.png", profil: "Tuojiangosaure_profil.png" },
+    ornitholestes: { folder: "Ornitholestes", face: "Ornitholestes_face.png", profil: "Ornitholestes_profil.png" },
+    citipati: { folder: "Citipati", face: "Citipati_face.png", profil: "Citipati_profil.png" },
+    khaan: { folder: "Khaan", face: "Khaan_face.png", profil: "Khaan_profil.png" },
+    sinornithosaure: { folder: "Sinornithosaurus", face: "Sinornithosaurus_face.png", profil: "Sinornithosaurus_profil.png" },
+    massospondylus: { folder: "Massospondylus", face: "Massospondylus_face.png", profil: "Massospondylus_profil.png" },
+    plateosaure: { folder: "Plateosaurus", face: "Plateosaurus_face.png", profil: "Plateosaurus_profil.png" },
+    diplodocus: { folder: "Diplodocus", face: "Diplodocus_face.png", profil: "Diplodocus_profil.png" },
+    camarasaure: { folder: "Camarasaurus", face: "Camarasaurus_face.png", profil: "Camarasaurus_profil.png" },
+    apatosaure: { folder: "Apatosaure", face: "Apatosaure_face.png", profil: "Apatosaure_profil.png" },
+    dracorex: { folder: "dracorex", face: "Dracorex_face.png", profil: "Dracorex_profil.png" },
+    saurornitholestes: { folder: "Saurornitholestes", face: "Saurornitholestes_face.png", profil: "Saurornitholestes_profil.png" },
+    gallimimus: { folder: "Gallimimus", face: "Gallimimus_face.png", profil: "Gallimimus_profil.png" },
+    triceratops: { folder: "Tricératops", face: "Triceratops_face.png", profil: "Triceratops_profil.png" },
+    styracosaure: { folder: "Styracosaure", face: "Styracosaure_face.png", profil: "Styracosaure_profil.png" },
+    pachycephalosaure: { folder: "Pachycéphalosaure", face: "Pachycephalosaure_face.png", profil: "Pachycephalosaure_profil.png" },
+    centrosaure: { folder: "Centrosaure", face: "Centrosaure_face.png", profil: "Centrosaure_profil.png" },
+    maiasaura: { folder: "Maiasaura", face: "Maiasaura_face.png", profil: "Maiasaura_profil.png" },
+    corythosaure: { folder: "Corythosaure", face: "Corythosaure_face.png", profil: "Corythosaure_profil.png" },
+    lambeosaure: { folder: "Lambeosaure", face: "Lambeosaure_face.png", profil: "Lambeosaure_profil.png" },
+    saurolophus: { folder: "Saurolophus", face: "Saurolophus_face.png", profil: "Saurolophus_profil.png" },
+    ornithomimus: { folder: "Ornithomimus", face: "Ornithomimus_face.png", profil: "Ornithomimus_profil.png" },
+    struthiomimus: { folder: "Struthiomimus", face: "Struthiomimus_face.png", profil: "Struthiomimus_profil.png" },
+    thescelosaure: { folder: "Thescelosaurus", face: "Thescelosaurus_face.png", profil: "Thescelosaurus_profil.png" },
+    ankylosaure: { folder: "Ankylosaure", face: "Ankylosaure_face.png", profil: "Ankylosaure_profil.png" },
+    allosaure: { folder: "Allosaure", face: "Allosaure_face.png", profil: "Allosaure_profil.png" },
+    chasmosaure: { folder: "Chasmosaurus", face: "Chasmosaurus_face.png", profil: "Chasmosaurus_profil.png" },
+    torosaure: { folder: "Torosaure", face: "Torosaure_face.png", profil: "Torosaure_profil.png" },
+    deinocheirus: { folder: "Deinocheirus", face: "Deinocheirus_face.png", profil: "Deinocheirus_profil.png" },
+    gorgosaure: { folder: "Gorgosaurus", face: "Gorgosaurus_face.png", profil: "Gorgosaurus_profil.png" },
+    albertosaure: { folder: "Albertosaure", face: "Albertosaure_face.png", profil: "Albertosaure_profil.png" },
+    edmontonia: { folder: "Edmontonia", face: "Edmontonia_face.png", profil: "Edmontonia_profil.png" },
+    euoplocephale: { folder: "Euoplocephalus", face: "Euoplocephalus_face.png", profil: "Euoplocephalus_profil.png" },
+    leptoceratops: { folder: "Leptoceratops", face: "Leptoceratops_face.png", profil: "Leptoceratops_profil.png" },
+    parasaurolophus: { folder: "Parasaurolophus", face: "Parasaurolophus_face.png", profil: "Parasaurolophus_profil.png" },
+    avaceratops: { folder: "Avaceratops", face: "Avaceratops_face.png", profil: "Avaceratops_profil.png" },
+    anchiceratops: { folder: "Anchiceratops", face: "Anchiceratops_face.png", profil: "Anchiceratops_profil.png" },
+    hypacrosaure: { folder: "Hypacrosaure", face: "Hypacrosaure_face.png", profil: "Hypacrosaure_profil.png" },
+    brachylophosaure: { folder: "Brachylophosaurus", face: "Brachylophosaurus_face.png", profil: "Brachylophosaurus_profil.png" },
+    nodosaure: { folder: "Nodosaure", face: "Nodosaure_face.png", profil: "Nodosaure_profil.png" },
+    daspletosaure: { folder: "Daspletosaurus", face: "Daspletosaurus_face.png", profil: "Daspletosaurus_profil.png" }
+  };
+  function dpArtPath(speciesId, kind) {
+    var a = DP_ART[speciesId];
+    if (!a) return null;
+    var sp = dpSpecies(speciesId);
+    var zoneFolder = sp ? DP_ENCLOS_ZONE_FOLDER[sp.zone] : "";
+    return "assets/dinos/" + zoneFolder + "/" + a.folder + "/" + a[kind];
+  }
+
+  var DP_EGG_ZONE_FOLDER = { foret: "foret", plaine: "plaine", desert: "desert", arctique: "arctique", marine: "marin", volcanique: "volcanique" };
+  var DP_EGG_RARITY_FOLDER = { commun: "communs", rare: "rares", epique: "epiques", legendaire: "legendaires" };
+  function dpEggArtPath(zoneId, rarity) {
+    return "assets/oeufs/oeuf_" + DP_EGG_ZONE_FOLDER[zoneId] + "_" + DP_EGG_RARITY_FOLDER[rarity] + ".png";
+  }
+
+  var DP_ENCLOS_ZONE_FOLDER = { foret: "Foret", plaine: "Plaine", desert: "Desert", arctique: "Arctique", marine: "Marine", volcanique: "Volcanique" };
+  var DP_ENCLOS_VARIANT_COUNT = { marine: 1 };
+  function dpEnclosureVariantCount(zoneId) { return DP_ENCLOS_VARIANT_COUNT[zoneId] || 3; }
+  function dpRandomEnclosureVariant(zoneId) { return 1 + Math.floor(Math.random() * dpEnclosureVariantCount(zoneId)); }
+  function dpEnclosureArtPath(zoneId, level, variant) {
+    return "assets/objects/enclos/Variante" + variant + "_" + DP_ENCLOS_ZONE_FOLDER[zoneId] + "_level" + level + ".png";
+  }
+  function dpMerchantArtPath(zoneId) {
+    return "assets/objects/marchand/Marchand_" + DP_ENCLOS_ZONE_FOLDER[zoneId] + ".png";
+  }
+
+  function dpSquareHtml(speciesId, opts) {
+    opts = opts || {};
+    var cls = "dp-square" + (opts.className ? " " + opts.className : "");
+    var attrs = opts.attrs || "";
+    var style = opts.style || "";
+    if (opts.hidden) return '<div class="' + cls + '" style="background:var(--surface-2);' + style + '"' + attrs + '></div>';
+    var src = opts.egg ? dpEggArtPath(opts.egg.zone, opts.egg.rarity) : dpArtPath(speciesId, opts.kind || "profil");
+    if (src) return '<img class="' + cls + '" src="' + src + '" alt="" style="object-fit:contain;background:var(--surface-2);' + style + '" onerror="this.onerror=null;this.src=\'\';this.style.background=\'' + dpHashColor(speciesId) + '\'"' + attrs + '>';
+    return '<div class="' + cls + '" style="background:' + dpHashColor(speciesId) + ';' + style + '"' + attrs + '></div>';
+  }
+
+  function dpEnclosureDinoHtml(speciesId, attrs) {
+    attrs = attrs || "";
+    var src = dpArtPath(speciesId, "profil");
+    if (src) return '<img class="dp-enc-dino" src="' + src + '" alt="" onerror="this.style.display=\'none\'"' + attrs + '>';
+    return '<div class="dp-enc-dino-fallback" style="background:' + dpHashColor(speciesId) + '"' + attrs + '></div>';
+  }
+
+  /* ---------------- Dino study companion ---------------- */
+  function dinoCompanionHtml() {
+    var dp = dpData();
+    if (!dp.dinosaurs.length) return "";
+    var sp = dp.companionSpeciesId ? dpSpecies(dp.companionSpeciesId) : null;
+    var owned = sp && dp.dinosaurs.some(function (d) { return d.speciesId === sp.id; });
+    if (!owned) {
+      return '<div class="dino-companion-panel" id="dino-companion-panel-slot"><button type="button" class="btn btn-sm btn-ghost" style="width:100%" onclick="App.openCompanionModal()">🦕 Choisir un compagnon</button></div>';
+    }
+    return '<div class="dino-companion-panel" id="dino-companion-panel-slot">' +
+      '<div class="dino-companion-wrap" id="dino-companion-wrap">' +
+      dpSquareHtml(sp.id, { kind: "face", className: "dino-companion-img" }) +
+      '<div class="dino-companion-fx" id="dino-companion-fx"></div>' +
+      '</div>' +
+      '<div class="dino-companion-name">' + esc(sp.name) + '</div>' +
+      '<button type="button" class="btn btn-sm btn-ghost" style="width:100%" onclick="App.openCompanionModal()">Changer</button>' +
+      '</div>';
+  }
+  function dinoReact(correct) {
+    dpPlayGameSound(correct ? "correct" : "incorrect");
+    var el = document.getElementById("dino-companion-wrap");
+    if (!el) return;
+    var cls = correct ? "dino-react-good" : "dino-react-bad";
+    el.classList.remove("dino-react-good", "dino-react-bad");
+    void el.offsetWidth;
+    el.classList.add(cls);
+    var fx = document.getElementById("dino-companion-fx");
+    if (fx) {
+      fx.innerHTML = "";
+      var n = correct ? 3 : 2;
+      for (var i = 0; i < n; i++) {
+        var s = document.createElement("span");
+        s.className = "dino-fx-item";
+        s.textContent = correct ? "✨" : "😠";
+        s.style.left = (8 + i * 30) + "%";
+        s.style.animationDelay = (i * 0.15) + "s";
+        fx.appendChild(s);
+      }
+    }
+    el.addEventListener("animationend", function h() {
+      el.classList.remove(cls);
+      if (fx) fx.innerHTML = "";
+      el.removeEventListener("animationend", h);
+    }, { once: true });
+  }
+
+  var DP_QUIZ_POINTS_PER_CORRECT = 25;
+  var DP_EXERCISE_POINTS = 150;
+  function dpCourseHasContent(co) {
+    return co.status === "ready" && ((co.quizQuestions && co.quizQuestions.length) || (co.exercises && co.exercises.length));
+  }
+  function dpSubjectsWithContent() {
+    return userData().subjects.filter(function (s) {
+      return s.chapters.some(function (c) { return c.courses.some(dpCourseHasContent); });
+    });
+  }
+  function dpChaptersWithContent(subject) {
+    return subject.chapters.filter(function (c) { return c.courses.some(dpCourseHasContent); });
+  }
+  function dpCoursesWithContent(chapter) {
+    return chapter.courses.filter(dpCourseHasContent);
+  }
+
+  var DP_SHOP_SLOTS = 5;
+  var DP_SHOP_DURATION = 30 * 60 * 1000;
+  var DP_SHOP_REFRESH_COST = 150;
+  var DP_SHOP_LUCK_COST = 300;
+  var DP_ENCLOSURE_UPGRADE_COST = { 1: 250, 2: 500 };
+  var DP_ENCLOSURE_BUILD_COST = 300;
+  var DP_HATCH_PLACEMENT_LIMIT = 10 * 60 * 1000;
+
+  function dpData() {
+    var u = userData();
+    if (!u.dinoPark) {
+      u.dinoPark = { points: 500, unlockedZones: ["foret"], eggs: [], incubators: [null, null, null], enclosures: [], dinosaurs: [], discovered: {}, shops: {} };
+    }
+    var dp = u.dinoPark;
+    if (!dp.shops) dp.shops = {};
+    if (dp.companionSpeciesId === undefined) dp.companionSpeciesId = null;
+    if (!dp.inventory) dp.inventory = { herbe: 0, fruit: 0, insecte: 0, poisson: 0, viande: 0, soin: 0 };
+    DP_FOOD_ITEMS.concat(DP_MEDICINE_ITEMS).forEach(function (it) { if (dp.inventory[it.id] == null) dp.inventory[it.id] = 0; });
+    dp.unlockedZones = dp.unlockedZones.filter(function (z) { return !!dpZone(z); });
+    if (!dp.plaineRelocked) {
+      dp.plaineRelocked = true;
+      var pi = dp.unlockedZones.indexOf("plaine");
+      if (pi !== -1) dp.unlockedZones.splice(pi, 1);
+    }
+    dp.enclosures = dp.enclosures.filter(function (e) { return !!dpZone(e.zone); });
+    dp.enclosures.forEach(function (e) {
+      if (!e.level) e.level = 1;
+      if (!e.variant) e.variant = dpRandomEnclosureVariant(e.zone);
+      if (e.capacity > 2) e.capacity = 2;
+    });
+    var encIds = {};
+    dp.enclosures.forEach(function (e) { encIds[e.id] = true; });
+    dp.dinosaurs = dp.dinosaurs.filter(function (d) { return !!dpSpecies(d.speciesId); });
+    dp.dinosaurs.forEach(function (d) { if (d.enclosureId && !encIds[d.enclosureId]) d.enclosureId = null; });
+    dp.dinosaurs.forEach(dpTick);
+    dp.dinosaurs = dp.dinosaurs.filter(function (d) {
+      if (dpHealth(d) <= 0) { toast("💀 " + d.name + " n'a pas survécu..."); return false; }
+      if (!d.enclosureId && (Date.now() - d.bornAt) > DP_HATCH_PLACEMENT_LIMIT) { toast("💀 " + d.name + " n'a pas survécu, il n'a pas été mis dans un enclos à temps..."); return false; }
+      return true;
+    });
+    if (dp.companionSpeciesId && !dp.dinosaurs.some(function (d) { return d.speciesId === dp.companionSpeciesId; })) dp.companionSpeciesId = null;
+    dp.eggs = dp.eggs.filter(function (e) { return !!dpSpecies(e.speciesId); });
+    dp.incubators = dp.incubators.map(function (inc) { return (inc && dpSpecies(inc.speciesId)) ? inc : null; });
+    return dp;
+  }
+  function dpEnclosuresInZone(zoneId) { return dpData().enclosures.filter(function (e) { return e.zone === zoneId; }); }
+  function dpEnclosureDisplayName(e) {
+    var dinos = dpData().dinosaurs.filter(function (d) { return d.enclosureId === e.id; });
+    if (dinos.length) {
+      var sp = dpSpecies(dinos[0].speciesId);
+      if (sp) return "Enclos de " + sp.name;
+    }
+    return e.name || "Enclos vide";
+  }
+  function dpEnclosuresAvailableFor(d) {
+    var sp = dpSpecies(d.speciesId);
+    var dp = dpData();
+    return dpEnclosuresInZone(sp.zone).filter(function (e) {
+      var occupants = dp.dinosaurs.filter(function (o) { return o.enclosureId === e.id; });
+      if (occupants.length >= e.capacity) return false;
+      if (occupants.length && occupants[0].speciesId !== d.speciesId) return false;
+      return true;
+    });
+  }
+  function dpDinosaurById(id) { return dpData().dinosaurs.find(function (d) { return d.id === id; }); }
+  function dpUnplacedDinosaurs() { return dpData().dinosaurs.filter(function (d) { return !d.enclosureId; }); }
+
+  function dpHunger(d) { return Math.max(0, Math.round(100 - ((Date.now() - d.lastFedAt) / 3600000) * 20)); }
+  function dpTick(d) {
+    var last = d.healthCheckedAt || d.lastFedAt;
+    if (dpHunger(d) === 0) {
+      var hoursStarving = (Date.now() - Math.max(last, d.lastFedAt)) / 3600000;
+      d.health = Math.max(0, (d.health == null ? 100 : d.health) - hoursStarving * 10);
+    }
+    d.healthCheckedAt = Date.now();
+  }
+  function dpHealth(d) { return d.health == null ? 100 : Math.round(d.health); }
+  var DP_HUNGER_ALERT = 40;
+  var DP_HEALTH_ALERT = 50;
+  function dpNeedsAttention(d) {
+    dpTick(d);
+    var hungry = dpHunger(d) < DP_HUNGER_ALERT;
+    var sick = dpHealth(d) < DP_HEALTH_ALERT;
+    if (sick && hungry) return "both";
+    if (sick) return "sick";
+    if (hungry) return "hungry";
+    return null;
+  }
+  function dpAttentionList() {
+    return dpData().dinosaurs.filter(function (d) { return dpNeedsAttention(d); });
+  }
+  function dpAttentionBadgeHtml(d) {
+    var need = dpNeedsAttention(d);
+    if (!need) return "";
+    var emoji = need === "sick" ? "🤒" : need === "both" ? "⚠️" : "🍖";
+    var label = need === "both" ? "Faim et malade" : need === "sick" ? "Malade" : "A faim";
+    return '<span class="dp-need-badge" title="' + label + '">' + emoji + '</span>';
+  }
+  function dpPlacementCountdownHtml(d) {
+    if (d.enclosureId) return "";
+    var remain = DP_HATCH_PLACEMENT_LIMIT - (Date.now() - d.bornAt);
+    if (remain <= 0) return "";
+    var urgent = remain < 2 * 60 * 1000;
+    return '<div class="dp-placement-countdown' + (urgent ? " dp-placement-countdown-urgent" : "") + '" title="Temps restant avant de le placer dans un enclos">⏳ ' + dpFormatCountdown(remain) + '</div>';
+  }
+  function dpHappiness(d) {
+    var enc = dpData().enclosures.find(function (e) { return e.id === d.enclosureId; });
+    var decorFactor = enc ? (enc.level - 1) * 50 : 0;
+    return Math.round(dpHunger(d) * 0.4 + dpHealth(d) * 0.4 + decorFactor * 0.2);
+  }
+  function dpAgeLabel(d) {
+    var mins = Math.floor((Date.now() - d.bornAt) / 60000);
+    if (mins < 1) return "à l'instant";
+    if (mins < 60) return mins + " min";
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + " h";
+    return Math.floor(hours / 24) + " j";
+  }
+  function dpGenerateShopItems(zoneId, lucky) {
+    var species = dpSpeciesByZone(zoneId);
+    var weighted = [];
+    species.forEach(function (s) {
+      var w = DP_RARITY[s.rarity].weight;
+      if (lucky) w = s.rarity === "commun" ? Math.max(1, Math.round(w * 0.2)) : w * 5;
+      for (var i = 0; i < w; i++) weighted.push(s.id);
+    });
+    var picks = [];
+    var used = {};
+    var slots = Math.min(DP_SHOP_SLOTS, species.length);
+    var guard = 0;
+    while (picks.length < slots && guard < 2000) {
+      guard++;
+      var pick = weighted[Math.floor(Math.random() * weighted.length)];
+      if (used[pick]) continue;
+      used[pick] = true;
+      picks.push(pick);
+    }
+    return picks;
+  }
+  function dpShop(zoneId) {
+    var dp = dpData();
+    var shop = dp.shops[zoneId];
+    if (!shop || Date.now() >= shop.expiresAt) {
+      shop = { items: dpGenerateShopItems(zoneId, false), expiresAt: Date.now() + DP_SHOP_DURATION };
+      dp.shops[zoneId] = shop;
+      saveDB();
+    }
+    return shop;
+  }
+  function dpFormatCountdown(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ":" + String(r).padStart(2, "0");
+  }
+
+  var DP_MERCHANT_SOUNDS = {
+    welcome: ["welcome1.mp3", "welcome2.mp3", "welcome3.mp3", "welcome4.mp3"],
+    thankyou: ["thankyou1.mp3", "thankyou2.mp3", "thankyou3.mp3", "thankyou4.mp3"],
+    noCash: ["not_enough_cash.mp3"],
+    whatAreYouSelling: ["what_are_you_selling.mp3"],
+    interesting: ["interesting.mp3"]
+  };
+  function dpSyncPointsDisplay() {
+    var points = dpData().points;
+    document.querySelectorAll(".dp-points-value").forEach(function (el) { el.textContent = points; });
+  }
+  var dpCurrentMerchantAudio = null;
+  function dpPlayMerchantSound(kind) {
+    var pool = DP_MERCHANT_SOUNDS[kind];
+    if (!pool || !pool.length) return;
+    if (dpCurrentMerchantAudio) {
+      try { dpCurrentMerchantAudio.pause(); dpCurrentMerchantAudio.currentTime = 0; } catch (e) {}
+      dpCurrentMerchantAudio = null;
+    }
+    var vol = getVolumeSfx() / 100;
+    if (vol <= 0) return;
+    var file = pool[Math.floor(Math.random() * pool.length)];
+    try {
+      var audio = new Audio("assets/mp3/marchand/" + file);
+      audio.volume = vol;
+      dpCurrentMerchantAudio = audio;
+      audio.play().catch(function () {});
+    } catch (e) {}
+  }
+
+  var DP_GAME_SOUNDS = { correct: ["correct.mp3"], incorrect: ["incorrect.mp3"] };
+  function dpPlayGameSound(kind) {
+    var pool = DP_GAME_SOUNDS[kind];
+    if (!pool || !pool.length) return;
+    var vol = getVolumeSfx() / 100;
+    if (vol <= 0) return;
+    var file = pool[Math.floor(Math.random() * pool.length)];
+    try {
+      var audio = new Audio(encodeURI("assets/mp3/sons du jeux/" + file));
+      audio.volume = vol;
+      audio.play().catch(function () {});
+    } catch (e) {}
+  }
+
+  function dpDecorHtml() {
+    return '<img class="dp-decor" src="assets/objects/decor/nuage_1.png" alt="" style="width:110px;top:1%;left:280px">' +
+      '<img class="dp-decor" src="assets/objects/decor/nuage_2.png" alt="" style="width:90px;top:4%;left:46%">' +
+      '<img class="dp-decor" src="assets/objects/decor/nuage_3.png" alt="" style="width:100px;top:0%;right:6%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/montagne_1.png" alt="" style="width:260px;left:255px;opacity:0.75;z-index:-2">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/montagne_2.png" alt="" style="width:220px;right:0%;opacity:0.7;z-index:-2">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/arbre_1.png" alt="" style="width:150px;left:255px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/arbre_2.png" alt="" style="width:110px;left:390px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/buisson_2.png" alt="" style="width:80px;left:340px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/rocher_1.png" alt="" style="width:65px;left:470px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/plante_2.png" alt="" style="width:50px;left:300px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/plante_3.png" alt="" style="width:55px;left:520px">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/arbre_3.png" alt="" style="width:160px;right:0%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/buisson_3.png" alt="" style="width:85px;right:9%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/buisson_1.png" alt="" style="width:75px;right:15%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/rocher_3.png" alt="" style="width:65px;right:20%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/rocher_2.png" alt="" style="width:60px;right:5%">' +
+      '<img class="dp-decor dp-decor-ground" src="assets/objects/decor/plante_1.png" alt="" style="width:50px;right:12%">';
+  }
+
+  function renderDinoParkHub() {
+    var dp = dpData();
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("dino", 4) + '<h1 class="page-title">Dino Park</h1></div><p class="page-sub">Ton île principale — choisis un portail pour explorer une zone.</p></div></div>';
+    var needy = dpAttentionList();
+    var alertBanner = needy.length ? '<div class="dp-hub-alert">⚠️ ' + needy.length + ' dino' + (needy.length > 1 ? "s ont besoin" : " a besoin") + ' d\'attention (faim ou maladie)' +
+      '<button class="btn btn-sm btn-primary" onclick="App.dpSelectDino(\'' + needy[0].id + '\')">Voir</button></div>' : '';
+    var points = '<div class="dp-points-badge">🪙 ' + dp.points + ' points</div>';
+    var actions = '<div class="dp-actions"><button class="btn btn-ghost" onclick="App.dpGoLab()">🧪 Laboratoire</button><button class="btn btn-ghost" onclick="App.dpGoEncyclopedia()">📖 Encyclopédie</button><button class="btn btn-primary" style="width:auto" onclick="App.dpGoQuiz()">🧠 Gagner des points</button></div>';
+    var zoneGrid = '<div class="dp-zone-grid">' + DP_ZONES.map(function (z) {
+      var unlocked = dp.unlockedZones.indexOf(z.id) !== -1;
+      if (unlocked) {
+        return '<button class="dp-zone-card" onclick="App.dpGoZone(\'' + z.id + '\')">' +
+          '<div class="dp-zone-portal" style="background-image:url(\'' + dpPortalArtPath(z.id, false) + '\')"></div>' +
+          '<div class="dp-zone-sign">' + esc(z.name) + '</div>' +
+          '</button>';
+      }
+      var canUnlock = dp.points >= z.cost;
+      return '<div class="dp-zone-card locked">' +
+        '<div class="dp-zone-portal" style="background-image:url(\'' + dpPortalArtPath(z.id, true) + '\')"></div>' +
+        '<div class="dp-zone-sign">' + esc(z.name) + '</div>' +
+        '<div class="dp-zone-meta mono">' + z.cost + ' pts</div>' +
+        '<button class="btn btn-sm ' + (canUnlock ? "btn-primary" : "btn-ghost") + '" ' + (canUnlock ? "" : "disabled") + ' onclick="App.dpUnlockZone(\'' + z.id + '\')">Débloquer</button>' +
+        '</div>';
+    }).join("") + '</div>';
+    renderShell(["dinopark"], dpDecorHtml() + head + alertBanner + points + actions + zoneGrid);
+  }
+
+  function renderDinoParkZone(zoneId) {
+    var zone = dpZone(zoneId);
+    var dp = dpData();
+    var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.dpGoHub()">← Retour au spawn</button>';
+    var head = '<div class="dp-zone-head"><div class="page-title-row"><span style="font-size:22px">' + zone.emoji + '</span><h1 class="page-title">Zone ' + esc(zone.name) + '</h1></div><p class="page-sub">' + dpSpeciesByZone(zoneId).length + ' espèces répertoriées ici.</p></div>';
+
+    var shopState = dpShop(zoneId);
+    var encCost = dpZoneEnclosureCost(zoneId);
+    var canBuyEnc = dp.points >= encCost;
+    var shop = '<div class="dp-section dp-merchant-triggers">' +
+      '<button class="dp-merchant-trigger" onclick="App.dpOpenMerchant(\'' + zoneId + '\')">' +
+      '<span class="dp-merchant-trigger-icon">⛺</span><span>Marchand d\'œufs</span>' +
+      '<span class="dp-merchant-trigger-timer mono" id="dp-shop-timer-mini" data-zone="' + zoneId + '">⏳ ' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span>' +
+      '</button>' +
+      '<button class="dp-merchant-trigger" onclick="App.dpOpenObjectMerchant(\'' + zoneId + '\')">' +
+      '<span class="dp-merchant-trigger-icon">🛒</span><span>Marchand d\'objets</span>' +
+      '</button>' +
+      '<button class="dp-merchant-trigger' + (canBuyEnc ? "" : " dp-merchant-trigger-dim") + '" onclick="App.dpBuildEnclosure(\'' + zoneId + '\')">' +
+      '<span class="dp-merchant-trigger-icon">🏕️</span><span>Construire un enclos</span>' +
+      '<span class="dp-merchant-trigger-timer mono">' + encCost + ' pts</span>' +
+      '</button>' +
+      '</div>';
+
+    var encs = dpEnclosuresInZone(zoneId);
+    var enclosures = '<div class="dp-section">' +
+      (encs.length ? '<h3 class="dp-section-title">Tes enclos</h3><div class="dp-enclosure-grid">' + encs.map(function (e) {
+        var dinos = dp.dinosaurs.filter(function (d) { return d.enclosureId === e.id; });
+        var art = dpEnclosureArtPath(zoneId, e.level, e.variant);
+        var upgradeCost = DP_ENCLOSURE_UPGRADE_COST[e.level];
+        var canUpgrade = upgradeCost != null && dp.points >= upgradeCost;
+        return '<div class="dp-enclosure-card">' +
+          '<div class="dp-enc-visual">' +
+          '<img class="dp-enc-img" src="' + art + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+          '<div class="dp-enc-fallback">' + zone.emoji + '</div>' +
+          '<div class="dp-enc-dino-slot">' + (dinos.length ? dinos.map(function (d) {
+            var dsc = dpDinoSizeScale(dpSpecies(d.speciesId).weightKg);
+            return '<span class="dp-dino-thumb-wrap" style="width:' + (28 * dsc).toFixed(1) + '%;max-width:' + Math.round(210 * dsc) + 'px">' + dpEnclosureDinoHtml(d.speciesId, ' title="' + esc(dpSpecies(d.speciesId).name) + '" onclick="App.dpSelectDino(\'' + d.id + '\')"') + dpAttentionBadgeHtml(d) + '</span>';
+          }).join("") : '<span class="dp-enc-empty-hint">Vide</span>') + '</div>' +
+          '</div>' +
+          '<div class="dp-enc-sign">' +
+          '<div class="dp-enclosure-head"><span>' + esc(dpEnclosureDisplayName(e)) + '</span><span class="dp-enclosure-count mono">' + dinos.length + '/' + e.capacity + '</span></div>' +
+          '<div class="dp-enc-info"><span>Déco niveau ' + e.level + '/3</span>' +
+          (upgradeCost != null
+            ? '<button class="btn btn-sm ' + (canUpgrade ? "btn-primary" : "btn-ghost") + '" ' + (canUpgrade ? "" : "disabled") + ' onclick="App.dpUpgradeEnclosure(\'' + e.id + '\')">Améliorer (' + upgradeCost + ' pts)</button>'
+            : '<span class="dp-empty-note">Niveau max</span>') +
+          '</div>' +
+          '</div>' +
+          '</div>';
+      }).join("") + '</div>' : '<p class="dp-empty-note">Aucun enclos ici pour l\'instant.</p>') +
+      '</div>';
+
+    var unplaced = dpUnplacedDinosaurs().filter(function (d) { return dpSpecies(d.speciesId).zone === zoneId; });
+    var unplacedHtml = unplaced.length ? '<div class="dp-section"><h3 class="dp-section-title">🦕 En attente d\'un enclos</h3><div class="dp-enclosure-dinos">' +
+      unplaced.map(function (d) {
+        return '<span class="dp-dino-thumb-wrap">' + dpSquareHtml(d.speciesId, { attrs: ' title="' + esc(dpSpecies(d.speciesId).name) + '" onclick="App.dpSelectDino(\'' + d.id + '\')"' }) + dpAttentionBadgeHtml(d) + dpPlacementCountdownHtml(d) + '</span>';
+      }).join("") + '</div></div>' : "";
+
+    renderShell(["dinopark"], dpDecorHtml() + backBtn + head + shop + enclosures + unplacedHtml);
+  }
+
+  function renderDinoParkLab() {
+    var dp = dpData();
+    var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.dpGoHub()">← Retour au spawn</button>';
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("egg", 4) + '<h1 class="page-title">Laboratoire</h1></div><p class="page-sub">Place tes œufs dans un incubateur pour les faire éclore.</p></div></div>';
+    var grid = '<div class="dp-lab-grid">' + dp.incubators.map(function (inc, i) {
+      if (!inc) {
+        return '<div class="dp-incubator dp-incubator-empty">' +
+          '<img class="dp-incubator-art" src="assets/objects/ui/incubateur_vide.png" alt="">' +
+          (dp.eggs.length ? '<select onchange="App.dpStartIncubation(' + i + ', this.value)"><option value="">Choisir un œuf…</option>' + dp.eggs.map(function (e, ei) { return '<option value="' + ei + '">' + esc(dpSpecies(e.speciesId).name) + '</option>'; }).join("") + '</select>' : '<span class="dp-empty-note">Aucun œuf en stock</span>') +
+          '</div>';
+      }
+      var sp = dpSpecies(inc.speciesId);
+      var rarity = DP_RARITY[sp.rarity];
+      var pct = Math.min(100, Math.round((Date.now() - inc.startedAt) / 1000 / rarity.hatch * 100));
+      return '<div class="dp-incubator">' +
+        '<img class="dp-incubator-art" src="assets/objects/ui/incubateur_remplie.png" alt="">' +
+        '<div class="dp-egg-name">' + esc(sp.name) + '</div>' +
+        '<div class="dp-bar"><div class="dp-bar-fill" style="width:' + pct + '%;background:var(--leaf)"></div></div>' +
+        (pct >= 100 ? '<button class="btn btn-sm btn-primary" onclick="App.dpCollectHatched(' + i + ')">Récupérer 🎉</button>' : '<span class="dp-empty-note mono">' + pct + '%</span>') +
+        '</div>';
+    }).join("") + '</div>';
+    renderShell(["dinopark"], dpDecorHtml() + backBtn + head + grid);
+  }
+
+  function renderDinoParkEncyclopedia() {
+    var dp = dpData();
+    var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.dpGoHub()">← Retour au spawn</button>';
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Encyclopédie</h1></div><p class="page-sub">' + Object.keys(dp.discovered).length + ' / ' + DP_SPECIES.length + ' espèces découvertes.</p></div></div>';
+    var grid = '<div class="dp-ency-grid">' + DP_SPECIES.map(function (sp, i) {
+      var found = !!dp.discovered[sp.id];
+      var num = String(i + 1).padStart(3, "0");
+      return '<div class="dp-ency-cell ' + (found ? "" : "locked") + '">' +
+        dpSquareHtml(sp.id, { hidden: !found, kind: "face" }) +
+        '<div class="dp-ency-num mono">' + num + '</div>' +
+        '<div class="dp-ency-name">' + (found ? esc(sp.name) : "???") + '</div>' +
+        '</div>';
+    }).join("") + '</div>';
+    renderShell(["dinopark"], dpDecorHtml() + backBtn + head + grid);
+  }
+
+  function dpFinishAnswer(qz, q, yourAnswerText, correctAnswerText, wasCorrect) {
+    qz.wasCorrect = wasCorrect;
+    qz.answeredCount++;
+    if (wasCorrect) {
+      qz.correct++;
+      qz.totalEarned += DP_QUIZ_POINTS_PER_CORRECT;
+      var dp = dpData();
+      dp.points += DP_QUIZ_POINTS_PER_CORRECT;
+      saveDB();
+      toast("+" + DP_QUIZ_POINTS_PER_CORRECT + " pts !");
+    } else {
+      qz.wrong++;
+    }
+    qz.history.push({ prompt: q.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: q.explanation, wasCorrect: wasCorrect });
+  }
+
+  function renderDinoParkQuiz() {
+    var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.dpGoHub()">← Retour au spawn</button>';
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("dino", 4) + '<h1 class="page-title">Répondre à des questions</h1></div><p class="page-sub">Révise tes cours importés pour gagner des points.</p></div></div>';
+
+    if (!dpView.quiz) {
+      var nav = dpView.quizNav || (dpView.quizNav = { level: "subjects" });
+      var list;
+      if (nav.level === "chapters" || nav.level === "courses") {
+        var navSubj = findSubject(nav.subjectId);
+        if (!navSubj) nav = dpView.quizNav = { level: "subjects" };
+      }
+      if (nav.level === "courses") {
+        var navChap = findChapter(findSubject(nav.subjectId), nav.chapterId);
+        if (!navChap) nav = dpView.quizNav = { level: "chapters", subjectId: nav.subjectId };
+      }
+      if (nav.level === "subjects") {
+        var subs = dpSubjectsWithContent();
+        list = subs.length
+          ? '<div class="dp-section"><h3 class="dp-section-title">Choisis une matière</h3><div class="dp-subject-grid">' +
+            subs.map(function (s) {
+              return '<div class="dp-subject-card" onclick="App.dpQuizGoSubject(\'' + s.id + '\')">' + icon("book") + '<span>' + esc(s.name) + '</span></div>';
+            }).join("") + '</div></div>'
+          : '<p class="dp-empty-note">Importe et génère au moins un cours pour pouvoir réviser ici.</p>';
+      } else if (nav.level === "chapters") {
+        var subj = findSubject(nav.subjectId);
+        var chaps = dpChaptersWithContent(subj);
+        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoSubjects()">← Retour aux matières</button>' +
+          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj.name) + ' — choisis un chapitre</h3><div class="dp-subject-grid">' +
+          chaps.map(function (c) {
+            return '<div class="dp-subject-card" onclick="App.dpQuizGoChapter(\'' + c.id + '\')">' + icon("folder") + '<span>' + esc(c.name) + '</span></div>';
+          }).join("") + '</div></div>';
+      } else {
+        var subj2 = findSubject(nav.subjectId);
+        var chap2 = findChapter(subj2, nav.chapterId);
+        var courses = dpCoursesWithContent(chap2);
+        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoChapters(\'' + subj2.id + '\')">← Retour aux chapitres</button>' +
+          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj2.name) + ' / ' + esc(chap2.name) + '</h3><div class="dp-subject-grid">' +
+          courses.map(function (co) {
+            var qCount = (co.quizQuestions || []).length;
+            var exCount = (co.exercises || []).length;
+            return '<div class="dp-subject-card" style="cursor:default">' +
+              '<div style="font-weight:700;font-size:12.5px;margin-bottom:8px">' + esc(co.title) + '</div>' +
+              (qCount ? '<button class="btn btn-sm btn-primary" style="width:100%;margin-bottom:6px" onclick="App.dpStartCourseQuiz(\'' + co.id + '\')">🧠 Questions (' + qCount + ')</button>' : '') +
+              (exCount ? '<button class="btn btn-sm btn-ghost" style="width:100%" onclick="App.dpStartCourseExercise(\'' + co.id + '\')">✏️ Exercice (+' + DP_EXERCISE_POINTS + ' pts)</button>' : '') +
+              '</div>';
+          }).join("") + '</div></div>';
+      }
+      renderShell(["dinopark"], backBtn + head + list);
+      return;
+    }
+
+    var qz = dpView.quiz;
+    if (qz.mode === "exercise") { renderDinoParkExercise(backBtn, head, qz); return; }
+
+    if (qz.done) {
+      var items = qz.history.map(function (h) {
+        return '<div class="correction-item ' + (h.wasCorrect ? "correct" : "wrong") + '">' +
+          '<div class="correction-q">' + esc(h.prompt) + '</div>' +
+          '<div class="correction-ans ' + (h.wasCorrect ? "good" : "bad") + '">Ta réponse : ' + esc(h.yourAnswer || "(vide)") + '</div>' +
+          (h.wasCorrect ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
+          '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
+          '</div>';
+      }).join("");
+      renderShell(["dinopark"], backBtn + head +
+        '<div class="result-hero"><div class="result-score mono">+' + qz.totalEarned + '</div><div class="result-total">points gagnés · ' + qz.correct + '/' + (qz.correct + qz.wrong) + ' bonnes réponses</div></div>' +
+        '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.dpGoQuiz()">Choisir un autre cours</button>' +
+        '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items);
+      return;
+    }
+
+    var q = qz.questions[qz.idx];
+    var body = '<div class="quiz-batch-note">' + qz.totalEarned + ' pts gagnés jusqu\'ici</div>' +
+      '<div class="quiz-q-num">Question ' + (qz.idx + 1) + ' / ' + qz.questions.length + '</div>' +
+      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>';
+
+    if (q.type === "qcm") {
+      body += q.choices.map(function (c, i) {
+        var cls = "quiz-choice";
+        var attrs = "";
+        if (qz.revealed) {
+          cls += " disabled";
+          if (i === q.correctIndex) cls += " correct";
+          else if (i === qz.answer) cls += " wrong";
+        } else {
+          attrs = ' onclick="App.dpAnswerQcm(' + i + ')"';
+        }
+        return '<label class="' + cls + '"' + attrs + '><input type="radio" ' + (qz.answer === i ? "checked" : "") + ' readonly disabled><span>' + esc(c) + '</span></label>';
+      }).join("");
+    } else if (qz.status === "grading") {
+      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+    } else if (qz.status !== "graded") {
+      body += '<div class="field">' + richEditorHtml("dp-open-answer", "Tape ta réponse…", qz.answerHtml || "") + '</div>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.dpSubmitOpenAnswer()">Valider</button>';
+    } else {
+      body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+        '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(q.answer) + '</strong></p>';
+    }
+
+    if (qz.revealed && qz.wasCorrect != null) {
+      body += '<div class="quiz-feedback ' + (qz.wasCorrect ? "correct" : "wrong") + '">' +
+        '<div class="quiz-feedback-title ' + (qz.wasCorrect ? "correct" : "wrong") + '">' + (qz.wasCorrect ? "✅ Bonne réponse !" : "❌ Pas tout à fait") + '</div>' +
+        (qz.aiFeedback ? '<div class="correction-exp">' + mdToHtml(qz.aiFeedback) + '</div>' : "") +
+        '<div class="correction-exp">' + mdToHtml(q.explanation || "") + '</div>' +
+        '</div>' +
+        '<div class="quiz-nav"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.dpNextQuizQuestion()">' + (qz.idx === qz.questions.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
+    }
+
+    renderShell(["dinopark"], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
+  }
+
+  function renderDinoParkExercise(backBtn, head, qz) {
+    var ex = qz.exercise;
+    var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(ex.prompt) + '</div></div>';
+    if (qz.status === "grading") {
+      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+    } else if (qz.status === "graded") {
+      body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+        '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
+        '<div class="quiz-feedback ' + (qz.correct ? "correct" : "wrong") + '">' +
+        '<div class="quiz-feedback-title ' + (qz.correct ? "correct" : "wrong") + '">' + (qz.correct ? "✅ Correct ! +" + DP_EXERCISE_POINTS + " pts" : "❌ Pas tout à fait") + '</div>' +
+        '<div class="correction-exp">' + mdToHtml(qz.feedback) + '</div>' +
+        '</div>' +
+        '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
+        '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.dpGoQuiz()">Choisir un autre cours</button><button class="btn btn-ghost" style="width:auto" onclick="App.downloadDpExercisePdf()">⬇️ Télécharger en PDF</button></div>';
+    } else {
+      body += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("dp-exercise-answer", "Écris ton raisonnement et ta réponse…", qz.answerHtml || "", true) + '</div>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.dpSubmitExerciseAnswer()">Valider ma réponse</button>';
+    }
+    renderShell(["dinopark"], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + body + '</div>' + dinoCompanionHtml() + '</div>');
+  }
+
+  function renderDinoParkPage() {
+    if (dpView.mode === "zone") { renderDinoParkZone(dpView.zoneId); return; }
+    if (dpView.mode === "lab") { renderDinoParkLab(); return; }
+    if (dpView.mode === "encyclopedia") { renderDinoParkEncyclopedia(); return; }
+    if (dpView.mode === "quiz") { renderDinoParkQuiz(); return; }
+    renderDinoParkHub();
+  }
+
+  /* ---------------- DinoTime ---------------- */
+  var DT_DURATIONS = [5, 15, 25, 45, 60];
+  var DT_MIN_X = 24, DT_MAX_X = 76;
+
+  var DP_DINOTIME_ZONE_FOLDER = { foret: "foret", plaine: "plaine", desert: "desert", arctique: "arctique", marine: "aquatique", volcanique: "volcanique" };
+  function dtArtPath(zoneId, level) {
+    return "assets/dinotime/enclos_" + (DP_DINOTIME_ZONE_FOLDER[zoneId] || zoneId) + "_level" + level + ".png";
+  }
+  function dtAllEnclosures() { return dpData().enclosures.slice(); }
+  function dtEnclosureDinos(encId) { return dpData().dinosaurs.filter(function (d) { return d.enclosureId === encId; }); }
+
+  function renderDinoTimePage() {
+    if (dtState.mode === "running" && dtRunning) { renderDinoTimeRunning(); return; }
+    renderDinoTimeSetup();
+  }
+
+  function renderDinoTimeSetup() {
+    var encs = dtAllEnclosures();
+    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("clock") + '<h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
+
+    var durationHtml = '<div class="dp-section"><h3 class="dp-section-title">Durée</h3><div class="dt-duration-row">' +
+      DT_DURATIONS.map(function (m) {
+        return '<button class="dt-duration-btn' + (dtState.durationMin === m ? " selected" : "") + '" onclick="App.dtSetDuration(' + m + ')">' + m + ' min</button>';
+      }).join("") +
+      '<span class="dt-duration-custom"><input type="number" min="1" max="240" id="dt-custom-min" placeholder="Autre" value="' + (DT_DURATIONS.indexOf(dtState.durationMin) === -1 ? dtState.durationMin : "") + '" onchange="App.dtSetDuration(this.value)"> min</span>' +
+      '</div></div>';
+
+    var encHtml;
+    if (!encs.length) {
+      encHtml = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun enclos construit</h3><p>Va dans Dino Park pour construire un enclos et y installer des dinos avant de lancer une séance.</p></div>';
+    } else {
+      encHtml = '<div class="dp-section"><h3 class="dp-section-title">Quel enclos veux-tu regarder ?</h3>' +
+        DP_ZONES.map(function (zone) {
+          var zoneEncs = encs.filter(function (e) { return e.zone === zone.id; });
+          if (!zoneEncs.length) return "";
+          return '<h4 class="dt-zone-title">' + zone.emoji + ' ' + esc(zone.name) + '</h4><div class="dt-enc-grid">' +
+            zoneEncs.map(function (e) {
+              var dinos = dtEnclosureDinos(e.id);
+              var selected = dtState.enclosureId === e.id;
+              var thumb = dtArtPath(e.zone, e.level);
+              return '<button class="dt-enc-card' + (selected ? " selected" : "") + '" onclick="App.dtSelectEnclosure(\'' + e.id + '\')">' +
+                '<div class="dt-enc-thumb-wrap" style="background:' + zone.color + '">' +
+                '<img class="dt-enc-thumb" src="' + thumb + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+                '<div class="dt-enc-thumb-fallback">' + zone.emoji + '</div>' +
+                '</div>' +
+                '<div class="dt-enc-info"><span>' + esc(dpEnclosureDisplayName(e)) + '</span><span class="dt-enc-dinos mono">' + dinos.length + ' dino' + (dinos.length !== 1 ? "s" : "") + '</span></div>' +
+                '</button>';
+            }).join("") + '</div>';
+        }).join("") + '</div>';
+    }
+
+    var startBtn = '<button class="btn btn-primary" style="width:auto" onclick="App.dtStart()">▶ Commencer</button>';
+    renderShell(["dinotime"], head + durationHtml + encHtml + startBtn);
+  }
+
+  var DT_CYCLE = ["walk", "pause", "look", "pause"];
+  function dtDurationFor(mode) {
+    if (mode === "walk") return 3000 + Math.random() * 3000;
+    if (mode === "look") return 2000 + Math.random() * 2000;
+    return 5000 + Math.random() * 5000;
+  }
+  var DT_DINO_BASE_HEIGHT = 200;
+  function dtInitDinoState(d) {
+    var cycleIdx = Math.floor(Math.random() * DT_CYCLE.length);
+    var sp = dpSpecies(d.speciesId);
+    return {
+      speciesId: d.speciesId,
+      hasArt: !!DP_ART[d.speciesId],
+      heightPx: Math.round(DT_DINO_BASE_HEIGHT * dpDinoSizeScale(sp ? sp.weightKg : null)),
+      x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
+      dir: Math.random() < 0.5 ? -1 : 1,
+      cycleIdx: cycleIdx,
+      mode: DT_CYCLE[cycleIdx],
+      lastMode: null,
+      modeUntil: performance.now() + dtDurationFor(DT_CYCLE[cycleIdx]),
+      speed: 0.0035 + Math.random() * 0.0025,
+      lastTs: null
+    };
+  }
+  function dtDinoVisualHtml(ds, i) {
+    if (ds.hasArt) return '<img class="dt-dino" id="dt-dino-' + i + '" src="' + dpArtPath(ds.speciesId, "profil") + '" alt="">';
+    return '<div class="dt-dino dt-dino-fallback" id="dt-dino-' + i + '" style="background:' + dpHashColor(ds.speciesId) + ';height:' + ds.heightPx + 'px"></div>';
+  }
+
+  function renderDinoTimeRunning() {
+    var enc = dpData().enclosures.find(function (e) { return e.id === dtRunning.enclosureId; });
+    if (!enc) { App.dtStop(); return; }
+    var zone = dpZone(enc.zone);
+    var bg = dtArtPath(enc.zone, enc.level);
+    var dinosHtml = dtRunning.dinos.map(function (ds, i) {
+      return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px">' + dtDinoVisualHtml(ds, i) + '</span>';
+    }).join("");
+    var html = '<div class="dt-scene" style="background-color:' + zone.color + '">' +
+      '<img class="dt-scene-bg" src="' + bg + '" alt="" onerror="this.style.display=\'none\'">' +
+      '<button class="dt-stop" onclick="App.dtStop()">✕</button>' +
+      '<button class="dt-pause" id="dt-pause-btn" onclick="App.dtTogglePause()">⏸</button>' +
+      '<div class="dt-timer mono" id="dt-timer-display">' + dpFormatCountdown(dtRunning.remainingSec * 1000) + '</div>' +
+      dinosHtml +
+      '</div>';
+    document.getElementById("app").innerHTML = html;
+    dtEnsureTimerInterval();
+    dtStartWalkLoop();
+  }
+
+  // Le décompte tourne en continu (indépendant de la page affichée) tant que dtRunning existe —
+  // seuls dtStop/dtComplete l'arrêtent. Basé sur une échéance absolue (endsAt) plutôt qu'un simple
+  // compteur, pour rester exact même si le tick est retardé par le navigateur (onglet en arrière-plan).
+  function dtStopTimerInterval() {
+    if (dtTimerInterval) { clearInterval(dtTimerInterval); dtTimerInterval = null; }
+  }
+  function dtEnsureTimerInterval() {
+    if (dtTimerInterval) return;
+    dtTimerInterval = setInterval(function () {
+      if (!dtRunning || dtRunning.paused) return;
+      dtRunning.remainingSec = Math.max(0, Math.round((dtRunning.endsAt - Date.now()) / 1000));
+      var el = document.getElementById("dt-timer-display");
+      if (el) el.textContent = dpFormatCountdown(dtRunning.remainingSec * 1000);
+      if (dtRunning.remainingSec <= 0) { App.dtComplete(); }
+    }, 1000);
+  }
+  // L'animation de balade des dinos, elle, s'arrête d'elle-même dès que la scène n'est plus affichée
+  // (pas besoin de la faire tourner pour rien sur une autre page) et repart quand on revient dessus.
+  function dtStopWalkLoop() {
+    if (dtWalkRaf) { cancelAnimationFrame(dtWalkRaf); dtWalkRaf = null; }
+  }
+  function dtStartWalkLoop() {
+    dtStopWalkLoop();
+    dtWalkRaf = requestAnimationFrame(dtTickWalk);
+  }
+
+  function dtTickWalk(ts) {
+    if (!dtRunning || !document.querySelector(".dt-scene")) { dtWalkRaf = null; return; }
+    if (!dtRunning.paused) {
+      dtRunning.dinos.forEach(function (ds, i) {
+        var wrap = document.getElementById("dt-dino-wrap-" + i);
+        var img = document.getElementById("dt-dino-" + i);
+        if (!wrap || !img) return;
+        if (ts > ds.modeUntil) {
+          ds.cycleIdx = (ds.cycleIdx + 1) % DT_CYCLE.length;
+          ds.mode = DT_CYCLE[ds.cycleIdx];
+          ds.modeUntil = ts + dtDurationFor(ds.mode);
+          if (ds.mode === "walk" && Math.random() < 0.5) ds.dir *= -1;
+        }
+        var dt = ds.lastTs ? (ts - ds.lastTs) : 16;
+        if (ds.mode === "walk") {
+          ds.x += ds.dir * ds.speed * dt;
+          if (ds.x < DT_MIN_X) { ds.x = DT_MIN_X; ds.dir = 1; }
+          if (ds.x > DT_MAX_X) { ds.x = DT_MAX_X; ds.dir = -1; }
+          wrap.style.left = ds.x + "%";
+        }
+        wrap.style.transform = "translateX(-50%) " + (ds.mode === "look" ? "scaleX(1)" : (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)"));
+        if (ds.mode !== ds.lastMode) {
+          img.classList.toggle("dt-dino-walking", ds.mode === "walk");
+          if (ds.hasArt) img.src = dpArtPath(ds.speciesId, ds.mode === "look" ? "face" : "profil");
+          ds.lastMode = ds.mode;
+        }
+        ds.lastTs = ts;
+      });
+    }
+    dtWalkRaf = requestAnimationFrame(dtTickWalk);
+  }
+
+  /* ---------------- Auth screens ---------------- */
+  var authError = "";
+  function renderAuth(mode) {
+    var isLogin = mode !== "signup";
+    var html = '<div class="auth-screen">' +
+      sprite("fern", 7, { className: "fern-corner", style: "left:4%;bottom:6%;transform:scaleX(-1);" }) +
+      sprite("fern", 9, { className: "fern-corner", style: "right:6%;bottom:10%;" }) +
+      sprite("fern", 5, { className: "fern-corner", style: "left:10%;top:12%;" }) +
+      sprite("fern", 6, { className: "fern-corner", style: "right:14%;top:16%;transform:scaleX(-1);" }) +
+      '<div class="auth-card">' +
+      sprite("dinoBig", 6, { className: "auth-mascot sprite-bob" }) +
+      '<div class="wordmark">Studino<span class="dot">.</span></div>' +
+      '<p class="auth-sub">' + (isLogin ? "Connecte-toi pour retrouver tes cours." : "Crée ton espace personnel de révision.") + '</p>' +
+      (authError ? '<div class="error-msg">' + authError + '</div>' : '') +
+      '<form onsubmit="App.submitAuth(event, \'' + (isLogin ? "login" : "signup") + '\')">' +
+      '<div class="field"><label>Nom d\'utilisateur</label><input name="username" autocomplete="username" required></div>' +
+      '<div class="field"><label>Mot de passe</label><input name="password" type="password" autocomplete="' + (isLogin ? "current-password" : "new-password") + '" required minlength="4"></div>' +
+      '<button class="btn btn-primary" type="submit">' + (isLogin ? "Se connecter" : "Créer mon compte") + '</button>' +
+      '</form>' +
+      '<div class="auth-switch">' + (isLogin ? "Pas encore de compte ? " : "Déjà inscrit ? ") +
+      '<button onclick="App.switchAuth(\'' + (isLogin ? "signup" : "login") + '\')">' + (isLogin ? "Créer un compte" : "Se connecter") + '</button></div>' +
+      '</div></div>';
+    document.getElementById("app").innerHTML = html;
+  }
+
+  /* ---------------- Sidebar / Shell ---------------- */
+  function breadcrumbTrail(parts) {
+    var trail = [{ label: "Bibliothèque", hash: "#/" }];
+    if (parts[0] === "subject" && parts[1]) {
+      var s = findSubject(parts[1]);
+      if (s) trail.push({ label: s.name, hash: "#/subject/" + s.id });
+      if (parts[2] === "chapter" && parts[3]) {
+        var c = findChapter(s, parts[3]);
+        if (c) trail.push({ label: c.name, hash: "#/subject/" + s.id + "/chapter/" + c.id });
+      }
+    } else if (parts[0] === "course" && parts[1]) {
+      var loc = locateCourse(parts[1]);
+      if (loc) {
+        trail.push({ label: loc.subject.name, hash: "#/subject/" + loc.subject.id });
+        trail.push({ label: loc.chapter.name, hash: "#/subject/" + loc.subject.id + "/chapter/" + loc.chapter.id });
+        trail.push({ label: loc.course.title, hash: "#/course/" + loc.course.id });
+        var tabNames = { transcription: "Retranscription", explication: "Explication", videos: "Vidéos", flashcards: "Flashcards", quiz: "Contrôle" };
+        var tab = parts[3] || "transcription";
+        trail.push({ label: tabNames[tab] || tab });
+      }
+    } else if (parts[0] === "exercices") {
+      trail.push({ label: "Mes exercices", hash: "#/exercices" });
+      if (parts[1]) {
+        var ie = userData().importedExercises.find(function (x) { return x.id === parts[1]; });
+        if (ie) trail.push({ label: ie.title });
+      }
+    } else if (parts[0] === "dinopark") {
+      trail.push({ label: "Dino Park", action: "App.dpGoHub()" });
+      if (dpView.mode === "zone") { var z = dpZone(dpView.zoneId); if (z) trail.push({ label: z.name }); }
+      else if (dpView.mode === "lab") trail.push({ label: "Laboratoire" });
+      else if (dpView.mode === "encyclopedia") trail.push({ label: "Encyclopédie" });
+      else if (dpView.mode === "quiz") trail.push({ label: "Questions" });
+    } else if (parts[0] === "dinotime") {
+      trail.push({ label: "DinoTime" });
+    }
+    return trail;
+  }
+
+  function renderBreadcrumb(parts) {
+    var trail = breadcrumbTrail(parts);
+    var out = "";
+    trail.forEach(function (t, i) {
+      if (i > 0) out += '<span class="sep">/</span>';
+      if (i < trail.length - 1 && (t.hash || t.action)) out += '<button onclick="' + (t.action || ("location.hash='" + t.hash + "'")) + '">' + esc(t.label) + '</button>';
+      else out += '<span class="current">' + esc(t.label) + '</span>';
+    });
+    return out;
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function renderShell(parts, contentHtml, opts) {
+    opts = opts || {};
+    var user = DB.currentUser;
+    var theme = document.documentElement.getAttribute("data-app-theme") || "light";
+    var html = '<div class="shell">' +
+      '<aside class="sidebar">' +
+      '<div class="sidebar-top"><div class="wordmark" style="font-size:13px">' + sprite("dino", 3, { style: "margin-right:4px;" }) + 'Studino<span class="dot">.</span></div>' +
+      '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
+      '</div>' +
+      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'">' + icon("home") + ' Bibliothèque</button>' +
+      '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'">' + icon("camera") + ' Mes exercices</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()">' + sprite("dino", 3, { style: "margin-right:2px;" }) + ' Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()">' + icon("clock") + ' DinoTime</button>' +
+      '<div class="sidebar-bottom">' +
+      '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
+      '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
+      '</div>' +
+      '</aside>' +
+      '<div class="main">' +
+      '<div class="topbar"><div class="breadcrumb">' + renderBreadcrumb(parts) + '</div>' + (parts[0] === "dinopark" ? '<div class="topbar-points mono">🪙 <span class="dp-points-value">' + dpData().points + '</span></div>' : '') + '</div>' +
+      '<div class="content' + (opts.narrow ? " content-narrow" : "") + '">' + contentHtml + '</div>' +
+      '</div></div>';
+    document.getElementById("app").innerHTML = html;
+    syncTopbarHeightVar();
+    if (modal) renderModal();
+    if (dpMerchantZone) renderMerchantOverlay();
+    renderMath();
+  }
+  function syncTopbarHeightVar() {
+    var tb = document.querySelector(".topbar");
+    if (tb) document.documentElement.style.setProperty("--topbar-h", tb.offsetHeight + "px");
+  }
+
+  function renderMerchantOverlay() {
+    var zoneId = dpMerchantZone;
+    var zone = dpZone(zoneId);
+    if (!zone) { dpMerchantZone = null; return; }
+    var dp = dpData();
+    var bgPath = dpMerchantArtPath(zoneId);
+    var overlay = document.createElement("div");
+    overlay.className = "dp-merchant-overlay";
+    overlay.onclick = function (e) { if (e.target === overlay) App.dpCloseMerchant(); };
+
+    var toolsHtml, tableHtml;
+    if (dpMerchantMode === "objects") {
+      toolsHtml = '<div class="dp-merchant-tools"><span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span></div>';
+      tableHtml = renderObjectMerchantTable(dp);
+    } else if (dpSellMode) {
+      var zoneDinos = dp.dinosaurs.filter(function (d) { var dsp = dpSpecies(d.speciesId); return dsp && dsp.zone === zoneId; });
+      toolsHtml = '<div class="dp-merchant-tools">' +
+        '<span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span>' +
+        '<button class="btn btn-sm btn-ghost" onclick="App.dpCancelSellDino()">← Retour aux œufs</button>' +
+        '</div>';
+      tableHtml = !zoneDinos.length
+        ? '<div class="dp-merchant-table"><p class="dp-empty-note">Tu n\'as aucun dino de cette zone à vendre.</p></div>'
+        : '<div class="dp-merchant-table">' + zoneDinos.map(function (d) {
+          var sp = dpSpecies(d.speciesId);
+          var rarity = DP_RARITY[sp.rarity];
+          var sellPrice = Math.round(rarity.price / 2);
+          var selected = dpSellSelectedDinoId === d.id;
+          return '<div class="dp-merchant-card' + (selected ? " dp-merchant-card-selected" : "") + '" onclick="App.dpSelectSellDino(\'' + d.id + '\')">' +
+            dpSquareHtml(sp.id, { className: "dp-egg-img" }) +
+            '<div class="dp-egg-name">' + esc(d.name) + '</div>' +
+            '<div class="dp-rarity dp-rarity-' + sp.rarity + '">' + rarity.label + '</div>' +
+            '<div class="dp-egg-price mono">' + sellPrice + ' pts</div>' +
+            (selected ? '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();App.dpConfirmSellDino()">Vendre</button>' : '') +
+            '</div>';
+        }).join("") + '</div>';
+    } else {
+      var hasEnclosure = dpEnclosuresInZone(zoneId).length > 0;
+      var shopState = dpShop(zoneId);
+      var shopItems = shopState.items.map(function (id) { return dpSpecies(id); });
+      var canRefresh = dp.points >= DP_SHOP_REFRESH_COST;
+      var canLuck = dp.points >= DP_SHOP_LUCK_COST;
+      toolsHtml = '<div class="dp-merchant-tools">' +
+        '<span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span>' +
+        '<span class="dp-shop-timer mono" id="dp-shop-timer" data-zone="' + zoneId + '">⏳ ' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span>' +
+        '<button class="btn btn-sm btn-ghost" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">🔄 Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
+        '<button class="btn btn-sm btn-ghost" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">🍀 Chance+ (' + DP_SHOP_LUCK_COST + ' pts)</button>' +
+        '<button class="btn btn-sm btn-ghost" onclick="App.dpStartSellDino()">💰 Vendre des dinos</button>' +
+        '</div>';
+      tableHtml = '<div class="dp-merchant-table">' +
+        shopItems.map(function (sp) {
+          var rarity = DP_RARITY[sp.rarity];
+          var canBuy = hasEnclosure && dp.points >= rarity.price;
+          return '<div class="dp-merchant-card">' +
+            dpSquareHtml(sp.id, { className: "dp-egg-img", egg: { zone: zoneId, rarity: sp.rarity } }) +
+            '<div class="dp-egg-name">' + esc(sp.name) + '</div>' +
+            '<div class="dp-rarity dp-rarity-' + sp.rarity + '">' + rarity.label + '</div>' +
+            '<div class="dp-egg-price mono">' + rarity.price + ' pts</div>' +
+            '<button class="btn btn-sm ' + (canBuy ? "btn-primary" : "btn-ghost") + '" onclick="App.dpBuyEgg(\'' + zoneId + '\',\'' + sp.id + '\')">Acheter</button>' +
+            (hasEnclosure ? "" : '<div class="dp-egg-warn">Enclos requis</div>') +
+            '</div>';
+        }).join("") +
+        '</div>';
+    }
+
+    overlay.innerHTML =
+      '<div class="dp-merchant-bg" style="background:linear-gradient(180deg,' + zone.color + ',#1a1a1a)">' +
+      '<img src="' + bgPath + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+      '<div class="dp-merchant-bg-fallback">' + zone.emoji + '</div>' +
+      '</div>' +
+      '<button class="dp-merchant-close" onclick="App.dpCloseMerchant()">✕</button>' +
+      toolsHtml + tableHtml;
+    document.body.appendChild(overlay);
+  }
+
+  function renderObjectMerchantTable(dp) {
+    function crateCard(it, buyFn, dietLine, qty, qtyLabel) {
+      var can = dp.points >= it.price;
+      return '<div class="dp-crate-card">' +
+        (it.img ? '<img class="dp-crate-img" src="' + it.img + '" alt="' + esc(it.name) + '">' : '<div class="dp-object-icon">' + it.emoji + '</div>') +
+        '<div class="dp-crate-tooltip">' +
+        '<div class="dp-egg-name">' + esc(it.name) + '</div>' +
+        (dietLine ? '<div class="dp-crate-diet">' + dietLine + '</div>' : '') +
+        '<div class="dp-crate-qty">Contient ' + qty + ' ' + qtyLabel + '</div>' +
+        '<div class="dp-egg-price mono">' + it.price + ' pts</div>' +
+        '<button class="btn btn-sm ' + (can ? "btn-primary" : "btn-ghost") + '" onclick="App.' + buyFn + '(\'' + it.id + '\')">Acheter</button>' +
+        '</div>' +
+        '</div>';
+    }
+
+    var foodCards = DP_FOOD_ITEMS.map(function (it) { return crateCard(it, "dpBuyFoodCrate", "🍽️ Pour les " + it.dietLabel.toLowerCase(), DP_PORTIONS_PER_CRATE, "portions"); }).join("");
+    var medCards = DP_MEDICINE_ITEMS.map(function (it) { return crateCard(it, "dpBuyCareCrate", null, DP_DOSES_PER_CRATE, "doses"); }).join("");
+
+    return '<div class="dp-merchant-table dp-merchant-table-objects">' + foodCards + medCards + '</div>';
+  }
+
+  function renderMath() {
+    if (typeof window.renderMathInElement !== "function") return;
+    window.renderMathInElement(document.body, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false }
+      ],
+      throwOnError: false
+    });
+  }
+
+  /* ---------------- Dashboard ---------------- */
+  function allCourses() {
+    var out = [];
+    userData().subjects.forEach(function (s) { s.chapters.forEach(function (c) { c.courses.forEach(function (co) { out.push(co); }); }); });
+    return out;
+  }
+  function computeStats() {
+    var courses = allCourses();
+    var attempts = [];
+    courses.forEach(function (c) { (c.attempts || []).forEach(function (a) { attempts.push(a); }); });
+    var avgScore = attempts.length ? Math.round(attempts.reduce(function (s, a) { return s + (a.score / a.total) * 20; }, 0) / attempts.length * 10) / 10 : null;
+    var allFc = [];
+    courses.forEach(function (c) { (c.flashcards || []).forEach(function (f) { allFc.push(f); }); });
+    var known = allFc.filter(function (f) { return f.status === "known"; }).length;
+    return { total: courses.length, avgScore: avgScore, fcKnown: known, fcTotal: allFc.length };
+  }
+
+  function renderDashboard() {
+    var subs = userData().subjects;
+    var stats = computeStats();
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Bibliothèque</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
+    var statsHtml = '<div class="stat-row">' +
+      '<div class="stat-card"><div class="stat-num mono">' + stats.total + '</div><div class="stat-lbl">Cours importés</div></div>' +
+      '<div class="stat-card"><div class="stat-num mono">' + (stats.avgScore == null ? "—" : stats.avgScore + "/20") + '</div><div class="stat-lbl">Moyenne aux contrôles</div></div>' +
+      '<div class="stat-card"><div class="stat-num mono">' + stats.fcKnown + '/' + stats.fcTotal + '</div><div class="stat-lbl">Flashcards maîtrisées</div></div>' +
+      '</div>';
+    var grid;
+    if (!subs.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Le camp est encore vide</h3><p>Crée ta première matière pour commencer à organiser tes cours.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
+    } else {
+      grid = '<div class="card-grid-signs-short">' + subs.map(function (s) {
+        var count = s.chapters.reduce(function (n, c) { return n + c.courses.length; }, 0);
+        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'subject\',\'' + s.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("book") + '</div>' +
+          '<div class="tile-title">' + esc(s.name) + '</div>' +
+          '<div class="tile-meta">' + s.chapters.length + ' chapitre' + (s.chapters.length !== 1 ? "s" : "") + ' · ' + count + ' cours</div>' +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
+    }
+    renderShell([], head + statsHtml + grid);
+  }
+
+  function renderSubjectPage(subjectId) {
+    var s = findSubject(subjectId);
+    if (!s) { navigate("#/"); return; }
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(s.name) + '</h1></div><p class="page-sub">' + s.chapters.length + ' chapitre' + (s.chapters.length !== 1 ? "s" : "") + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    var grid;
+    if (!s.chapters.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun chapitre encore</h3><p>Ajoute un chapitre pour commencer à y importer des cours.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    } else {
+      grid = '<div class="card-grid-signs-short">' + s.chapters.map(function (c) {
+        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/chapter/' + c.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'chapter\',\'' + s.id + '\',\'' + c.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("folder") + '</div>' +
+          '<div class="tile-title">' + esc(c.name) + '</div>' +
+          '<div class="tile-meta">' + c.courses.length + ' cours</div>' +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    }
+    renderShell(["subject", subjectId], head + grid);
+  }
+
+  function renderChapterPage(subjectId, chapterId) {
+    var s = findSubject(subjectId);
+    var c = findChapter(s, chapterId);
+    if (!s || !c) { navigate("#/"); return; }
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(c.name) + '</h1></div><p class="page-sub">' + c.courses.length + ' cours importé' + (c.courses.length !== 1 ? "s" : "") + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+    var grid;
+    if (!c.courses.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun cours encore</h3><p>Importe une photo de cours pour générer automatiquement retranscription, explication, flashcards et contrôle.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+    } else {
+      grid = '<div class="card-grid-signs-short">' + c.courses.map(function (co) {
+        var statusHtml = co.status === "processing"
+          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…</span>'
+          : '<span class="status-pill status-ready">Prêt</span>';
+        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/course/' + co.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'course\',\'' + s.id + '\',\'' + c.id + '\',\'' + co.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("doc") + '</div>' +
+          '<div class="tile-title">' + esc(co.title) + '</div>' +
+          statusHtml +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+    }
+    renderShell(["subject", subjectId, "chapter", chapterId], head + grid);
+  }
+
+  /* ---------------- Importer un exercice ---------------- */
+  function renderImportedExercisesPage() {
+    var list = userData().importedExercises.slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Mes exercices</h1></div><p class="page-sub">Importe tes propres exercices (n\'importe quelle matière) et fais-les corriger par l\'IA.</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'exercice\')">' + icon("camera") + ' Importer un exercice</button></div>';
+    var grid;
+    if (!list.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun exercice importé</h3><p>Prends en photo un exercice de ton choix pour t\'entraîner et être corrigé.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'exercice\')">' + icon("camera") + ' Importer un exercice</button></div>';
+    } else {
+      grid = '<div class="card-grid">' + list.map(function (en) {
+        var statusHtml = en.status === "processing"
+          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…</span>'
+          : en.status === "error"
+          ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
+          : en.answerStatus === "graded"
+          ? '<span class="status-pill status-ready">' + (en.correct ? "✅ Corrigé" : "❌ Corrigé") + '</span>'
+          : '<span class="status-pill status-ready">Prêt</span>';
+        return '<div class="tile" onclick="location.hash=\'#/exercices/' + en.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'importedExercise\',null,null,\'' + en.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("doc") + '</div>' +
+          '<div class="tile-title">' + esc(en.title) + '</div>' +
+          (en.subjectGuess ? '<span class="demo-badge">' + esc(en.subjectGuess) + '</span>' : '') +
+          statusHtml +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'exercice\')">' + icon("camera") + ' Importer un exercice</button></div>';
+    }
+    renderShell(["exercices"], head + grid);
+  }
+
+  function renderImportedExercisePage(exId) {
+    var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+    if (!entry) { navigate("#/exercices"); return; }
+    var head = '<div class="course-head">' +
+      (entry.images && entry.images.length ? '<img class="course-thumb" src="' + entry.images[0] + '">' : '') +
+      '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(entry.title) + '</h1>' +
+      '<p class="page-sub">' + (entry.subjectGuess ? esc(entry.subjectGuess) + " · " : "") + 'Exercice importé — ne rapporte pas de points Dino Park</p></div></div>';
+
+    var body;
+    if (entry.status === "processing") {
+      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini analyse ton exercice…</span></div>';
+    } else if (entry.status === "error") {
+      body = '<div class="processing-box"><span>⚠️ ' + esc(entry.error || "L'import a échoué.") + '</span>' +
+        '<div style="display:flex;gap:10px">' +
+        (entry.errorDetail ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.openImportedExerciseErrorDetail(\'' + entry.id + '\')">Détails</button>' : '') +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryImportedExerciseGeneration(\'' + entry.id + '\')">Réessayer</button>' +
+        '</div></div>';
+    } else {
+      var col = '<div class="prose">' + mdToHtml(entry.statement) + '</div>';
+      if (entry.answerStatus === "grading") {
+        col += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+      } else if (entry.answerStatus === "graded") {
+        col += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+          '<div class="rte-display" style="margin-bottom:14px">' + (entry.answerHtml || "<em>(vide)</em>") + '</div>' +
+          '<div class="quiz-feedback ' + (entry.correct ? "correct" : "wrong") + '">' +
+          '<div class="quiz-feedback-title ' + (entry.correct ? "correct" : "wrong") + '">' + (entry.correct ? "✅ Correct !" : "❌ Pas tout à fait") + '</div>' +
+          '<div class="correction-exp">' + mdToHtml(entry.feedback) + '</div>' +
+          '</div>' +
+          '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(entry.solution) + '</div></div>' +
+          '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.retryImportedExerciseAnswer(\'' + entry.id + '\')">Refaire cet exercice</button><button class="btn btn-ghost" style="width:auto" onclick="App.downloadImportedExercisePdf(\'' + entry.id + '\')">⬇️ Télécharger en PDF</button></div>';
+      } else {
+        col += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("ie-answer", "Écris ton raisonnement et ta réponse…", entry.answerHtml || "", true) + '</div>' +
+          '<button class="btn btn-primary" style="width:auto" onclick="App.submitImportedExerciseAnswer(\'' + entry.id + '\')">Valider ma réponse</button>';
+      }
+      body = '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + col + '</div>' + dinoCompanionHtml() + '</div>';
+    }
+    renderShell(["exercices", exId], head + body, { narrow: entry.status !== "ready" });
+  }
+
+  /* ---------------- Course page ---------------- */
+  var TABS = [
+    { id: "transcription", label: "Retranscription" },
+    { id: "explication", label: "Explication" },
+    { id: "videos", label: "Vidéos" },
+    { id: "flashcards", label: "Flashcards" },
+    { id: "quiz", label: "Contrôle" }
+  ];
+
+  function renderCoursePage(courseId, tab) {
+    var loc = locateCourse(courseId);
+    if (!loc) { navigate("#/"); return; }
+    var course = loc.course;
+    tab = tab || "transcription";
+    var head = '<div class="course-head">' +
+      (course.images && course.images.length ? '<img class="course-thumb" src="' + course.images[0] + '">' : '') +
+      '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(course.title) + '</h1>' +
+      '<p class="page-sub">' + esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) + '</p></div>' +
+      (course.status !== "processing" ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' : '') +
+      '</div>';
+    var tabsHtml = '<div class="tabs">' + TABS.map(function (t) {
+      return '<button class="tab-btn ' + (t.id === tab ? "active" : "") + '" onclick="location.hash=\'#/course/' + course.id + '/' + t.id + '\'">' + t.label + '</button>';
+    }).join("") + '</div>';
+
+    var body;
+    if (course.status === "processing") {
+      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini analyse ton cours…</span></div>';
+    } else if (course.status === "error") {
+      body = '<div class="processing-box"><span>⚠️ ' + esc(course.error || "La génération a échoué.") + '</span>' +
+        '<div style="display:flex;gap:10px">' +
+        (course.errorDetail ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.openCourseErrorDetail(\'' + course.id + '\')">Détails</button>' : '') +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryGeneration(\'' + course.id + '\')">Réessayer</button>' +
+        '</div></div>';
+    } else {
+      body = renderTabBody(course, tab, loc);
+    }
+    renderShell(["course", courseId, null, tab], head + tabsHtml + body, { narrow: true });
+  }
+
+  function mdToHtml(md) {
+    var lines = md.split("\n");
+    var html = "";
+    var inList = false;
+    lines.forEach(function (line) {
+      if (/^###\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h4>" + esc(line.replace(/^###\s+/, "")) + "</h4>"; }
+      else if (/^##\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h3>" + esc(line.replace(/^##\s+/, "")) + "</h3>"; }
+      else if (/^-\s+/.test(line)) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.replace(/^-\s+/, "")) + "</li>"; }
+      else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
+      else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
+    });
+    if (inList) html += "</ul>";
+    return html;
+  }
+  function inlineMdPlain(s) {
+    s = esc(s);
+    s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    return s;
+  }
+  function inlineMd(s) {
+    // render $...$/$$...$$ as real math-chips (not left as raw text for the global KaTeX
+    // auto-render pass) so any copy-paste of this content keeps the formula's LaTeX source
+    var out = "";
+    var re = /\$\$([^$]+?)\$\$|\$([^$]+?)\$/g;
+    var last = 0, m;
+    while ((m = re.exec(s))) {
+      out += inlineMdPlain(s.slice(last, m.index));
+      out += mathChipHtml((m[1] !== undefined ? m[1] : m[2]).trim());
+      last = re.lastIndex;
+    }
+    out += inlineMdPlain(s.slice(last));
+    return out;
+  }
+
+  /* ---------------- Rich text mini-editor ---------------- */
+  var RTE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, SPAN: 1, BR: 1, DIV: 1, P: 1, TABLE: 1, TBODY: 1, TR: 1, TD: 1 };
+  var RTE_ALLOWED_STYLES = { color: 1, "background-color": 1, "text-decoration": 1, "font-weight": 1, "font-style": 1 };
+  function sanitizeRichHtml(html) {
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var root = doc.body;
+    (function clean(node) {
+      var children = Array.prototype.slice.call(node.childNodes);
+      children.forEach(function (child) {
+        if (child.nodeType === 3) return; // text node, keep as-is
+        if (child.nodeType === 8) { node.removeChild(child); return; } // comment node (e.g. Windows clipboard's <!--StartFragment-->) — discard
+        if (child.nodeType === 1 && child.tagName === "SPAN" && child.classList.contains("math-chip")) {
+          // trusted: regenerate from the stored LaTeX source rather than trusting existing markup
+          var tpl = doc.createElement("template");
+          tpl.innerHTML = mathChipHtml(child.getAttribute("data-latex") || "");
+          while (tpl.content.firstChild) node.insertBefore(tpl.content.firstChild, child);
+          node.removeChild(child);
+          return;
+        }
+        if (child.nodeType === 1) {
+          // raw KaTeX markup pasted without its math-chip wrapper (e.g. selection copied straight
+          // off a rendered formula): rebuild a chip from the hidden TeX annotation instead of letting
+          // the generic span/text rules flatten <math> into a garbled mix of glyphs + raw source text.
+          var isKatexRoot = child.classList.contains("katex") || child.classList.contains("katex-mathml");
+          var isKatexTag = (child.tagName || "").toLowerCase() === "annotation" && (child.getAttribute("encoding") || "") === "application/x-tex";
+          if (isKatexRoot || isKatexTag) {
+            var ann = isKatexTag ? child : (child.querySelector && child.querySelector('annotation[encoding="application/x-tex"]'));
+            var tpl2 = doc.createElement("template");
+            tpl2.innerHTML = ann ? mathChipHtml(ann.textContent || "") : "";
+            while (tpl2.content.firstChild) node.insertBefore(tpl2.content.firstChild, child);
+            node.removeChild(child);
+            return;
+          }
+          if (child.classList.contains("katex-html")) {
+            // pure visual duplicate of the annotation above — drop it, it carries no source info
+            node.removeChild(child);
+            return;
+          }
+        }
+        if (child.nodeType !== 1 || !RTE_ALLOWED_TAGS[child.tagName]) {
+          var text = doc.createTextNode(child.textContent || "");
+          node.replaceChild(text, child);
+          return;
+        }
+        clean(child);
+        var keptStyle = "";
+        if (child.style) {
+          for (var i = 0; i < child.style.length; i++) {
+            var prop = child.style[i];
+            if (RTE_ALLOWED_STYLES[prop]) keptStyle += prop + ":" + child.style.getPropertyValue(prop) + ";";
+          }
+        }
+        Array.prototype.slice.call(child.attributes || []).forEach(function (a) { child.removeAttribute(a.name); });
+        if (keptStyle) child.setAttribute("style", keptStyle);
+      });
+    })(root);
+    return root.innerHTML;
+  }
+  /* ---------------- Tableau périodique ---------------- */
+  var PERIODIC_CATS = {
+    hydrogene: { label: "Hydrogène", color: "#9BC49B" },
+    alcalin: { label: "Métal alcalin", color: "#E8846B" },
+    "alcalino-terreux": { label: "Alcalino-terreux", color: "#E8B36B" },
+    "metal-transition": { label: "Métal de transition", color: "#E8D26B" },
+    "metal-pauvre": { label: "Métal pauvre", color: "#9EC7E8" },
+    metalloide: { label: "Métalloïde", color: "#8FC7A8" },
+    "non-metal": { label: "Non-métal", color: "#8FE0C7" },
+    halogene: { label: "Halogène", color: "#F0E36B" },
+    "gaz-noble": { label: "Gaz noble", color: "#C7A8E8" },
+    lanthanide: { label: "Lanthanide", color: "#C79EE8" },
+    actinide: { label: "Actinide", color: "#E89EC7" }
+  };
+  // z, symbole, nom, masse atomique, catégorie, période réelle, groupe (colonne), ligne d'affichage dans la grille, état à 20°C
+  // point de fusion °C, point d'ébullition °C, année de découverte, découvreur(s) — "—" quand la valeur n'est pas déterminée
+  var PERIODIC_EXTRA = {
+    H: ["-259.16", "-252.87", "1766", "Henry Cavendish"], He: ["-272.2", "-268.93", "1868", "Pierre Janssen et Norman Lockyer"],
+    Li: ["180.5", "1342", "1817", "Johan August Arfwedson"], Be: ["1287", "2469", "1798", "Louis-Nicolas Vauquelin"],
+    B: ["2076", "3927", "1808", "Joseph Louis Gay-Lussac et Louis Jacques Thénard"], C: ["3550", "4027", "Antiquité", "Connu depuis la préhistoire"],
+    N: ["-210.1", "-195.79", "1772", "Daniel Rutherford"], O: ["-218.79", "-182.96", "1774", "Joseph Priestley et Carl Wilhelm Scheele"],
+    F: ["-219.67", "-188.11", "1886", "Henri Moissan"], Ne: ["-248.59", "-246.05", "1898", "William Ramsay et Morris Travers"],
+    Na: ["97.79", "882.9", "1807", "Humphry Davy"], Mg: ["650", "1090", "1808", "Humphry Davy"],
+    Al: ["660.32", "2519", "1825", "Hans Christian Ørsted"], Si: ["1414", "3265", "1824", "Jöns Jacob Berzelius"],
+    P: ["44.15", "280.5", "1669", "Hennig Brand"], S: ["115.21", "444.6", "Antiquité", "Connu depuis l'Antiquité"],
+    Cl: ["-101.5", "-34.04", "1774", "Carl Wilhelm Scheele"], Ar: ["-189.34", "-185.85", "1894", "Lord Rayleigh et William Ramsay"],
+    K: ["63.38", "759", "1807", "Humphry Davy"], Ca: ["842", "1484", "1808", "Humphry Davy"],
+    Sc: ["1541", "2836", "1879", "Lars Fredrik Nilson"], Ti: ["1668", "3287", "1791", "William Gregor"],
+    V: ["1910", "3407", "1801", "Andrés Manuel del Río"], Cr: ["1907", "2671", "1797", "Louis Nicolas Vauquelin"],
+    Mn: ["1246", "2061", "1774", "Johan Gottlieb Gahn"], Fe: ["1538", "2862", "Antiquité", "Connu depuis l'Antiquité"],
+    Co: ["1495", "2927", "1735", "Georg Brandt"], Ni: ["1455", "2913", "1751", "Axel Fredrik Cronstedt"],
+    Cu: ["1084.6", "2562", "Antiquité", "Connu depuis l'Antiquité"], Zn: ["419.53", "907", "1746", "Andreas Sigismund Marggraf"],
+    Ga: ["29.76", "2204", "1875", "Paul-Émile Lecoq de Boisbaudran"], Ge: ["938.25", "2833", "1886", "Clemens Winkler"],
+    As: ["817", "614", "vers 1250", "Albertus Magnus"], Se: ["221", "685", "1817", "Jöns Jacob Berzelius"],
+    Br: ["-7.2", "58.8", "1826", "Antoine Balard"], Kr: ["-157.36", "-153.22", "1898", "William Ramsay et Morris Travers"],
+    Rb: ["39.31", "688", "1861", "Robert Bunsen et Gustav Kirchhoff"], Sr: ["777", "1382", "1808", "Humphry Davy"],
+    Y: ["1526", "3336", "1794", "Johan Gadolin"], Zr: ["1855", "4409", "1789", "Martin Heinrich Klaproth"],
+    Nb: ["2477", "4744", "1801", "Charles Hatchett"], Mo: ["2623", "4639", "1778", "Carl Wilhelm Scheele"],
+    Tc: ["2157", "4265", "1937", "Carlo Perrier et Emilio Segrè"], Ru: ["2334", "4150", "1844", "Karl Ernst Claus"],
+    Rh: ["1964", "3695", "1803", "William Hyde Wollaston"], Pd: ["1554.9", "2963", "1803", "William Hyde Wollaston"],
+    Ag: ["961.78", "2162", "Antiquité", "Connu depuis l'Antiquité"], Cd: ["321.07", "767", "1817", "Friedrich Stromeyer"],
+    In: ["156.6", "2072", "1863", "Ferdinand Reich et Hieronymous Theodor Richter"], Sn: ["231.93", "2602", "Antiquité", "Connu depuis l'Antiquité"],
+    Sb: ["630.63", "1587", "Antiquité", "Connu depuis l'Antiquité"], Te: ["449.51", "988", "1782", "Franz-Joseph Müller von Reichenstein"],
+    I: ["113.7", "184.3", "1811", "Bernard Courtois"], Xe: ["-111.75", "-108.1", "1898", "William Ramsay et Morris Travers"],
+    Cs: ["28.44", "671", "1860", "Robert Bunsen et Gustav Kirchhoff"], Ba: ["727", "1897", "1808", "Humphry Davy"],
+    La: ["920", "3464", "1839", "Carl Gustaf Mosander"], Ce: ["795", "3443", "1803", "Jöns Jacob Berzelius et Wilhelm Hisinger"],
+    Pr: ["935", "3130", "1885", "Carl Auer von Welsbach"], Nd: ["1024", "3074", "1885", "Carl Auer von Welsbach"],
+    Pm: ["1042", "3000", "1945", "Jacob Marinsky, Lawrence Glendenin et Charles Coryell"], Sm: ["1072", "1794", "1879", "Paul-Émile Lecoq de Boisbaudran"],
+    Eu: ["826", "1529", "1901", "Eugène-Anatole Demarçay"], Gd: ["1312", "3273", "1880", "Jean Charles Galissard de Marignac"],
+    Tb: ["1356", "3230", "1843", "Carl Gustaf Mosander"], Dy: ["1407", "2567", "1886", "Paul-Émile Lecoq de Boisbaudran"],
+    Ho: ["1461", "2720", "1878", "Jacques-Louis Soret et Marc Delafontaine"], Er: ["1529", "2868", "1843", "Carl Gustaf Mosander"],
+    Tm: ["1545", "1950", "1879", "Per Teodor Cleve"], Yb: ["824", "1196", "1878", "Jean Charles Galissard de Marignac"],
+    Lu: ["1652", "3402", "1907", "Georges Urbain"], Hf: ["2233", "4603", "1923", "Dirk Coster et George de Hevesy"],
+    Ta: ["3017", "5458", "1802", "Anders Gustaf Ekeberg"], W: ["3422", "5555", "1783", "Juan José et Fausto Elhuyar"],
+    Re: ["3186", "5596", "1925", "Walter et Ida Noddack, Otto Berg"], Os: ["3033", "5012", "1803", "Smithson Tennant"],
+    Ir: ["2446", "4428", "1803", "Smithson Tennant"], Pt: ["1768.3", "3825", "1735", "Antonio de Ulloa"],
+    Au: ["1064.18", "2856", "Antiquité", "Connu depuis l'Antiquité"], Hg: ["-38.83", "356.73", "Antiquité", "Connu depuis l'Antiquité"],
+    Tl: ["304", "1473", "1861", "William Crookes"], Pb: ["327.46", "1749", "Antiquité", "Connu depuis l'Antiquité"],
+    Bi: ["271.4", "1564", "1753", "Claude François Geoffroy"], Po: ["254", "962", "1898", "Marie et Pierre Curie"],
+    At: ["302", "337", "1940", "Dale Corson, Kenneth MacKenzie et Emilio Segrè"], Rn: ["-71", "-61.7", "1900", "Friedrich Ernst Dorn"],
+    Fr: ["27", "677", "1939", "Marguerite Perey"], Ra: ["700", "1737", "1898", "Marie et Pierre Curie"],
+    Ac: ["1050", "3200", "1899", "André-Louis Debierne"], Th: ["1750", "4788", "1829", "Jöns Jacob Berzelius"],
+    Pa: ["1568", "4027", "1913", "Kasimir Fajans et Oswald Göhring"], U: ["1132.2", "4131", "1789", "Martin Heinrich Klaproth"],
+    Np: ["644", "3902", "1940", "Edwin McMillan et Philip Abelson"], Pu: ["639.4", "3228", "1940", "Glenn Seaborg et son équipe"],
+    Am: ["1176", "2607", "1944", "Glenn Seaborg et son équipe"], Cm: ["1345", "3110", "1944", "Glenn Seaborg et son équipe"],
+    Bk: ["986", "—", "1949", "Glenn Seaborg et son équipe"], Cf: ["900", "—", "1950", "Glenn Seaborg et son équipe"],
+    Es: ["860", "—", "1952", "Albert Ghiorso et son équipe"], Fm: ["1527", "—", "1952", "Albert Ghiorso et son équipe"],
+    Md: ["827", "—", "1955", "Albert Ghiorso et son équipe"], No: ["827", "—", "1966", "JINR Dubna"],
+    Lr: ["1627", "—", "1961", "Berkeley (Ghiorso et al.)"], Rf: ["—", "—", "1964", "JINR Dubna"],
+    Db: ["—", "—", "1970", "JINR Dubna / Berkeley"], Sg: ["—", "—", "1974", "Berkeley"],
+    Bh: ["—", "—", "1981", "GSI Darmstadt"], Hs: ["—", "—", "1984", "GSI Darmstadt"],
+    Mt: ["—", "—", "1982", "GSI Darmstadt"], Ds: ["—", "—", "1994", "GSI Darmstadt"],
+    Rg: ["—", "—", "1994", "GSI Darmstadt"], Cn: ["—", "—", "1996", "GSI Darmstadt"],
+    Nh: ["—", "—", "2004", "RIKEN (Japon)"], Fl: ["—", "—", "1998", "JINR Dubna"],
+    Mc: ["—", "—", "2003", "JINR Dubna / Livermore"], Lv: ["—", "—", "2000", "JINR Dubna / Livermore"],
+    Ts: ["—", "—", "2010", "JINR Dubna / Oak Ridge / Vanderbilt"], Og: ["—", "—", "2002", "JINR Dubna / Livermore"]
+  };
+  var PERIODIC_ELEMENTS = [
+    [1, "H", "Hydrogène", "1.008", "hydrogene", 1, 1, 1, "gaz"], [2, "He", "Hélium", "4.003", "gaz-noble", 1, 18, 1, "gaz"],
+    [3, "Li", "Lithium", "6.94", "alcalin", 2, 1, 2, "solide"], [4, "Be", "Béryllium", "9.012", "alcalino-terreux", 2, 2, 2, "solide"],
+    [5, "B", "Bore", "10.81", "metalloide", 2, 13, 2, "solide"], [6, "C", "Carbone", "12.011", "non-metal", 2, 14, 2, "solide"],
+    [7, "N", "Azote", "14.007", "non-metal", 2, 15, 2, "gaz"], [8, "O", "Oxygène", "15.999", "non-metal", 2, 16, 2, "gaz"],
+    [9, "F", "Fluor", "18.998", "halogene", 2, 17, 2, "gaz"], [10, "Ne", "Néon", "20.180", "gaz-noble", 2, 18, 2, "gaz"],
+    [11, "Na", "Sodium", "22.990", "alcalin", 3, 1, 3, "solide"], [12, "Mg", "Magnésium", "24.305", "alcalino-terreux", 3, 2, 3, "solide"],
+    [13, "Al", "Aluminium", "26.982", "metal-pauvre", 3, 13, 3, "solide"], [14, "Si", "Silicium", "28.085", "metalloide", 3, 14, 3, "solide"],
+    [15, "P", "Phosphore", "30.974", "non-metal", 3, 15, 3, "solide"], [16, "S", "Soufre", "32.06", "non-metal", 3, 16, 3, "solide"],
+    [17, "Cl", "Chlore", "35.45", "halogene", 3, 17, 3, "gaz"], [18, "Ar", "Argon", "39.948", "gaz-noble", 3, 18, 3, "gaz"],
+    [19, "K", "Potassium", "39.098", "alcalin", 4, 1, 4, "solide"], [20, "Ca", "Calcium", "40.078", "alcalino-terreux", 4, 2, 4, "solide"],
+    [21, "Sc", "Scandium", "44.956", "metal-transition", 4, 3, 4, "solide"], [22, "Ti", "Titane", "47.867", "metal-transition", 4, 4, 4, "solide"],
+    [23, "V", "Vanadium", "50.942", "metal-transition", 4, 5, 4, "solide"], [24, "Cr", "Chrome", "51.996", "metal-transition", 4, 6, 4, "solide"],
+    [25, "Mn", "Manganèse", "54.938", "metal-transition", 4, 7, 4, "solide"], [26, "Fe", "Fer", "55.845", "metal-transition", 4, 8, 4, "solide"],
+    [27, "Co", "Cobalt", "58.933", "metal-transition", 4, 9, 4, "solide"], [28, "Ni", "Nickel", "58.693", "metal-transition", 4, 10, 4, "solide"],
+    [29, "Cu", "Cuivre", "63.546", "metal-transition", 4, 11, 4, "solide"], [30, "Zn", "Zinc", "65.38", "metal-transition", 4, 12, 4, "solide"],
+    [31, "Ga", "Gallium", "69.723", "metal-pauvre", 4, 13, 4, "solide"], [32, "Ge", "Germanium", "72.630", "metalloide", 4, 14, 4, "solide"],
+    [33, "As", "Arsenic", "74.922", "metalloide", 4, 15, 4, "solide"], [34, "Se", "Sélénium", "78.971", "non-metal", 4, 16, 4, "solide"],
+    [35, "Br", "Brome", "79.904", "halogene", 4, 17, 4, "liquide"], [36, "Kr", "Krypton", "83.798", "gaz-noble", 4, 18, 4, "gaz"],
+    [37, "Rb", "Rubidium", "85.468", "alcalin", 5, 1, 5, "solide"], [38, "Sr", "Strontium", "87.62", "alcalino-terreux", 5, 2, 5, "solide"],
+    [39, "Y", "Yttrium", "88.906", "metal-transition", 5, 3, 5, "solide"], [40, "Zr", "Zirconium", "91.224", "metal-transition", 5, 4, 5, "solide"],
+    [41, "Nb", "Niobium", "92.906", "metal-transition", 5, 5, 5, "solide"], [42, "Mo", "Molybdène", "95.95", "metal-transition", 5, 6, 5, "solide"],
+    [43, "Tc", "Technétium", "[98]", "metal-transition", 5, 7, 5, "solide"], [44, "Ru", "Ruthénium", "101.07", "metal-transition", 5, 8, 5, "solide"],
+    [45, "Rh", "Rhodium", "102.906", "metal-transition", 5, 9, 5, "solide"], [46, "Pd", "Palladium", "106.42", "metal-transition", 5, 10, 5, "solide"],
+    [47, "Ag", "Argent", "107.868", "metal-transition", 5, 11, 5, "solide"], [48, "Cd", "Cadmium", "112.414", "metal-transition", 5, 12, 5, "solide"],
+    [49, "In", "Indium", "114.818", "metal-pauvre", 5, 13, 5, "solide"], [50, "Sn", "Étain", "118.710", "metal-pauvre", 5, 14, 5, "solide"],
+    [51, "Sb", "Antimoine", "121.760", "metalloide", 5, 15, 5, "solide"], [52, "Te", "Tellure", "127.60", "metalloide", 5, 16, 5, "solide"],
+    [53, "I", "Iode", "126.904", "halogene", 5, 17, 5, "solide"], [54, "Xe", "Xénon", "131.293", "gaz-noble", 5, 18, 5, "gaz"],
+    [55, "Cs", "Césium", "132.905", "alcalin", 6, 1, 6, "solide"], [56, "Ba", "Baryum", "137.327", "alcalino-terreux", 6, 2, 6, "solide"],
+    [57, "La", "Lanthane", "138.905", "lanthanide", 6, 3, 9, "solide"], [58, "Ce", "Cérium", "140.116", "lanthanide", 6, 4, 9, "solide"],
+    [59, "Pr", "Praséodyme", "140.908", "lanthanide", 6, 5, 9, "solide"], [60, "Nd", "Néodyme", "144.242", "lanthanide", 6, 6, 9, "solide"],
+    [61, "Pm", "Prométhium", "[145]", "lanthanide", 6, 7, 9, "solide"], [62, "Sm", "Samarium", "150.36", "lanthanide", 6, 8, 9, "solide"],
+    [63, "Eu", "Europium", "151.964", "lanthanide", 6, 9, 9, "solide"], [64, "Gd", "Gadolinium", "157.25", "lanthanide", 6, 10, 9, "solide"],
+    [65, "Tb", "Terbium", "158.925", "lanthanide", 6, 11, 9, "solide"], [66, "Dy", "Dysprosium", "162.500", "lanthanide", 6, 12, 9, "solide"],
+    [67, "Ho", "Holmium", "164.930", "lanthanide", 6, 13, 9, "solide"], [68, "Er", "Erbium", "167.259", "lanthanide", 6, 14, 9, "solide"],
+    [69, "Tm", "Thulium", "168.934", "lanthanide", 6, 15, 9, "solide"], [70, "Yb", "Ytterbium", "173.045", "lanthanide", 6, 16, 9, "solide"],
+    [71, "Lu", "Lutécium", "174.967", "lanthanide", 6, 17, 9, "solide"],
+    [72, "Hf", "Hafnium", "178.49", "metal-transition", 6, 4, 6, "solide"], [73, "Ta", "Tantale", "180.948", "metal-transition", 6, 5, 6, "solide"],
+    [74, "W", "Tungstène", "183.84", "metal-transition", 6, 6, 6, "solide"], [75, "Re", "Rhénium", "186.207", "metal-transition", 6, 7, 6, "solide"],
+    [76, "Os", "Osmium", "190.23", "metal-transition", 6, 8, 6, "solide"], [77, "Ir", "Iridium", "192.217", "metal-transition", 6, 9, 6, "solide"],
+    [78, "Pt", "Platine", "195.084", "metal-transition", 6, 10, 6, "solide"], [79, "Au", "Or", "196.967", "metal-transition", 6, 11, 6, "solide"],
+    [80, "Hg", "Mercure", "200.592", "metal-transition", 6, 12, 6, "liquide"], [81, "Tl", "Thallium", "204.38", "metal-pauvre", 6, 13, 6, "solide"],
+    [82, "Pb", "Plomb", "207.2", "metal-pauvre", 6, 14, 6, "solide"], [83, "Bi", "Bismuth", "208.980", "metal-pauvre", 6, 15, 6, "solide"],
+    [84, "Po", "Polonium", "[209]", "metal-pauvre", 6, 16, 6, "solide"], [85, "At", "Astate", "[210]", "halogene", 6, 17, 6, "solide"],
+    [86, "Rn", "Radon", "[222]", "gaz-noble", 6, 18, 6, "gaz"],
+    [87, "Fr", "Francium", "[223]", "alcalin", 7, 1, 7, "solide"], [88, "Ra", "Radium", "[226]", "alcalino-terreux", 7, 2, 7, "solide"],
+    [89, "Ac", "Actinium", "[227]", "actinide", 7, 3, 10, "solide"], [90, "Th", "Thorium", "232.038", "actinide", 7, 4, 10, "solide"],
+    [91, "Pa", "Protactinium", "231.036", "actinide", 7, 5, 10, "solide"], [92, "U", "Uranium", "238.029", "actinide", 7, 6, 10, "solide"],
+    [93, "Np", "Neptunium", "[237]", "actinide", 7, 7, 10, "solide"], [94, "Pu", "Plutonium", "[244]", "actinide", 7, 8, 10, "solide"],
+    [95, "Am", "Américium", "[243]", "actinide", 7, 9, 10, "solide"], [96, "Cm", "Curium", "[247]", "actinide", 7, 10, 10, "solide"],
+    [97, "Bk", "Berkélium", "[247]", "actinide", 7, 11, 10, "solide"], [98, "Cf", "Californium", "[251]", "actinide", 7, 12, 10, "solide"],
+    [99, "Es", "Einsteinium", "[252]", "actinide", 7, 13, 10, "solide"], [100, "Fm", "Fermium", "[257]", "actinide", 7, 14, 10, "solide"],
+    [101, "Md", "Mendélévium", "[258]", "actinide", 7, 15, 10, "solide"], [102, "No", "Nobélium", "[259]", "actinide", 7, 16, 10, "solide"],
+    [103, "Lr", "Lawrencium", "[266]", "actinide", 7, 17, 10, "solide"],
+    [104, "Rf", "Rutherfordium", "[267]", "metal-transition", 7, 4, 7, "solide"], [105, "Db", "Dubnium", "[268]", "metal-transition", 7, 5, 7, "solide"],
+    [106, "Sg", "Seaborgium", "[269]", "metal-transition", 7, 6, 7, "solide"], [107, "Bh", "Bohrium", "[270]", "metal-transition", 7, 7, 7, "solide"],
+    [108, "Hs", "Hassium", "[269]", "metal-transition", 7, 8, 7, "solide"], [109, "Mt", "Meitnérium", "[278]", "metal-transition", 7, 9, 7, "solide"],
+    [110, "Ds", "Darmstadtium", "[281]", "metal-transition", 7, 10, 7, "solide"], [111, "Rg", "Roentgenium", "[282]", "metal-transition", 7, 11, 7, "solide"],
+    [112, "Cn", "Copernicium", "[285]", "metal-transition", 7, 12, 7, "solide"], [113, "Nh", "Nihonium", "[286]", "metal-pauvre", 7, 13, 7, "solide"],
+    [114, "Fl", "Flerovium", "[289]", "metal-pauvre", 7, 14, 7, "solide"], [115, "Mc", "Moscovium", "[290]", "metal-pauvre", 7, 15, 7, "solide"],
+    [116, "Lv", "Livermorium", "[293]", "metal-pauvre", 7, 16, 7, "solide"], [117, "Ts", "Tennesse", "[294]", "halogene", 7, 17, 7, "solide"],
+    [118, "Og", "Oganesson", "[294]", "gaz-noble", 7, 18, 7, "gaz"]
+  ].map(function (a) {
+    var extra = PERIODIC_EXTRA[a[1]] || ["—", "—", "—", "—"];
+    return { z: a[0], sym: a[1], name: a[2], mass: a[3], cat: a[4], period: a[5], group: a[6], row: a[7], state: a[8], melt: extra[0], boil: extra[1], year: extra[2], by: extra[3] };
+  });
+  var PERIODIC_BY_SYM = {};
+  PERIODIC_ELEMENTS.forEach(function (e) { PERIODIC_BY_SYM[e.sym] = e; });
+
+  function periodicGridHtml() {
+    return '<div class="periodic-grid">' + PERIODIC_ELEMENTS.map(function (e) {
+      var color = PERIODIC_CATS[e.cat].color;
+      return '<button type="button" class="periodic-cell" style="grid-row:' + e.row + ';grid-column:' + e.group + ';background:' + color + '" onclick="App.selectPeriodicElement(\'' + e.sym + '\')" title="' + esc(e.name) + '">' +
+        '<span class="periodic-z">' + e.z + '</span><span class="periodic-sym">' + e.sym + '</span>' +
+        '</button>';
+    }).join("") + '</div>';
+  }
+  function periodicLegendHtml() {
+    return '<div class="periodic-legend">' + Object.keys(PERIODIC_CATS).map(function (k) {
+      return '<span class="periodic-legend-item"><span class="periodic-legend-dot" style="background:' + PERIODIC_CATS[k].color + '"></span>' + PERIODIC_CATS[k].label + '</span>';
+    }).join("") + '</div>';
+  }
+  function periodicDetailHtml(sym) {
+    var e = PERIODIC_BY_SYM[sym];
+    if (!e) return "";
+    var color = PERIODIC_CATS[e.cat].color;
+    return '<div class="periodic-detail" style="border-color:' + color + '">' +
+      '<div class="periodic-detail-badge" style="background:' + color + '"><span class="periodic-detail-z">' + e.z + '</span><span class="periodic-detail-sym">' + e.sym + '</span></div>' +
+      '<div class="periodic-detail-body">' +
+      '<div class="periodic-detail-name">' + esc(e.name) + '</div>' +
+      '<div class="periodic-detail-info">' +
+      '<span>Masse atomique : <strong>' + e.mass + '</strong></span>' +
+      '<span>Catégorie : <strong>' + PERIODIC_CATS[e.cat].label + '</strong></span>' +
+      '<span>État à 20°C : <strong>' + e.state + '</strong></span>' +
+      '<span>Période ' + e.period + (e.cat === "lanthanide" || e.cat === "actinide" ? "" : ' · Groupe ' + e.group) + '</span>' +
+      '<span>Point de fusion : <strong>' + e.melt + (e.melt === "—" ? "" : " °C") + '</strong></span>' +
+      '<span>Point d\'ébullition : <strong>' + e.boil + (e.boil === "—" ? "" : " °C") + '</strong></span>' +
+      '<span>Découverte : <strong>' + esc(e.year) + '</strong></span>' +
+      '<span>Découvreur(s) : <strong>' + esc(e.by) + '</strong></span>' +
+      '</div>' +
+      '<button type="button" class="btn btn-sm btn-primary" onclick="App.insertPeriodicElement()">Insérer le symbole</button>' +
+      '</div>' +
+      '</div>';
+  }
+
+  function richEditorHtml(id, placeholder, initialHtml, tall) {
+    return '<div class="rte-toolbar">' +
+      '<button type="button" class="rte-btn" style="font-weight:800" onmousedown="event.preventDefault()" onclick="App.rteCmd(\'' + id + '\',\'bold\')">G</button>' +
+      '<button type="button" class="rte-btn" style="font-style:italic" onmousedown="event.preventDefault()" onclick="App.rteCmd(\'' + id + '\',\'italic\')">I</button>' +
+      '<button type="button" class="rte-btn" style="text-decoration:underline" onmousedown="event.preventDefault()" onclick="App.rteCmd(\'' + id + '\',\'underline\')">S</button>' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.rteCmd(\'' + id + '\',\'backColor\',\'#fff2a8\')">🖍️ Surligner</button>' +
+      '<input type="color" class="rte-color" title="Couleur du texte" value="#e63946" onmousedown="event.preventDefault()" onchange="App.rteCmd(\'' + id + '\',\'foreColor\',this.value)">' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openLatexPicker(\'' + id + '\')">∑ LaTeX</button>' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openPeriodicTable(\'' + id + '\')">🧪 Tableau périodique</button>' +
+      '<span class="rte-sep"></span>' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openTablePicker(\'' + id + '\')">▦ Tableau</button>' +
+      '</div>' +
+      '<div class="rte-editor' + (tall ? " rte-editor-tall" : "") + '" id="' + id + '" contenteditable="true" data-placeholder="' + esc(placeholder || "") + '">' + (initialHtml || "") + '</div>';
+  }
+  function rteMakeTd() {
+    var td = document.createElement("td");
+    td.innerHTML = "<br>";
+    td.oncontextmenu = function (e) { rteOpenCellMenu(e, td); };
+    return td;
+  }
+  function rteBuildTableFragment(rows, cols) {
+    var frag = document.createDocumentFragment();
+    var table = document.createElement("table");
+    var tbody = document.createElement("tbody");
+    for (var r = 0; r < rows; r++) {
+      var tr = document.createElement("tr");
+      for (var c = 0; c < cols; c++) tr.appendChild(rteMakeTd());
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    frag.appendChild(table);
+    var afterLine = document.createElement("div");
+    afterLine.innerHTML = "<br>";
+    frag.appendChild(afterLine);
+    return frag;
+  }
+
+  /* ---------------- Menu clic droit sur une cellule de tableau ---------------- */
+  var rteMenuEl = null;
+  function rteCloseCellMenu() {
+    if (rteMenuEl) { rteMenuEl.remove(); rteMenuEl = null; }
+    document.removeEventListener("mousedown", rteCloseCellMenuOnOutside, true);
+    document.removeEventListener("keydown", rteCloseCellMenuOnEsc, true);
+  }
+  function rteCloseCellMenuOnOutside(e) { if (rteMenuEl && !rteMenuEl.contains(e.target)) rteCloseCellMenu(); }
+  function rteCloseCellMenuOnEsc(e) { if (e.key === "Escape") rteCloseCellMenu(); }
+  function rteMenuItem(label, fn) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "rte-cellmenu-item";
+    b.textContent = label;
+    b.onmousedown = function (e) { e.preventDefault(); };
+    b.onclick = function () { fn(); rteCloseCellMenu(); };
+    return b;
+  }
+  function rteOpenCellMenu(e, cell) {
+    e.preventDefault();
+    rteCloseCellMenu();
+    var menu = document.createElement("div");
+    menu.className = "rte-cellmenu";
+    menu.appendChild(rteMenuItem("⬆️ Ajouter une ligne au-dessus", function () { rteInsertRow(cell, "above"); }));
+    menu.appendChild(rteMenuItem("⬇️ Ajouter une ligne en-dessous", function () { rteInsertRow(cell, "below"); }));
+    menu.appendChild(rteMenuItem("⬅️ Ajouter une colonne à gauche", function () { rteInsertCol(cell, "left"); }));
+    menu.appendChild(rteMenuItem("➡️ Ajouter une colonne à droite", function () { rteInsertCol(cell, "right"); }));
+    menu.appendChild(rteMenuItem("🗑️ Supprimer cette ligne", function () { rteDeleteRow(cell); }));
+    menu.appendChild(rteMenuItem("🗑️ Supprimer cette colonne", function () { rteDeleteCol(cell); }));
+    document.body.appendChild(menu);
+    var mw = menu.offsetWidth, mh = menu.offsetHeight;
+    menu.style.left = Math.min(e.pageX, document.documentElement.scrollWidth - mw - 8) + "px";
+    menu.style.top = Math.min(e.pageY, window.scrollY + window.innerHeight - mh - 8) + "px";
+    rteMenuEl = menu;
+    setTimeout(function () {
+      document.addEventListener("mousedown", rteCloseCellMenuOnOutside, true);
+      document.addEventListener("keydown", rteCloseCellMenuOnEsc, true);
+    }, 0);
+  }
+  function rteInsertRow(cell, dir) {
+    var row = cell.closest("tr");
+    var cellCount = row.children.length;
+    var newRow = document.createElement("tr");
+    for (var i = 0; i < cellCount; i++) newRow.appendChild(rteMakeTd());
+    if (dir === "above") row.parentNode.insertBefore(newRow, row);
+    else row.parentNode.insertBefore(newRow, row.nextSibling);
+  }
+  function rteDeleteRow(cell) {
+    var row = cell.closest("tr");
+    var tbody = row.parentNode;
+    if (tbody.children.length <= 1) { toast("Le tableau doit garder au moins une ligne."); return; }
+    row.remove();
+  }
+  function rteInsertCol(cell, dir) {
+    var row = cell.closest("tr");
+    var table = cell.closest("table");
+    var idx = Array.prototype.indexOf.call(row.children, cell);
+    var insertIdx = dir === "left" ? idx : idx + 1;
+    Array.prototype.forEach.call(table.querySelectorAll("tr"), function (r) {
+      var td = rteMakeTd();
+      if (r.children[insertIdx]) r.insertBefore(td, r.children[insertIdx]);
+      else r.appendChild(td);
+    });
+  }
+  function rteDeleteCol(cell) {
+    var row = cell.closest("tr");
+    var table = cell.closest("table");
+    if (row.children.length <= 1) { toast("Le tableau doit garder au moins une colonne."); return; }
+    var idx = Array.prototype.indexOf.call(row.children, cell);
+    Array.prototype.forEach.call(table.querySelectorAll("tr"), function (r) {
+      if (r.children[idx]) r.children[idx].remove();
+    });
+  }
+  function rteValue(id) {
+    var el = document.getElementById(id);
+    return el ? sanitizeRichHtml(el.innerHTML) : "";
+  }
+  function rteExtractText(node) {
+    var out = "";
+    Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+      if (child.nodeType === 3) { out += child.nodeValue; return; }
+      if (child.nodeType !== 1) return;
+      if (child.classList && child.classList.contains("math-chip")) {
+        out += "$" + (child.getAttribute("data-latex") || "") + "$";
+        return;
+      }
+      if (child.tagName === "BR") { out += "\n"; return; }
+      var childText = rteExtractText(child);
+      if (child.tagName === "TD") { out += childText + "\t"; return; }
+      if (child.tagName === "TR") { out += childText + "\n"; return; }
+      out += (child.tagName === "DIV" || child.tagName === "P") ? childText + "\n" : childText;
+    });
+    return out;
+  }
+  function rteText(id) {
+    var el = document.getElementById(id);
+    return el ? rteExtractText(el).trim() : "";
+  }
+
+  /* ---------------- LaTeX formula picker (MathLive) ---------------- */
+  function katexRenderSafe(latex) {
+    try { return window.katex ? window.katex.renderToString(latex, { throwOnError: false }) : esc("$" + latex + "$"); }
+    catch (e) { return esc("$" + latex + "$"); }
+  }
+  function mathChipHtml(latex) {
+    var zeroWidthSpace = String.fromCharCode(8203);
+    return '<span class="math-chip" contenteditable="false" data-latex="' + esc(latex) + '" title="Cliquer pour modifier" onclick="App.editLatexChip(this)">' + katexRenderSafe(latex) + '</span>' + zeroWidthSpace;
+  }
+  function rtePlainTextToHtml(text) {
+    var html = "";
+    var re = /\$\$([^$]+?)\$\$|\$([^$]+?)\$/g;
+    var last = 0, m;
+    while ((m = re.exec(text))) {
+      html += esc(text.slice(last, m.index)).replace(/\n/g, "<br>");
+      html += mathChipHtml((m[1] !== undefined ? m[1] : m[2]).trim());
+      last = re.lastIndex;
+    }
+    html += esc(text.slice(last)).replace(/\n/g, "<br>");
+    return html;
+  }
+  function rteChipifyDollarText(node) {
+    Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+      if (child.nodeType === 1) {
+        if (child.classList && child.classList.contains("math-chip")) return;
+        rteChipifyDollarText(child);
+        return;
+      }
+      if (child.nodeType !== 3 || !/\$/.test(child.nodeValue)) return;
+      var tpl = document.createElement("template");
+      tpl.innerHTML = rtePlainTextToHtml(child.nodeValue);
+      node.replaceChild(tpl.content, child);
+    });
+  }
+  function rteInsertHtmlAtCaret(editor, html) {
+    var sel = window.getSelection();
+    var range = (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) ? sel.getRangeAt(0) : null;
+    if (!range) {
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+    var tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    rteChipifyDollarText(tpl.content);
+    var lastNode = tpl.content.lastChild;
+    range.deleteContents();
+    range.insertNode(tpl.content);
+    if (sel) {
+      sel.removeAllRanges();
+      if (lastNode) {
+        var after = document.createRange();
+        after.setStartAfter(lastNode);
+        after.collapse(true);
+        sel.addRange(after);
+      }
+    }
+  }
+  document.addEventListener("paste", function (e) {
+    var editor = e.target && e.target.closest && e.target.closest(".rte-editor");
+    if (!editor) return;
+    e.preventDefault();
+    var cd = e.clipboardData || window.clipboardData;
+    var html = cd ? cd.getData("text/html") : "";
+    var text = cd ? cd.getData("text/plain") : "";
+    var insertHtml = html ? sanitizeRichHtml(html) : rtePlainTextToHtml(text);
+    rteInsertHtmlAtCaret(editor, insertHtml);
+  });
+
+  /* ---------------- PDF export (browser print) ---------------- */
+  function buildExercisePrintHtml(title, meta, statementHtml, answerHtml, correct, feedback, solutionHtml) {
+    return '<div class="print-doc">' +
+      '<h1>' + esc(title) + '</h1>' +
+      (meta ? '<p class="print-meta">' + esc(meta) + '</p>' : '') +
+      '<h2>Énoncé</h2><div class="print-block">' + statementHtml + '</div>' +
+      '<h2>Ta réponse</h2><div class="print-block">' + (answerHtml || "<em>(vide)</em>") + '</div>' +
+      '<h2>Correction</h2>' +
+      '<p class="print-verdict ' + (correct ? "good" : "bad") + '">' + (correct ? "✅ Correct" : "❌ Pas tout à fait") + '</p>' +
+      (feedback ? '<div class="print-block">' + mdToHtml(feedback) + '</div>' : "") +
+      '<h2>Solution de référence</h2><div class="print-block">' + solutionHtml + '</div>' +
+      '</div>';
+  }
+  function printAndDownload(html) {
+    var area = document.getElementById("print-area");
+    if (!area) { area = document.createElement("div"); area.id = "print-area"; document.body.appendChild(area); }
+    area.innerHTML = html;
+    renderMath();
+    setTimeout(function () { window.print(); }, 60);
+  }
+
+  function renderTabBody(course, tab, loc) {
+    if (tab === "transcription") {
+      return '<div class="prose">' + mdToHtml(course.transcription) + '</div>';
+    }
+    if (tab === "explication") {
+      return '<div class="prose">' + mdToHtml(course.explanation) + '</div>';
+    }
+    if (tab === "videos") {
+      return '<span class="demo-badge">Recherches suggérées</span><div class="video-list">' + course.videos.map(function (v) {
+        return '<a class="video-item" href="' + v.url + '" target="_blank" rel="noopener noreferrer"><div class="video-ico">' + icon("play") + '</div><div><div class="video-title">' + esc(v.title) + '</div><div class="video-sub">' + esc(v.sub) + '</div></div></a>';
+      }).join("") + '</div>';
+    }
+    if (tab === "flashcards") return renderFlashcards(course);
+    if (tab === "quiz") return renderQuiz(course);
+    return "";
+  }
+
+  /* ---------------- Flashcards ---------------- */
+  function renderFlashcards(course) {
+    if (!course.flashcards.length) return '<div class="fc-done"><h3>Aucune flashcard</h3></div>';
+    var st = fcState[course.id] || { idx: 0, flipped: false };
+    fcState[course.id] = st;
+    if (st.idx >= course.flashcards.length) st.idx = course.flashcards.length - 1;
+    var card = course.flashcards[st.idx];
+    var known = course.flashcards.filter(function (f) { return f.status === "known"; }).length;
+    return '<div class="fc-wrap">' +
+      '<div class="fc-progress"><span>Carte ' + (st.idx + 1) + ' / ' + course.flashcards.length + '</span><span>' + known + ' su' + (known !== 1 ? "es" : "e") + '</span></div>' +
+      '<div class="fc-bar"><div class="fc-bar-fill" style="width:' + Math.round(((st.idx + 1) / course.flashcards.length) * 100) + '%"></div></div>' +
+      '<div class="fc-hint">Clique sur la carte pour la retourner</div>' +
+      '<div class="flip-card' + (st.flipped ? " flipped" : "") + '" onclick="App.flipCard(\'' + course.id + '\')">' +
+      '<div class="flip-inner">' +
+      '<div class="flip-face"><span class="flip-eyebrow">Question</span><span class="flip-text">' + esc(card.q) + '</span></div>' +
+      '<div class="flip-face flip-face-back"><span class="flip-eyebrow">Réponse</span><span class="flip-text">' + esc(card.a) + '</span></div>' +
+      '</div></div>' +
+      '<div class="fc-controls">' +
+      '<button class="btn btn-ghost" onclick="App.markCard(\'' + course.id + '\',\'review\')">À revoir</button>' +
+      '<button class="btn btn-primary" style="width:auto;flex:1" onclick="App.markCard(\'' + course.id + '\',\'known\')">Je la sais</button>' +
+      '</div>' +
+      '<div class="fc-nav"><button ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.navCard(\'' + course.id + '\',-1)">← Précédente</button><button ' + (st.idx === course.flashcards.length - 1 ? "disabled" : "") + ' onclick="App.navCard(\'' + course.id + '\',1)">Suivante →</button></div>' +
+      '</div>';
+  }
+
+  /* ---------------- Quiz ---------------- */
+  function courseQcmQuestions(course) {
+    return (course.quizQuestions || []).filter(function (q) { return q.type === "qcm"; });
+  }
+  function renderQuiz(course) {
+    var questions = courseQcmQuestions(course);
+    if (!questions.length) return '<div class="quiz-done-empty"><h3>Aucune question</h3></div>';
+    var st = quizState[course.id];
+    if (!st) { st = { idx: 0, answers: new Array(questions.length).fill(null), submitted: false }; quizState[course.id] = st; }
+    if (st.submitted) return renderQuizResult(course, st);
+    var q = questions[st.idx];
+    var dots = questions.map(function (_, i) {
+      return '<div class="quiz-dot ' + (st.answers[i] != null ? "done" : "") + (i === st.idx ? " current" : "") + '"></div>';
+    }).join("");
+    var choices = q.choices.map(function (c, i) {
+      return '<label class="quiz-choice ' + (st.answers[st.idx] === i ? "selected" : "") + '" onclick="App.answerQuiz(\'' + course.id + '\',' + i + ')">' +
+        '<input type="radio" name="q' + q.id + '" ' + (st.answers[st.idx] === i ? "checked" : "") + ' readonly><span>' + esc(c) + '</span></label>';
+    }).join("");
+    var isLast = st.idx === questions.length - 1;
+    var canNext = st.answers[st.idx] != null;
+    return '<div class="exercise-layout"><div class="quiz-wrap">' +
+      '<div class="quiz-progress-dots">' + dots + '</div>' +
+      '<div class="quiz-q-num">Question ' + (st.idx + 1) + ' / ' + questions.length + '</div>' +
+      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>' +
+      choices +
+      '<div class="quiz-nav">' +
+      '<button class="btn btn-ghost" ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.quizNav(\'' + course.id + '\',-1)">← Précédente</button>' +
+      (isLast
+        ? '<button class="btn btn-primary" style="width:auto" ' + (canNext ? "" : "disabled") + ' onclick="App.submitQuiz(\'' + course.id + '\')">Valider le contrôle</button>'
+        : '<button class="btn btn-primary" style="width:auto" ' + (canNext ? "" : "disabled") + ' onclick="App.quizNav(\'' + course.id + '\',1)">Suivante →</button>') +
+      '</div></div>' + dinoCompanionHtml() + '</div>';
+  }
+
+  function renderQuizResult(course, st) {
+    var questions = courseQcmQuestions(course);
+    var correct = 0;
+    questions.forEach(function (q, i) { if (st.answers[i] === q.correctIndex) correct++; });
+    var total = questions.length;
+    var score20 = Math.round((correct / total) * 20 * 10) / 10;
+    var items = questions.map(function (q, i) {
+      var ok = st.answers[i] === q.correctIndex;
+      return '<div class="correction-item ' + (ok ? "correct" : "wrong") + '">' +
+        '<div class="correction-q">' + esc(q.prompt) + '</div>' +
+        '<div class="correction-ans ' + (ok ? "good" : "bad") + '">Ta réponse : ' + esc(q.choices[st.answers[i]]) + '</div>' +
+        (ok ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(q.choices[q.correctIndex]) + '</div>') +
+        '<div class="correction-exp">' + mdToHtml(q.explanation) + '</div>' +
+        '</div>';
+    }).join("");
+    return '<div class="quiz-wrap">' +
+      '<div class="result-hero"><div class="result-score mono">' + score20 + '<span style="font-size:22px;color:var(--text-muted)">/20</span></div><div class="result-total">' + correct + ' bonnes réponses sur ' + total + '</div></div>' +
+      '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.retryQuiz(\'' + course.id + '\')">Refaire le contrôle</button>' +
+      '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items +
+      '</div>';
+  }
+
+  /* ---------------- Modals ---------------- */
+  function renderModal() {
+    var LIGHT_MODAL_TYPES = { companion: 1, latex: 1, periodic: 1, table: 1 };
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay" + (modal.type === "latex" ? " modal-overlay-top" : "");
+    overlay.onclick = function (e) { if (e.target === overlay) { LIGHT_MODAL_TYPES[modal.type] ? App.closeLightModal() : App.closeModal(); } };
+    var inner = "";
+    if (modal.type === "subject") {
+      inner = '<h3>Nouvelle matière</h3><form onsubmit="App.createSubject(event)">' +
+        '<div class="field"><label>Nom</label><input name="name" placeholder="Ex. Mathématiques" required autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Créer</button></div>' +
+        '</form>';
+    } else if (modal.type === "chapter") {
+      inner = '<h3>Nouveau chapitre</h3><form onsubmit="App.createChapter(event)">' +
+        '<div class="field"><label>Nom</label><input name="name" placeholder="Ex. Les fractions" required autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Créer</button></div>' +
+        '</form>';
+    } else if (modal.type === "course") {
+      var subs = userData().subjects;
+      var subjectOptions = subs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+      var currentSubj = findSubject(modal.subjectId) || subs[0];
+      var chapterOptions = (currentSubj ? currentSubj.chapters : []).map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
+      inner = '<h3>Importer un cours</h3><form onsubmit="App.createCourse(event)">' +
+        '<div class="field"><label>Photos du cours (une ou plusieurs pages)</label>' +
+        '<div class="file-thumbs">' +
+        modal.imagePreviews.map(function (src, i) {
+          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
+        }).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'courseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        '</div>' +
+        '<input id="courseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<div class="field"><label>Titre du cours</label><input name="title" placeholder="Ex. Le théorème de Pythagore" required autofocus></div>' +
+        '<div class="field"><label>Matière</label><select name="subjectId" onchange="App.changeModalSubject(this.value)">' + subjectOptions + '</select></div>' +
+        '<div class="field"><label>Chapitre</label><select name="chapterId">' + chapterOptions + '</select></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Générer le cours</button></div>' +
+        '</form>';
+    } else if (modal.type === "addCourseDocs") {
+      inner = '<h3>Ajouter des documents</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Les nouvelles photos s\'ajoutent aux ' + modal.existingCount + ' déjà importées, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
+        '<form onsubmit="App.addCourseDocs(event)">' +
+        '<div class="field"><label>Nouvelles photos</label>' +
+        '<div class="file-thumbs">' +
+        modal.imagePreviews.map(function (src, i) {
+          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
+        }).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'addDocsFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        '</div>' +
+        '<input id="addDocsFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Ajouter et régénérer</button></div>' +
+        '</form>';
+    } else if (modal.type === "exercice") {
+      inner = '<h3>Importer un exercice</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Ton propre exercice, dans n\'importe quelle matière — corrigé par l\'IA, mais ne rapporte pas de points Dino Park.</p>' +
+        '<form onsubmit="App.createImportedExercise(event)">' +
+        '<div class="field"><label>Photos de l\'exercice</label>' +
+        '<div class="file-thumbs">' +
+        modal.imagePreviews.map(function (src, i) {
+          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
+        }).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'exerciseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        '</div>' +
+        '<input id="exerciseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<div class="field"><label>Titre (optionnel)</label><input name="title" placeholder="Ex. Exercice de géométrie" autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Importer</button></div>' +
+        '</form>';
+    } else if (modal.type === "confirmDelete") {
+      var name = "", warn = "";
+      if (modal.kind === "subject") {
+        var ds = findSubject(modal.subjectId);
+        name = ds ? ds.name : "";
+        warn = "Tous ses chapitres et tous les cours qu'elle contient seront supprimés avec elle.";
+      } else if (modal.kind === "chapter") {
+        var dsub = findSubject(modal.subjectId);
+        var dch = findChapter(dsub, modal.chapterId);
+        name = dch ? dch.name : "";
+        warn = "Tous les cours qu'il contient seront supprimés avec lui.";
+      } else if (modal.kind === "course") {
+        var dsub2 = findSubject(modal.subjectId);
+        var dch2 = findChapter(dsub2, modal.chapterId);
+        var dco = findCourse(dch2, modal.courseId);
+        name = dco ? dco.title : "";
+        warn = "Sa retranscription, ses flashcards et son contrôle seront perdus.";
+      } else if (modal.kind === "importedExercise") {
+        var die = userData().importedExercises.find(function (x) { return x.id === modal.courseId; });
+        name = die ? die.title : "";
+        warn = "Son énoncé, ta réponse et sa correction seront perdus.";
+      }
+      inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
+        '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
+    } else if (modal.type === "apiKey") {
+      inner = '<h3>Clé API Gemini</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Stockée uniquement dans le stockage local de ce navigateur, envoyée uniquement à l\'API Google Gemini pour générer tes cours.</p>' +
+        '<form onsubmit="App.saveApiKey(event)">' +
+        '<div class="field"><label>Clé API</label><input name="apiKey" type="password" placeholder="AIzaSy..." value="' + esc(getApiKey()) + '" autocomplete="off" autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
+        '</form>';
+    } else if (modal.type === "settings") {
+      inner = '<h3>Paramètres</h3>' +
+        '<div class="field"><label>Clé API Gemini</label>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
+        '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openApiKeyModal()">🔑 ' + (getApiKey() ? "Modifier" : "Ajouter") + '</button>' +
+        '</div></div>' +
+        '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
+        '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
+        '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
+        '<div class="field"><label>Volume effets sonores — <span id="vol-sfx-val">' + getVolumeSfx() + '</span>%</label>' +
+        '<input type="range" min="0" max="100" value="' + getVolumeSfx() + '" oninput="document.getElementById(\'vol-sfx-val\').textContent=this.value;App.setVolumeSfx(this.value)" onchange="App.previewSfxVolume()"></div>' +
+        '<p class="modal-warn" style="margin-top:2px">Aucune musique de fond n\'est disponible pour l\'instant — ce réglage s\'appliquera dès qu\'une musique sera ajoutée.</p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-primary" style="width:100%" onclick="App.closeModal()">Fermer</button></div>';
+    } else if (modal.type === "dinoFiche") {
+      var fd = dpDinosaurById(modal.dinoId);
+      if (fd) {
+        dpTick(fd);
+        var fsp = dpSpecies(fd.speciesId);
+        var frarity = DP_RARITY[fsp.rarity];
+        var fhunger = dpHunger(fd), fhealth = dpHealth(fd), fhappy = dpHappiness(fd);
+        var fneed = fhealth < DP_HEALTH_ALERT && fhunger < DP_HUNGER_ALERT ? "both" : fhealth < DP_HEALTH_ALERT ? "sick" : fhunger < DP_HUNGER_ALERT ? "hungry" : null;
+        var fneedBanner = fneed ? '<p style="text-align:center;color:var(--danger);font-weight:700;font-size:12.5px;margin:-4px 0 14px">' + (fneed === "both" ? "⚠️ A faim et malade !" : fneed === "sick" ? "🤒 Ce dino est malade !" : "🍖 Ce dino a faim !") + '</p>' : '';
+        var freeEncs = fd.enclosureId ? [] : dpEnclosuresAvailableFor(fd);
+        var fdp = dpData();
+        var portionsNeeded = dpFoodPortionsNeeded(fsp.weightKg);
+        var inventoryPanel = '<div class="dp-care-shop"><div class="dp-care-title">🎒 Inventaire</div>' +
+          '<div class="dp-care-group"><div class="dp-care-group-label">Nourriture — ' + portionsNeeded + ' portions par repas</div><div class="dp-care-row">' +
+          DP_FOOD_ITEMS.map(function (it) {
+            var have = fdp.inventory[it.id] || 0;
+            var can = have >= portionsNeeded;
+            var matches = fsp.diet === "omnivore" || fsp.diet === it.diet;
+            return '<button type="button" class="dp-care-item' + (matches ? " dp-care-match" : "") + '" ' + (can ? "" : "disabled") + ' onclick="App.dpFeedDino(\'' + fd.id + '\',\'' + it.id + '\')" title="' + (matches ? "Convient à ce régime" : "Ne convient pas à ce régime — risque de maladie") + '"><span class="dp-care-emoji">' + (it.unitImg ? '<img src="' + it.unitImg + '" alt="">' : it.emoji) + '</span><span>' + esc(it.name) + '</span><span class="dp-care-price mono">' + have + ' en stock</span></button>';
+          }).join("") + '</div></div>' +
+          '<div class="dp-care-group"><div class="dp-care-group-label">Soins</div><div class="dp-care-row">' +
+          DP_MEDICINE_ITEMS.map(function (it) {
+            var have = fdp.inventory[it.id] || 0;
+            var can = have >= 1;
+            return '<button type="button" class="dp-care-item" ' + (can ? "" : "disabled") + ' onclick="App.dpUseCare(\'' + fd.id + '\',\'' + it.id + '\')"><span class="dp-care-emoji">' + (it.unitImg ? '<img src="' + it.unitImg + '" alt="">' : it.emoji) + '</span><span>' + esc(it.name) + '</span><span class="dp-care-price mono">' + have + ' en stock</span></button>';
+          }).join("") + '</div></div>' +
+          '<p class="modal-warn" style="margin-top:10px">Achète des caisses chez le marchand d\'objets pour remplir ton inventaire.</p></div>';
+        inner = dpSquareHtml(fsp.id, { kind: "face", style: "width:96px;height:96px;margin:0 auto 14px;display:block" }) +
+          '<h3 style="text-align:center">' + esc(fd.name) + '</h3>' +
+          '<p style="text-align:center;color:var(--text-muted);font-size:12.5px;margin:-10px 0 18px">' + esc(fsp.name) + ' · ' + frarity.label + ' · ' + (fd.sex === "M" ? "Mâle" : "Femelle") + ' · ' + dpAgeLabel(fd) + '</p>' +
+          fneedBanner +
+          '<div class="dp-stat"><span>Santé</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhealth + '%;background:var(--success)"></div></div><span class="mono">' + fhealth + '%</span></div>' +
+          '<div class="dp-stat"><span>Faim</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhunger + '%;background:var(--accent)"></div></div><span class="mono">' + fhunger + '%</span></div>' +
+          '<div class="dp-stat"><span>Bonheur</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhappy + '%;background:var(--leaf)"></div></div><span class="mono">' + fhappy + '%</span></div>' +
+          '<p style="font-size:12.5px;color:var(--text-muted);margin:14px 0">Régime : ' + esc(fsp.diet) + ' · Poids adulte : ' + dpWeightLabel(fsp.weightKg) + ' · Habitat : ' + esc(dpZone(fsp.zone).name) + '</p>' +
+          (fd.enclosureId
+            ? inventoryPanel
+            : '<p style="text-align:center;color:var(--danger);font-weight:700;font-size:12.5px;margin:-4px 0 14px">⏳ Il mourra dans ' + dpFormatCountdown(DP_HATCH_PLACEMENT_LIMIT - (Date.now() - fd.bornAt)) + ' s\'il n\'est pas placé dans un enclos</p>' +
+              '<div class="field"><label>Placer dans un enclos</label><select onchange="App.dpPlaceDino(\'' + fd.id + '\', this.value)"><option value="">Choisir un enclos…</option>' + freeEncs.map(function (e) { return '<option value="' + e.id + '">' + esc(dpEnclosureDisplayName(e)) + '</option>'; }).join("") + '</select>' + (freeEncs.length ? "" : '<p class="modal-warn" style="margin-top:8px">Construis un enclos (ou trouve-en un avec la même espèce et de la place) dans la zone ' + esc(dpZone(fsp.zone).name) + ' pour l\'installer.</p>') + '</div>') +
+          '<div class="modal-actions"><button type="button" class="btn btn-ghost" style="width:100%" onclick="App.closeModal()">Fermer</button></div>';
+      }
+    } else if (modal.type === "companion") {
+      var dp2 = dpData();
+      var seenSpecies = {};
+      var speciesOwned = [];
+      dp2.dinosaurs.forEach(function (d) {
+        if (seenSpecies[d.speciesId]) { seenSpecies[d.speciesId].count++; return; }
+        var entry = { speciesId: d.speciesId, count: 1 };
+        seenSpecies[d.speciesId] = entry;
+        speciesOwned.push(entry);
+      });
+      inner = '<h3>Choisis ton compagnon d\'étude</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Un compagnon par espèce — il t\'accompagnera pendant les quiz et exercices.</p>' +
+        '<div class="dp-subject-grid">' +
+        '<div class="dp-subject-card' + (dp2.companionSpeciesId ? "" : " dp-subject-card-active") + '" style="cursor:pointer;text-align:center" onclick="App.setCompanion(null)">Aucun</div>' +
+        speciesOwned.map(function (row) {
+          var dsp = dpSpecies(row.speciesId);
+          return '<div class="dp-subject-card' + (dp2.companionSpeciesId === row.speciesId ? " dp-subject-card-active" : "") + '" style="cursor:pointer;text-align:center" onclick="App.setCompanion(\'' + row.speciesId + '\')">' +
+            dpSquareHtml(row.speciesId, { kind: "face", style: "width:56px;height:56px;margin:0 auto 6px;display:block" }) +
+            '<div style="font-weight:700;font-size:12.5px">' + esc(dsp ? dsp.name : "") + '</div>' +
+            (row.count > 1 ? '<div style="font-size:10px;color:var(--text-muted)">×' + row.count + '</div>' : '') +
+            '</div>';
+        }).join("") +
+        '</div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" style="width:100%" onclick="App.closeLightModal()">Fermer</button></div>';
+    } else if (modal.type === "errorDetail") {
+      inner = '<h3>Détail de l\'erreur</h3>' +
+        (modal.status ? '<p class="modal-warn" style="margin-bottom:10px">Code HTTP : <strong>' + esc(String(modal.status)) + '</strong></p>' : '') +
+        '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
+    } else if (modal.type === "latex") {
+      inner = '<h3>Insérer une formule</h3>' +
+        '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code.</p>' +
+        '<math-field id="latex-mathfield" class="latex-mathfield"></math-field>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.insertLatexFormula()">Insérer</button></div>';
+    } else if (modal.type === "periodic") {
+      inner = '<h3>Tableau périodique</h3>' +
+        periodicGridHtml() +
+        periodicLegendHtml() +
+        (modal.selected ? periodicDetailHtml(modal.selected) : '<p class="modal-warn" style="margin:10px 0 0">Clique sur un élément pour voir ses infos.</p>') +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" style="width:100%" onclick="App.closeLightModal()">Fermer</button></div>';
+    } else if (modal.type === "table") {
+      inner = '<h3>Insérer un tableau</h3>' +
+        '<form onsubmit="App.insertTable(event)">' +
+        '<div class="field"><label>Nombre de lignes</label><input type="number" name="rows" min="1" max="20" value="3" required autofocus></div>' +
+        '<div class="field"><label>Nombre de colonnes</label><input type="number" name="cols" min="1" max="12" value="3" required></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="submit" class="btn btn-primary">Insérer</button></div>' +
+        '</form>';
+    }
+    overlay.innerHTML = '<div class="modal' + (modal.type === "latex" || modal.type === "periodic" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
+    document.body.appendChild(overlay);
+  }
+
+  /* ---------------- App controller ---------------- */
+  window.App = {
+    switchAuth: function (mode) { authError = ""; navigate("#/" + mode); },
+    submitAuth: async function (e, mode) {
+      e.preventDefault();
+      var f = e.target;
+      var username = f.username.value.trim();
+      var password = f.password.value;
+      if (!username || !password) return;
+      var hash = await sha256(password);
+      if (mode === "signup") {
+        if (DB.users[username]) { authError = "Ce nom d'utilisateur existe déjà."; renderAuth("signup"); return; }
+        DB.users[username] = { passwordHash: hash };
+        DB.data[username] = { subjects: [] };
+        DB.currentUser = username;
+        authError = "";
+        saveDB();
+        toast("Bienvenue, " + username + " !");
+        navigate("#/");
+      } else {
+        var u = DB.users[username];
+        if (!u || u.passwordHash !== hash) { authError = "Identifiants incorrects."; renderAuth("login"); return; }
+        DB.currentUser = username;
+        authError = "";
+        saveDB();
+        navigate("#/");
+      }
+    },
+    logout: function () { DB.currentUser = null; saveDB(); navigate("#/"); },
+    toggleTheme: function () {
+      var html = document.documentElement;
+      var cur = html.getAttribute("data-app-theme");
+      var next = cur === "dark" ? "light" : "dark";
+      html.setAttribute("data-app-theme", next);
+      localStorage.setItem("recto_theme", next);
+    },
+    openModal: function (type, subjectId, chapterId) {
+      modal = { type: type, subjectId: subjectId || (userData().subjects[0] && userData().subjects[0].id), chapterId: chapterId, imagePreviews: [] };
+      render();
+    },
+    closeModal: function () { modal = null; render(); },
+    changeModalSubject: function (subjectId) { modal.subjectId = subjectId; modal.chapterId = null; render(); },
+    handleFile: function (e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      if (!files.length) return;
+      files.forEach(function (file) {
+        processImageFile(file).then(function (dataUrl) {
+          modal.imagePreviews.push(dataUrl);
+          render();
+        }).catch(function (err) {
+          toast((err && err.message) || ("Impossible de lire " + file.name));
+        });
+      });
+      e.target.value = "";
+    },
+    removeCourseImage: function (index) {
+      modal.imagePreviews.splice(index, 1);
+      render();
+    },
+
+    rteCmd: function (id, cmd, value) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.focus();
+      try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+      document.execCommand(cmd, false, value);
+    },
+
+    closeLightModal: function () {
+      var ov = document.querySelector(".modal-overlay");
+      if (ov) ov.remove();
+      if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.hide();
+      modal = null;
+    },
+    openCompanionModal: function () { modal = { type: "companion" }; renderModal(); },
+    setCompanion: function (speciesId) {
+      dpData().companionSpeciesId = speciesId || null;
+      saveDB();
+      App.closeLightModal();
+      var slot = document.getElementById("dino-companion-panel-slot");
+      if (slot) slot.outerHTML = dinoCompanionHtml();
+    },
+
+    openLatexPicker: function (editorId) {
+      var el = document.getElementById(editorId);
+      var savedRange = null;
+      if (el) {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          var r = sel.getRangeAt(0);
+          if (el.contains(r.commonAncestorContainer)) savedRange = r.cloneRange();
+        }
+      }
+      modal = { type: "latex", editorId: editorId, savedRange: savedRange, editingChip: null };
+      renderModal();
+      var mf = document.getElementById("latex-mathfield");
+      if (mf) {
+        mf.focus();
+        if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.show();
+      }
+    },
+    editLatexChip: function (chipEl) {
+      var editorEl = chipEl.closest(".rte-editor");
+      if (!editorEl) return; // read-only display (already submitted) — not editable
+      modal = { type: "latex", editorId: editorEl.id, savedRange: null, editingChip: chipEl };
+      renderModal();
+      var mf = document.getElementById("latex-mathfield");
+      if (mf) {
+        mf.value = chipEl.getAttribute("data-latex") || "";
+        mf.focus();
+        if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.show();
+      }
+    },
+    insertLatexFormula: function () {
+      var mf = document.getElementById("latex-mathfield");
+      var formula = mf && mf.value ? mf.value.trim() : "";
+      var m = modal;
+      App.closeLightModal();
+      if (m.editingChip) {
+        if (!formula) { m.editingChip.remove(); return; }
+        m.editingChip.setAttribute("data-latex", formula);
+        m.editingChip.innerHTML = katexRenderSafe(formula);
+        return;
+      }
+      if (!formula) return;
+      var el = m && m.editorId ? document.getElementById(m.editorId) : null;
+      if (!el) return;
+      el.focus();
+      var range = null;
+      if (m.savedRange && el.contains(m.savedRange.startContainer)) range = m.savedRange;
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+      var tpl = document.createElement("template");
+      tpl.innerHTML = mathChipHtml(formula);
+      var lastNode = tpl.content.lastChild;
+      range.deleteContents();
+      range.insertNode(tpl.content);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      if (lastNode) {
+        var after = document.createRange();
+        after.setStartAfter(lastNode);
+        after.collapse(true);
+        sel.addRange(after);
+      }
+    },
+
+    openPeriodicTable: function (editorId) {
+      var el = document.getElementById(editorId);
+      var savedRange = null;
+      if (el) {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          var r = sel.getRangeAt(0);
+          if (el.contains(r.commonAncestorContainer)) savedRange = r.cloneRange();
+        }
+      }
+      modal = { type: "periodic", editorId: editorId, savedRange: savedRange, selected: null };
+      render();
+    },
+    selectPeriodicElement: function (sym) {
+      modal.selected = sym;
+      render();
+    },
+    insertPeriodicElement: function () {
+      var m = modal;
+      var e = m && m.selected ? PERIODIC_BY_SYM[m.selected] : null;
+      if (!e) return;
+      var el = m.editorId ? document.getElementById(m.editorId) : null;
+      App.closeLightModal();
+      if (!el) return;
+      el.focus();
+      var range = null;
+      if (m.savedRange && el.contains(m.savedRange.startContainer)) range = m.savedRange;
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+      var node = document.createTextNode(e.sym);
+      range.deleteContents();
+      range.insertNode(node);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      var after = document.createRange();
+      after.setStartAfter(node);
+      after.collapse(true);
+      sel.addRange(after);
+    },
+
+    openTablePicker: function (editorId) {
+      var el = document.getElementById(editorId);
+      var savedRange = null;
+      if (el) {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          var r = sel.getRangeAt(0);
+          if (el.contains(r.commonAncestorContainer)) savedRange = r.cloneRange();
+        }
+      }
+      modal = { type: "table", editorId: editorId, savedRange: savedRange };
+      render();
+    },
+    insertTable: function (e) {
+      e.preventDefault();
+      var rows = Math.max(1, Math.min(20, parseInt(e.target.rows.value, 10) || 3));
+      var cols = Math.max(1, Math.min(12, parseInt(e.target.cols.value, 10) || 3));
+      var m = modal;
+      App.closeLightModal();
+      var el = m && m.editorId ? document.getElementById(m.editorId) : null;
+      if (!el) return;
+      el.focus();
+      var range = null;
+      if (m.savedRange && el.contains(m.savedRange.startContainer)) range = m.savedRange;
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+      var frag = rteBuildTableFragment(rows, cols);
+      var lastNode = frag.lastChild;
+      range.deleteContents();
+      range.insertNode(frag);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      if (lastNode) {
+        var after = document.createRange();
+        after.selectNodeContents(lastNode);
+        after.collapse(true);
+        sel.addRange(after);
+      }
+    },
+
+    createSubject: function (e) {
+      e.preventDefault();
+      var name = e.target.name.value.trim();
+      if (!name) return;
+      var s = { id: uid(), name: name, chapters: [] };
+      userData().subjects.push(s);
+      saveDB();
+      modal = null;
+      toast("Matière créée");
+      navigate("#/subject/" + s.id);
+    },
+    createChapter: function (e) {
+      e.preventDefault();
+      var name = e.target.name.value.trim();
+      if (!name) return;
+      var s = findSubject(modal.subjectId);
+      var c = { id: uid(), name: name, courses: [] };
+      s.chapters.push(c);
+      saveDB();
+      modal = null;
+      toast("Chapitre créé");
+      navigate("#/subject/" + s.id + "/chapter/" + c.id);
+    },
+    createCourse: function (e) {
+      e.preventDefault();
+      var f = e.target;
+      var title = f.title.value.trim();
+      var subjectId = f.subjectId.value;
+      var chapterId = f.chapterId.value;
+      if (!title || !subjectId || !chapterId) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var s = findSubject(subjectId);
+      var c = findChapter(s, chapterId);
+      var course = {
+        id: uid(), title: title, images: modal.imagePreviews.slice(), status: "processing",
+        transcription: "", explanation: "", videos: [], flashcards: [], quizQuestions: [], exercises: [], attempts: [], error: null
+      };
+      c.courses.push(course);
+      saveDB();
+      modal = null;
+      navigate("#/course/" + course.id);
+      runCourseGeneration(course, s.name, c.name);
+    },
+    retryGeneration: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+    },
+    openAddCourseDocsModal: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      modal = { type: "addCourseDocs", courseId: courseId, imagePreviews: [], existingCount: (loc.course.images || []).length };
+      render();
+    },
+    addCourseDocs: function (e) {
+      e.preventDefault();
+      if (!modal.imagePreviews.length) { toast("Ajoute au moins une nouvelle photo"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var loc = locateCourse(modal.courseId);
+      if (!loc) { App.closeModal(); return; }
+      loc.course.images = (loc.course.images || []).concat(modal.imagePreviews);
+      saveDB();
+      modal = null;
+      navigate("#/course/" + loc.course.id);
+      runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+    },
+    openCourseErrorDetail: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      modal = { type: "errorDetail", status: loc.course.errorStatus, detail: loc.course.errorDetail };
+      render();
+    },
+
+    createImportedExercise: function (e) {
+      e.preventDefault();
+      if (!modal.imagePreviews.length) { toast("Ajoute au moins une photo de ton exercice"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var title = e.target.title.value.trim() || ("Exercice du " + new Date().toLocaleDateString("fr-FR"));
+      var entry = {
+        id: uid(), title: title, images: modal.imagePreviews.slice(), status: "processing", error: null,
+        subjectGuess: "", statement: "", solution: "",
+        answerStatus: "unanswered", answerHtml: "", answerText: "",
+        correct: null, feedback: "", createdAt: Date.now()
+      };
+      userData().importedExercises.push(entry);
+      saveDB();
+      modal = null;
+      navigate("#/exercices/" + entry.id);
+      runImportedExerciseGeneration(entry);
+    },
+    retryImportedExerciseGeneration: function (exId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+      if (!entry) return;
+      runImportedExerciseGeneration(entry);
+    },
+    openImportedExerciseErrorDetail: function (exId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+      if (!entry) return;
+      modal = { type: "errorDetail", status: entry.errorStatus, detail: entry.errorDetail };
+      render();
+    },
+    showErrorDetailRaw: function (tid) {
+      var d = toastErrorDetails[tid];
+      if (!d) return;
+      modal = { type: "errorDetail", status: d.status, detail: d.detail };
+      render();
+    },
+    submitImportedExerciseAnswer: function (exId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+      if (!entry) return;
+      entry.answerHtml = rteValue("ie-answer");
+      var answerText = rteText("ie-answer");
+      if (!answerText) { toast("Écris une réponse avant de valider"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      entry.answerText = answerText;
+      entry.answerStatus = "grading";
+      saveDB(); render();
+      gradeExerciseAnswer(entry.statement, entry.solution, answerText).then(function (result) {
+        entry.answerStatus = "graded";
+        entry.correct = !!result.correct;
+        entry.feedback = result.feedback || "";
+        saveDB();
+        render();
+        dinoReact(entry.correct);
+      }).catch(function (err) {
+        entry.answerStatus = "unanswered";
+        toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+        render();
+      });
+    },
+    retryImportedExerciseAnswer: function (exId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+      if (!entry) return;
+      entry.answerStatus = "unanswered";
+      entry.answerHtml = ""; entry.answerText = ""; entry.correct = null; entry.feedback = "";
+      saveDB();
+      render();
+    },
+    downloadImportedExercisePdf: function (exId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
+      if (!entry || entry.answerStatus !== "graded") return;
+      var html = buildExercisePrintHtml(entry.title, entry.subjectGuess, mdToHtml(entry.statement), entry.answerHtml, entry.correct, entry.feedback, mdToHtml(entry.solution));
+      printAndDownload(html);
+    },
+    openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
+    openSettingsModal: function () { modal = { type: "settings" }; render(); },
+    setVolumeMusic: function (v) { localStorage.setItem(VOLUME_MUSIC_STORAGE, String(v)); },
+    setVolumeSfx: function (v) { localStorage.setItem(VOLUME_SFX_STORAGE, String(v)); },
+    previewSfxVolume: function () { dpPlayMerchantSound("welcome"); },
+    saveApiKey: function (e) {
+      e.preventDefault();
+      var key = e.target.apiKey.value.trim();
+      setApiKey(key);
+      modal = null;
+      toast(key ? "Clé API enregistrée" : "Clé API effacée");
+      render();
+    },
+
+    askDelete: function (kind, subjectId, chapterId, courseId) {
+      modal = { type: "confirmDelete", kind: kind, subjectId: subjectId, chapterId: chapterId, courseId: courseId };
+      render();
+    },
+    executeDelete: function () {
+      var m = modal;
+      if (m.kind === "subject") {
+        var d = userData();
+        d.subjects = d.subjects.filter(function (s) { return s.id !== m.subjectId; });
+        toast("Matière supprimée");
+      } else if (m.kind === "chapter") {
+        var s = findSubject(m.subjectId);
+        s.chapters = s.chapters.filter(function (c) { return c.id !== m.chapterId; });
+        toast("Chapitre supprimé");
+      } else if (m.kind === "course") {
+        var s2 = findSubject(m.subjectId);
+        var c2 = findChapter(s2, m.chapterId);
+        c2.courses = c2.courses.filter(function (co) { return co.id !== m.courseId; });
+        toast("Cours supprimé");
+      } else if (m.kind === "importedExercise") {
+        var d2 = userData();
+        d2.importedExercises = d2.importedExercises.filter(function (x) { return x.id !== m.courseId; });
+        toast("Exercice supprimé");
+      }
+      saveDB();
+      modal = null;
+      render();
+    },
+
+    dtGoDinoTime: function () { dtState.mode = "setup"; navigate("#/dinotime"); render(); },
+    dtSetDuration: function (min) {
+      min = parseInt(min, 10);
+      if (!min || min < 1) return;
+      dtState.durationMin = Math.min(240, min);
+      render();
+    },
+    dtSelectEnclosure: function (encId) { dtState.enclosureId = encId; render(); },
+    dtStart: function () {
+      var enc = dtAllEnclosures().find(function (e) { return e.id === dtState.enclosureId; });
+      if (!enc) { toast("Choisis un enclos"); return; }
+      var dinos = dtEnclosureDinos(enc.id).map(dtInitDinoState);
+      var durSec = dtState.durationMin * 60;
+      dtRunning = { enclosureId: enc.id, remainingSec: durSec, endsAt: Date.now() + durSec * 1000, dinos: dinos, paused: false };
+      dtState.mode = "running";
+      render();
+    },
+    dtTogglePause: function () {
+      if (!dtRunning) return;
+      dtRunning.paused = !dtRunning.paused;
+      if (dtRunning.paused) {
+        dtRunning.remainingSec = Math.max(0, Math.round((dtRunning.endsAt - Date.now()) / 1000));
+      } else {
+        dtRunning.endsAt = Date.now() + dtRunning.remainingSec * 1000;
+      }
+      var btn = document.getElementById("dt-pause-btn");
+      if (btn) btn.textContent = dtRunning.paused ? "▶" : "⏸";
+      var scene = document.querySelector(".dt-scene");
+      if (scene) scene.classList.toggle("paused", dtRunning.paused);
+    },
+    dtStop: function () {
+      dtStopTimerInterval();
+      dtStopWalkLoop();
+      dtRunning = null;
+      dtState.mode = "setup";
+      render();
+    },
+    dtComplete: function () {
+      dtStopTimerInterval();
+      dtStopWalkLoop();
+      dtRunning = null;
+      dtState.mode = "setup";
+      dpPlayMerchantSound("thankyou");
+      toast("🎉 Séance terminée !");
+      render();
+    },
+    dpGoHub: function () { dpView = { mode: "hub" }; navigate("#/dinopark"); render(); },
+    dpGoZone: function (zoneId) { dpView = { mode: "zone", zoneId: zoneId }; render(); },
+    dpGoLab: function () { dpView = { mode: "lab" }; render(); },
+    dpGoEncyclopedia: function () { dpView = { mode: "encyclopedia" }; render(); },
+    dpGoQuiz: function () { dpView = { mode: "quiz", quizNav: { level: "subjects" } }; render(); },
+    dpQuizGoSubjects: function () { dpView.quizNav = { level: "subjects" }; render(); },
+    dpQuizGoSubject: function (subjectId) { dpView.quizNav = { level: "chapters", subjectId: subjectId }; render(); },
+    dpQuizGoChapters: function (subjectId) { dpView.quizNav = { level: "chapters", subjectId: subjectId }; render(); },
+    dpQuizGoChapter: function (chapterId) { dpView.quizNav.level = "courses"; dpView.quizNav.chapterId = chapterId; render(); },
+    dpUnlockZone: function (zoneId) {
+      var dp = dpData(); var z = dpZone(zoneId);
+      if (dp.points < z.cost) { toast("Pas assez de points"); return; }
+      dp.points -= z.cost; dp.unlockedZones.push(zoneId);
+      saveDB(); toast("Zone " + z.name + " débloquée !"); render();
+    },
+    dpBuyEgg: function (zoneId, speciesId) {
+      var dp = dpData(); var sp = dpSpecies(speciesId); var rarity = DP_RARITY[sp.rarity];
+      if (!dpEnclosuresInZone(zoneId).length) { toast("Construis d'abord un enclos dans cette zone"); return; }
+      if (dp.points < rarity.price) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      dp.points -= rarity.price; dp.eggs.push({ id: uid(), speciesId: speciesId });
+      saveDB(); dpPlayMerchantSound("thankyou"); toast("Œuf de " + sp.name + " acheté"); render();
+    },
+    dpBuildEnclosure: function (zoneId) {
+      var dp = dpData(); var cost = dpZoneEnclosureCost(zoneId);
+      if (dp.points < cost) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      dp.points -= cost;
+      dp.enclosures.push({ id: uid(), zone: zoneId, name: "Enclos " + (count + 1), capacity: 2, level: 1, variant: dpRandomEnclosureVariant(zoneId) });
+      saveDB(); dpPlayMerchantSound("thankyou"); toast("Nouvel enclos construit"); render();
+    },
+    dpUpgradeEnclosure: function (encId) {
+      var dp = dpData(); var enc = dp.enclosures.find(function (e) { return e.id === encId; });
+      var cost = DP_ENCLOSURE_UPGRADE_COST[enc.level];
+      if (cost == null) { toast("Enclos déjà au niveau maximum"); return; }
+      if (dp.points < cost) { toast("Pas assez de points"); return; }
+      dp.points -= cost; enc.level += 1; enc.variant = dpRandomEnclosureVariant(enc.zone);
+      saveDB(); toast("Enclos amélioré au niveau " + enc.level); render();
+    },
+    dpOpenMerchant: function (zoneId) { dpMerchantZone = zoneId; dpMerchantMode = "eggs"; dpSellMode = false; dpSellSelectedDinoId = null; dpPlayMerchantSound("welcome"); render(); },
+    dpOpenObjectMerchant: function (zoneId) { dpMerchantZone = zoneId; dpMerchantMode = "objects"; dpSellMode = false; dpSellSelectedDinoId = null; dpPlayMerchantSound("welcome"); render(); },
+    dpCloseMerchant: function () { dpMerchantZone = null; dpSellMode = false; dpSellSelectedDinoId = null; render(); },
+    dpStartSellDino: function () {
+      dpSellMode = true; dpSellSelectedDinoId = null;
+      dpPlayMerchantSound("whatAreYouSelling");
+      render();
+    },
+    dpCancelSellDino: function () {
+      dpSellMode = false; dpSellSelectedDinoId = null;
+      render();
+    },
+    dpSelectSellDino: function (dinoId) {
+      dpSellSelectedDinoId = dinoId;
+      dpPlayMerchantSound("interesting");
+      render();
+    },
+    dpConfirmSellDino: function () {
+      var dp = dpData();
+      var idx = dp.dinosaurs.findIndex(function (d) { return d.id === dpSellSelectedDinoId; });
+      if (idx === -1) return;
+      var d = dp.dinosaurs[idx];
+      var sp = dpSpecies(d.speciesId);
+      var sellPrice = Math.round(DP_RARITY[sp.rarity].price / 2);
+      dp.dinosaurs.splice(idx, 1);
+      dp.points += sellPrice;
+      dpSellSelectedDinoId = null;
+      saveDB();
+      dpPlayMerchantSound("thankyou");
+      toast(d.name + " vendu · +" + sellPrice + " pts");
+      render();
+    },
+    dpRefreshShop: function (zoneId) {
+      var dp = dpData();
+      if (dp.points < DP_SHOP_REFRESH_COST) { toast("Pas assez de points"); return; }
+      dp.points -= DP_SHOP_REFRESH_COST;
+      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, false), expiresAt: Date.now() + DP_SHOP_DURATION };
+      saveDB(); toast("Le vendeur a été rafraîchi"); render();
+    },
+    dpLuckShop: function (zoneId) {
+      var dp = dpData();
+      if (dp.points < DP_SHOP_LUCK_COST) { toast("Pas assez de points"); return; }
+      dp.points -= DP_SHOP_LUCK_COST;
+      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, true), expiresAt: Date.now() + DP_SHOP_DURATION };
+      saveDB(); toast("Le vendeur propose de meilleures trouvailles !"); render();
+    },
+    dpStartIncubation: function (slot, eggIndex) {
+      if (eggIndex === "") return;
+      var dp = dpData(); var egg = dp.eggs[eggIndex];
+      dp.eggs.splice(eggIndex, 1);
+      dp.incubators[slot] = { speciesId: egg.speciesId, startedAt: Date.now() };
+      saveDB(); render();
+    },
+    dpCollectHatched: function (slot) {
+      var dp = dpData(); var inc = dp.incubators[slot]; var sp = dpSpecies(inc.speciesId);
+      var dino = { id: uid(), speciesId: sp.id, name: sp.name, sex: Math.random() < 0.5 ? "M" : "F", bornAt: Date.now(), lastFedAt: Date.now(), health: 100, enclosureId: null };
+      dp.dinosaurs.push(dino);
+      dp.discovered[sp.id] = true;
+      dp.incubators[slot] = null;
+      saveDB(); toast(sp.name + " a éclos !"); render();
+    },
+    dpSelectDino: function (dinoId) { modal = { type: "dinoFiche", dinoId: dinoId }; render(); },
+    dpPlaceDino: function (dinoId, encId) {
+      if (!encId) return;
+      var d = dpDinosaurById(dinoId);
+      d.enclosureId = encId;
+      saveDB(); toast(d.name + " installé dans son enclos"); modal = null; render();
+    },
+    dpBuyFoodCrate: function (itemId) {
+      var dp = dpData(); var item = dpFoodItem(itemId);
+      if (dp.points < item.price) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      dp.points -= item.price;
+      dp.inventory[itemId] = (dp.inventory[itemId] || 0) + DP_PORTIONS_PER_CRATE;
+      saveDB(); dpPlayMerchantSound("thankyou"); toast("+" + DP_PORTIONS_PER_CRATE + " " + item.name.toLowerCase() + " achetées (" + item.price + " pts)"); dpSyncPointsDisplay();
+    },
+    dpBuyCareCrate: function (itemId) {
+      var dp = dpData(); var item = dpMedicineItem(itemId);
+      if (dp.points < item.price) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      dp.points -= item.price;
+      dp.inventory[itemId] = (dp.inventory[itemId] || 0) + DP_DOSES_PER_CRATE;
+      saveDB(); dpPlayMerchantSound("thankyou"); toast("+" + DP_DOSES_PER_CRATE + " " + item.name.toLowerCase() + " achetés (" + item.price + " pts)"); dpSyncPointsDisplay();
+    },
+    dpFeedDino: function (dinoId, itemId) {
+      var dp = dpData(); var item = dpFoodItem(itemId);
+      var d = dpDinosaurById(dinoId); var sp = dpSpecies(d.speciesId);
+      var needed = dpFoodPortionsNeeded(sp.weightKg);
+      if ((dp.inventory[itemId] || 0) < needed) { toast("Pas assez de " + item.name.toLowerCase() + " en stock (" + needed + " nécessaires)"); return; }
+      dpTick(d);
+      dp.inventory[itemId] -= needed;
+      var matches = sp.diet === "omnivore" || sp.diet === item.diet;
+      if (matches) {
+        d.lastFedAt = Date.now();
+        saveDB(); toast(d.name + " a mangé : " + item.name); render();
+      } else {
+        d.health = Math.max(0, dpHealth(d) - 25);
+        saveDB(); toast("⚠️ " + d.name + " (" + sp.diet + ") ne digère pas " + item.name.toLowerCase() + " et tombe malade !"); render();
+      }
+    },
+    dpUseCare: function (dinoId, itemId) {
+      var dp = dpData(); var item = dpMedicineItem(itemId);
+      if ((dp.inventory[itemId] || 0) < 1) { toast("Plus de " + item.name.toLowerCase() + " en stock"); return; }
+      var d = dpDinosaurById(dinoId);
+      dpTick(d);
+      dp.inventory[itemId] -= 1;
+      d.health = 100;
+      saveDB(); toast(d.name + " a reçu : " + item.name); render();
+    },
+    dpStartCourseQuiz: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      var pool = (loc.course.quizQuestions || []).slice();
+      for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+      dpView.quiz = { mode: "questions", courseId: courseId, questions: pool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, totalEarned: 0, answeredCount: 0, history: [], done: false };
+      render();
+    },
+    dpAnswerQcm: function (i) {
+      var qz = dpView.quiz;
+      if (qz.revealed) return;
+      var q = qz.questions[qz.idx];
+      qz.answer = i;
+      qz.revealed = true;
+      var wasCorrect = i === q.correctIndex;
+      dpFinishAnswer(qz, q, q.choices[i], q.choices[q.correctIndex], wasCorrect);
+      render();
+      dinoReact(wasCorrect);
+    },
+    dpSubmitOpenAnswer: function () {
+      var qz = dpView.quiz;
+      var q = qz.questions[qz.idx];
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      qz.answerHtml = rteValue("dp-open-answer");
+      var answerText = rteText("dp-open-answer");
+      qz.answer = answerText;
+      qz.status = "grading";
+      render();
+      gradeExerciseAnswer(q.prompt, q.answer, answerText).then(function (result) {
+        qz.status = "graded";
+        qz.revealed = true;
+        qz.aiFeedback = result.feedback || "";
+        var wasCorrect = !!result.correct;
+        dpFinishAnswer(qz, q, answerText, q.answer, wasCorrect);
+        render();
+        dinoReact(wasCorrect);
+      }).catch(function (err) {
+        qz.status = "answering";
+        toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+        render();
+      });
+    },
+    dpNextQuizQuestion: function () {
+      var qz = dpView.quiz;
+      var isLast = qz.idx === qz.questions.length - 1;
+      if (isLast) {
+        qz.done = true;
+      } else {
+        qz.idx++; qz.answer = null; qz.answerHtml = ""; qz.status = "answering"; qz.aiFeedback = ""; qz.revealed = false; qz.wasCorrect = null;
+      }
+      render();
+    },
+    dpStartCourseExercise: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc || !loc.course.exercises.length) return;
+      var ex = loc.course.exercises[Math.floor(Math.random() * loc.course.exercises.length)];
+      dpView.quiz = { mode: "exercise", courseId: courseId, exercise: ex, answer: "", answerHtml: "", status: "answering", correct: null, feedback: "" };
+      render();
+    },
+    dpSubmitExerciseAnswer: function () {
+      var qz = dpView.quiz;
+      qz.answerHtml = rteValue("dp-exercise-answer");
+      var answer = rteText("dp-exercise-answer");
+      if (!answer) { toast("Écris une réponse avant de valider"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      qz.answer = answer;
+      qz.status = "grading";
+      render();
+      gradeExerciseAnswer(qz.exercise.prompt, qz.exercise.solution, qz.answer).then(function (result) {
+        qz.status = "graded";
+        qz.correct = !!result.correct;
+        qz.feedback = result.feedback || "";
+        if (qz.correct) { var dp = dpData(); dp.points += DP_EXERCISE_POINTS; saveDB(); }
+        render();
+        dinoReact(qz.correct);
+      }).catch(function (err) {
+        qz.status = "answering";
+        toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+        render();
+      });
+    },
+    downloadDpExercisePdf: function () {
+      var qz = dpView.quiz;
+      if (!qz || qz.mode !== "exercise" || qz.status !== "graded") return;
+      var ex = qz.exercise;
+      var loc = locateCourse(qz.courseId);
+      var title = loc ? loc.course.title : "Exercice";
+      var html = buildExercisePrintHtml(title, "", mdToHtml(ex.prompt), qz.answerHtml, qz.correct, qz.feedback, mdToHtml(ex.solution));
+      printAndDownload(html);
+    },
+
+    flipCard: function (courseId) {
+      var st = fcState[courseId] || { idx: 0, flipped: false };
+      st.flipped = !st.flipped; fcState[courseId] = st; render();
+    },
+    navCard: function (courseId, dir) {
+      var st = fcState[courseId] || { idx: 0, flipped: false };
+      st.idx += dir; st.flipped = false; fcState[courseId] = st; render();
+    },
+    markCard: function (courseId, status) {
+      var loc = locateCourse(courseId);
+      var st = fcState[courseId] || { idx: 0, flipped: false };
+      var card = loc.course.flashcards[st.idx];
+      card.status = status;
+      saveDB();
+      if (st.idx < loc.course.flashcards.length - 1) { st.idx += 1; st.flipped = false; }
+      fcState[courseId] = st;
+      render();
+    },
+
+    answerQuiz: function (courseId, choiceIdx) {
+      var st = quizState[courseId];
+      st.answers[st.idx] = choiceIdx;
+      var loc = locateCourse(courseId);
+      var q = courseQcmQuestions(loc.course)[st.idx];
+      render();
+      dinoReact(choiceIdx === q.correctIndex);
+    },
+    quizNav: function (courseId, dir) {
+      var st = quizState[courseId];
+      st.idx += dir; render();
+    },
+    submitQuiz: function (courseId) {
+      var loc = locateCourse(courseId);
+      var st = quizState[courseId];
+      st.submitted = true;
+      var questions = courseQcmQuestions(loc.course);
+      var correct = 0;
+      questions.forEach(function (q, i) { if (st.answers[i] === q.correctIndex) correct++; });
+      loc.course.attempts.push({ id: uid(), score: correct, total: questions.length, date: new Date().toISOString() });
+      saveDB();
+      render();
+    },
+    retryQuiz: function (courseId) {
+      var loc = locateCourse(courseId);
+      quizState[courseId] = { idx: 0, answers: new Array(courseQcmQuestions(loc.course).length).fill(null), submitted: false };
+      render();
+    }
+  };
+
+  /* ---------------- Root render / router ---------------- */
+  function render() {
+    dtStopWalkLoop();
+    document.querySelectorAll(".modal-overlay").forEach(function (el) { el.remove(); });
+    document.querySelectorAll(".dp-merchant-overlay").forEach(function (el) { el.remove(); });
+    if (!DB.currentUser) { renderAuth(parseHash()[0] === "signup" ? "signup" : "login"); return; }
+    var parts = parseHash();
+    if (parts.length === 0) { renderDashboard(); return; }
+    if (parts[0] === "subject" && parts[1] && parts[2] === "chapter" && parts[3]) { renderChapterPage(parts[1], parts[3]); return; }
+    if (parts[0] === "subject" && parts[1]) { renderSubjectPage(parts[1]); return; }
+    if (parts[0] === "course" && parts[1]) { renderCoursePage(parts[1], parts[2]); return; }
+    if (parts[0] === "exercices" && parts[1]) { renderImportedExercisePage(parts[1]); return; }
+    if (parts[0] === "exercices") { renderImportedExercisesPage(); return; }
+    if (parts[0] === "dinopark") { renderDinoParkPage(); return; }
+    if (parts[0] === "dinotime") { renderDinoTimePage(); return; }
+    renderDashboard();
+  }
+
+  (function initTheme() {
+    var saved = localStorage.getItem("recto_theme");
+    var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-app-theme", theme);
+  })();
+
+  window.addEventListener("hashchange", render);
+  window.addEventListener("resize", syncTopbarHeightVar);
+  render();
+
+  setInterval(function () {
+    if (!DB.currentUser) return;
+    ["dp-shop-timer", "dp-shop-timer-mini"].forEach(function (elId) {
+      var el = document.getElementById(elId);
+      if (!el) return;
+      var zoneId = el.getAttribute("data-zone");
+      var shop = dpData().shops[zoneId];
+      if (!shop) return;
+      var remain = shop.expiresAt - Date.now();
+      if (remain <= 0) { render(); return; }
+      el.textContent = "⏳ " + dpFormatCountdown(remain);
+    });
+  }, 1000);
+})();
