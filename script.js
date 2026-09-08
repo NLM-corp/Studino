@@ -25,6 +25,23 @@
     var u = DB.currentUser;
     if (!DB.data[u]) DB.data[u] = { subjects: [] };
     if (!DB.data[u].importedExercises) DB.data[u].importedExercises = [];
+    if (!DB.data[u].revisionSheets) DB.data[u].revisionSheets = [];
+    // Migration : ancienne hiérarchie matière -> chapitres directement, sans thème.
+    // On enveloppe les chapitres existants dans un thème "Général" créé une seule fois.
+    DB.data[u].subjects.forEach(function (s) {
+      if (!s.themes) { s.themes = [{ id: uid(), name: "Général", chapters: s.chapters || [] }]; delete s.chapters; }
+    });
+    // Migration : un exercice importé contenait un seul énoncé/solution, désormais un tableau "exercises".
+    DB.data[u].importedExercises.forEach(function (en) {
+      if (!en.exercises) {
+        en.exercises = en.status === "ready" ? [{
+          statement: en.statement || "", solution: en.solution || "",
+          answerHtml: en.answerHtml || "", answerText: en.answerText || "",
+          answerStatus: en.answerStatus || "unanswered", correct: en.correct != null ? en.correct : null, feedback: en.feedback || ""
+        }] : [];
+        delete en.statement; delete en.solution; delete en.answerHtml; delete en.answerText; delete en.answerStatus; delete en.correct; delete en.feedback;
+      }
+    });
     return DB.data[u];
   }
 
@@ -61,6 +78,16 @@
   }
   function isTiffFile(file) {
     return /tiff/i.test(file.type || "") || /\.tiff?$/i.test(file.name || "");
+  }
+  function isPdfFile(file) {
+    return /pdf/i.test(file.type || "") || /\.pdf$/i.test(file.name || "");
+  }
+  function isPdfDataUrl(src) { return /^data:application\/pdf/i.test(src || ""); }
+  function fileThumbHtml(src, i) {
+    var preview = isPdfDataUrl(src)
+      ? '<div class="file-thumb-pdf">📄<span>PDF</span></div>'
+      : '<img src="' + src + '">';
+    return '<div class="file-thumb">' + preview + '<button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
   }
   function readFileAsDataUrl(file) {
     return new Promise(function (resolve, reject) {
@@ -113,6 +140,7 @@
     });
   }
   function processImageFile(file) {
+    if (isPdfFile(file)) return readFileAsDataUrl(file);
     if (isHeicFile(file)) return decodeHeicFile(file);
     if (isTiffFile(file)) return decodeTiffFile(file);
     return readFileAsDataUrl(file).then(loadImageEl).then(function (img) {
@@ -202,6 +230,12 @@
       "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n\n" +
       "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique (dans n'importe quel champ), utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule.\n\n" +
+      "Si le contenu source (ou ton explication) comporte un tableau, reproduis-le comme un vrai tableau Markdown, avec EXACTEMENT ce format (une ligne d'en-tête, puis une ligne de séparation avec des tirets, puis une ligne par ligne du tableau, jamais de texte ou de liste à puces à la place) :\n" +
+      "| Colonne 1 | Colonne 2 |\n" +
+      "|---|---|\n" +
+      "| Valeur A | Valeur B |\n" +
+      "| Valeur C | Valeur D |\n\n" +
+      "Le site sait afficher de vrais tableaux, alors n'hésite pas à t'en servir dès que c'est pertinent (dans la retranscription comme dans l'explication) — mais respecte bien ce format ligne par ligne, sans jamais oublier la ligne de séparation |---|---|.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
 
@@ -246,11 +280,58 @@
 
   async function generateCourseContent(imageDataUrls, title, subjectName, chapterName) {
     var images = (imageDataUrls || []).map(function (url) {
-      var m = /^data:(image\/[a-zA-Z+]+);base64,(.+)$/.exec(url || "");
+      var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
     var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length) }]);
     return callGemini(parts, COURSE_SCHEMA);
+  }
+
+  var REVISION_SHEET_SCHEMA = {
+    type: "object",
+    properties: {
+      content: { type: "string", description: "Fiche de révision complète en Markdown." }
+    },
+    required: ["content"]
+  };
+  function buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) {
+    var sourceBlocks = courses.map(function (co) {
+      return "### Cours : " + co.title + "\n" + (co.transcription || "");
+    }).join("\n\n");
+    return "Tu es un assistant pédagogique pour un élève francophone. Voici " + (scope === "course" ? "le contenu retranscrit d'un cours" : "le contenu retranscrit de tous les cours d'un chapitre") + " intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
+      "Génère une fiche de révision ULTRA COMPLÈTE en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section avec des titres et sous-titres, prête à réviser juste avant un contrôle.\n\n" +
+      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule.\n\n" +
+      "Si le contenu source comporte un tableau (ou si organiser une notion sous forme de tableau serait plus clair), utilise un vrai tableau Markdown, avec EXACTEMENT ce format (jamais de liste à puces à la place) :\n" +
+      "| Colonne 1 | Colonne 2 |\n" +
+      "|---|---|\n" +
+      "| Valeur A | Valeur B |\n\n" +
+      "Le site sait afficher de vrais tableaux — respecte bien ce format ligne par ligne, sans oublier la ligne de séparation |---|---|.\n\n" +
+      "Voici le contenu source :\n\n" + sourceBlocks + "\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateRevisionSheetContent(courses, title, subjectName, chapterName, scope) {
+    var parts = [{ text: buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) }];
+    return callGemini(parts, REVISION_SHEET_SCHEMA);
+  }
+  function runRevisionSheetGeneration(sheet, courses, subjectName, chapterName) {
+    sheet.status = "processing";
+    sheet.error = null;
+    saveDB(); render();
+    generateRevisionSheetContent(courses, sheet.title, subjectName, chapterName, sheet.scope).then(function (data) {
+      sheet.content = data.content;
+      sheet.status = "ready";
+      saveDB();
+      toast("Fiche générée · " + sheet.title);
+      render();
+    }).catch(function (err) {
+      sheet.status = "error";
+      sheet.error = err.message || "Erreur inconnue";
+      sheet.errorStatus = err.status || null;
+      sheet.errorDetail = err.detail || null;
+      saveDB();
+      toast("Échec de la génération : " + sheet.error, { status: sheet.errorStatus, detail: sheet.errorDetail });
+      render();
+    });
   }
 
   var EXERCISE_GRADE_SCHEMA = {
@@ -278,26 +359,39 @@
   var IMPORTED_EXERCISE_SCHEMA = {
     type: "object",
     properties: {
-      subjectGuess: { type: "string", description: "Matière probable de l'exercice, en un ou deux mots (ex. \"Mathématiques\", \"Histoire\")." },
-      statement: { type: "string", description: "Retranscription fidèle de l'énoncé de l'exercice, en Markdown." },
-      solution: { type: "string", description: "Solution de référence complète et détaillée, rédigée par toi, avec le résultat final." }
+      subjectGuess: { type: "string", description: "Matière probable des exercices, en un ou deux mots (ex. \"Mathématiques\", \"Histoire\")." },
+      exercises: {
+        type: "array",
+        description: "Un élément par exercice distinct trouvé dans le document, dans l'ordre où ils apparaissent.",
+        items: {
+          type: "object",
+          properties: {
+            statement: { type: "string", description: "Retranscription fidèle de l'énoncé de cet exercice, en Markdown." },
+            solution: { type: "string", description: "Solution de référence complète et détaillée de cet exercice, rédigée par toi, avec le résultat final." }
+          },
+          required: ["statement", "solution"]
+        }
+      }
     },
-    required: ["subjectGuess", "statement", "solution"]
+    required: ["subjectGuess", "exercises"]
   };
   function buildImportedExercisePrompt(imageCount) {
     var step1 = imageCount === 1
-      ? "Voici la photo d'un exercice pris par un élève."
-      : "Voici " + imageCount + " photos qui font partie du même exercice, dans l'ordre.";
-    return step1 + " Ne réponds pas encore à l'exercice ici : \n" +
-      "1. Retranscris fidèlement l'énoncé en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact.\n" +
-      "2. Devine la matière probable de cet exercice.\n" +
-      "3. Rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — c'est cette solution qui servira ensuite à corriger la réponse de l'élève.\n\n" +
+      ? "Voici la photo ou le document d'un ou plusieurs exercices pris par un élève."
+      : "Voici " + imageCount + " photos/pages qui font partie du même document d'exercices, dans l'ordre.";
+    return step1 + " Ne réponds pas encore aux exercices ici : \n" +
+      "1. Repère CHAQUE exercice distinct présent dans le document (généralement numéroté \"Exercice 1\", \"Exercice 2\"... ou séparé visuellement) et crée une entrée dans \"exercises\" pour chacun, dans l'ordre d'apparition. S'il n'y a qu'un seul exercice, renvoie un tableau \"exercises\" avec un seul élément. S'il y en a 7 exercices distincts, renvoie exactement 7 éléments — ne fusionne jamais deux exercices ensemble et n'en invente aucun.\n" +
+      "   ATTENTION, très important : les sous-questions ou étapes À L'INTÉRIEUR d'un même exercice (numérotées a, b, c, d... ou 1, 2, 3... ou 1), 2), 3)...) NE SONT PAS des exercices séparés — ce sont des questions qui font partie d'un seul et même exercice. Un exercice avec 5 sous-questions ou 5 étapes reste UN SEUL élément dans \"exercises\", avec toutes ses sous-questions rassemblées dans le même \"statement\" et une seule \"solution\" qui traite les 5. Ne crée une nouvelle entrée dans \"exercises\" QUE quand le document passe à un exercice numéroté différent (Exercice 1 → Exercice 2), jamais entre deux sous-questions du même exercice.\n" +
+      "2. Pour chaque exercice, retranscris fidèlement son énoncé complet en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\". Corrige les fautes évidentes mais garde le sens exact.\n" +
+      "3. Devine la matière probable de l'ensemble des exercices (un seul \"subjectGuess\" pour tout le document).\n" +
+      "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée.\n\n" +
+      "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   async function generateImportedExercise(imageDataUrls) {
     var images = (imageDataUrls || []).map(function (url) {
-      var m = /^data:(image\/[a-zA-Z+]+);base64,(.+)$/.exec(url || "");
+      var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
     var parts = images.concat([{ text: buildImportedExercisePrompt(images.length) }]);
@@ -309,12 +403,12 @@
     saveDB(); render();
     generateImportedExercise(entry.images).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
-      entry.statement = data.statement || "";
-      entry.solution = data.solution || "";
+      entry.exercises = (data.exercises || []).map(function (ex) {
+        return { statement: ex.statement || "", solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+      });
       entry.status = "ready";
-      entry.answerStatus = "unanswered";
       saveDB();
-      toast("Exercice importé · " + entry.title);
+      toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
       render();
     }).catch(function (err) {
       entry.status = "error";
@@ -367,8 +461,9 @@
   var quizState = {}; // per courseId: { idx, answers: [] }
   var fcState = {}; // per courseId: { idx, flipped }
   var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
-  var dtState = { mode: "setup", durationMin: 25, enclosureId: null }; // DinoTime sub-navigation
+  var dtState = { mode: "setup", tab: "chrono", durationMin: 25, enclosureId: null, pomoWork: 25, pomoBreak: 5, pomoCycles: 4, pomoDinoId: null }; // DinoTime sub-navigation
   var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
+  var dtPomoRunning = null; // { dinoId, workMin, breakMin, cycles, phase: "work"|"break", cycleIndex, remainingSec, endsAt, paused }
   var dtTimerInterval = null;
   var dtWalkRaf = null;
 
@@ -380,15 +475,18 @@
   function navigate(hash) { location.hash = hash; }
 
   function findSubject(id) { return userData().subjects.find(function (s) { return s.id === id; }); }
-  function findChapter(subj, id) { return subj && subj.chapters.find(function (c) { return c.id === id; }); }
+  function findTheme(subj, id) { return subj && subj.themes.find(function (t) { return t.id === id; }); }
+  function findChapter(theme, id) { return theme && theme.chapters.find(function (c) { return c.id === id; }); }
   function findCourse(chap, id) { return chap && chap.courses.find(function (c) { return c.id === id; }); }
 
   function locateCourse(courseId) {
     var subs = userData().subjects;
     for (var i = 0; i < subs.length; i++) {
-      for (var j = 0; j < subs[i].chapters.length; j++) {
-        var c = subs[i].chapters[j].courses.find(function (x) { return x.id === courseId; });
-        if (c) return { subject: subs[i], chapter: subs[i].chapters[j], course: c };
+      for (var t = 0; t < subs[i].themes.length; t++) {
+        for (var j = 0; j < subs[i].themes[t].chapters.length; j++) {
+          var c = subs[i].themes[t].chapters[j].courses.find(function (x) { return x.id === courseId; });
+          if (c) return { subject: subs[i], theme: subs[i].themes[t], chapter: subs[i].themes[t].chapters[j], course: c };
+        }
       }
     }
     return null;
@@ -534,10 +632,10 @@
   }
 
   var DP_RARITY = {
-    commun: { label: "Commun", weight: 80, price: 150, hatch: 20 },
-    rare: { label: "Rare", weight: 30, price: 400, hatch: 40 },
-    epique: { label: "Épique", weight: 10, price: 900, hatch: 70 },
-    legendaire: { label: "Légendaire", weight: 1, price: 2000, hatch: 120 }
+    commun: { label: "Commun", weight: 80, price: 150, hatch: 600 },
+    rare: { label: "Rare", weight: 30, price: 400, hatch: 1200 },
+    epique: { label: "Épique", weight: 10, price: 900, hatch: 2100 },
+    legendaire: { label: "Légendaire", weight: 1, price: 2000, hatch: 3600 }
   };
 
   var DP_PORTIONS_PER_CRATE = 20;
@@ -921,11 +1019,14 @@
   }
   function dpSubjectsWithContent() {
     return userData().subjects.filter(function (s) {
-      return s.chapters.some(function (c) { return c.courses.some(dpCourseHasContent); });
+      return s.themes.some(function (t) { return t.chapters.some(function (c) { return c.courses.some(dpCourseHasContent); }); });
     });
   }
-  function dpChaptersWithContent(subject) {
-    return subject.chapters.filter(function (c) { return c.courses.some(dpCourseHasContent); });
+  function dpThemesWithContent(subject) {
+    return subject.themes.filter(function (t) { return t.chapters.some(function (c) { return c.courses.some(dpCourseHasContent); }); });
+  }
+  function dpChaptersWithContent(theme) {
+    return theme.chapters.filter(function (c) { return c.courses.some(dpCourseHasContent); });
   }
   function dpCoursesWithContent(chapter) {
     return chapter.courses.filter(dpCourseHasContent);
@@ -1000,12 +1101,17 @@
 
   function dpHunger(d) { return Math.max(0, Math.round(100 - ((Date.now() - d.lastFedAt) / 3600000) * 20)); }
   function dpTick(d) {
+    var now = Date.now();
     var last = d.healthCheckedAt || d.lastFedAt;
-    if (dpHunger(d) === 0) {
-      var hoursStarving = (Date.now() - Math.max(last, d.lastFedAt)) / 3600000;
+    // La faim met 5h à tomber à 0 (100 / 20 par heure) — on ne compte comme "heures d'affamement"
+    // que le temps écoulé APRÈS ce cap, jamais tout le temps passé hors-ligne depuis le dernier repas.
+    var hungerZeroAt = d.lastFedAt + 5 * 3600000;
+    var starvingSince = Math.max(last, hungerZeroAt);
+    if (now > starvingSince) {
+      var hoursStarving = (now - starvingSince) / 3600000;
       d.health = Math.max(0, (d.health == null ? 100 : d.health) - hoursStarving * 10);
     }
-    d.healthCheckedAt = Date.now();
+    d.healthCheckedAt = now;
   }
   function dpHealth(d) { return d.health == null ? 100 : Math.round(d.health); }
   var DP_HUNGER_ALERT = 40;
@@ -1251,12 +1357,14 @@
       }
       var sp = dpSpecies(inc.speciesId);
       var rarity = DP_RARITY[sp.rarity];
+      var remainMs = rarity.hatch * 1000 - (Date.now() - inc.startedAt);
       var pct = Math.min(100, Math.round((Date.now() - inc.startedAt) / 1000 / rarity.hatch * 100));
+      var done = remainMs <= 0;
       return '<div class="dp-incubator">' +
         '<img class="dp-incubator-art" src="assets/objects/ui/incubateur_remplie.png" alt="">' +
         '<div class="dp-egg-name">' + esc(sp.name) + '</div>' +
         '<div class="dp-bar"><div class="dp-bar-fill" style="width:' + pct + '%;background:var(--leaf)"></div></div>' +
-        (pct >= 100 ? '<button class="btn btn-sm btn-primary" onclick="App.dpCollectHatched(' + i + ')">Récupérer 🎉</button>' : '<span class="dp-empty-note mono">' + pct + '%</span>') +
+        (done ? '<button class="btn btn-sm btn-primary" onclick="App.dpCollectHatched(' + i + ')">Récupérer 🎉</button>' : '<span class="dp-empty-note mono dp-inc-timer" data-slot="' + i + '">⏳ ' + dpFormatCountdown(remainMs) + '</span>') +
         '</div>';
     }).join("") + '</div>';
     renderShell(["dinopark"], dpDecorHtml() + backBtn + head + grid);
@@ -1301,13 +1409,17 @@
     if (!dpView.quiz) {
       var nav = dpView.quizNav || (dpView.quizNav = { level: "subjects" });
       var list;
-      if (nav.level === "chapters" || nav.level === "courses") {
+      if (nav.level === "themes" || nav.level === "chapters" || nav.level === "courses") {
         var navSubj = findSubject(nav.subjectId);
         if (!navSubj) nav = dpView.quizNav = { level: "subjects" };
       }
+      if (nav.level === "chapters" || nav.level === "courses") {
+        var navTheme = findTheme(findSubject(nav.subjectId), nav.themeId);
+        if (!navTheme) nav = dpView.quizNav = { level: "themes", subjectId: nav.subjectId };
+      }
       if (nav.level === "courses") {
-        var navChap = findChapter(findSubject(nav.subjectId), nav.chapterId);
-        if (!navChap) nav = dpView.quizNav = { level: "chapters", subjectId: nav.subjectId };
+        var navChap = findChapter(findTheme(findSubject(nav.subjectId), nav.themeId), nav.chapterId);
+        if (!navChap) nav = dpView.quizNav = { level: "chapters", subjectId: nav.subjectId, themeId: nav.themeId };
       }
       if (nav.level === "subjects") {
         var subs = dpSubjectsWithContent();
@@ -1317,20 +1429,30 @@
               return '<div class="dp-subject-card" onclick="App.dpQuizGoSubject(\'' + s.id + '\')">' + icon("book") + '<span>' + esc(s.name) + '</span></div>';
             }).join("") + '</div></div>'
           : '<p class="dp-empty-note">Importe et génère au moins un cours pour pouvoir réviser ici.</p>';
+      } else if (nav.level === "themes") {
+        var subj0 = findSubject(nav.subjectId);
+        var themes0 = dpThemesWithContent(subj0);
+        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoSubjects()">← Retour aux matières</button>' +
+          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj0.name) + ' — choisis un thème</h3><div class="dp-subject-grid">' +
+          themes0.map(function (t) {
+            return '<div class="dp-subject-card" onclick="App.dpQuizGoTheme(\'' + t.id + '\')">' + icon("book") + '<span>' + esc(t.name) + '</span></div>';
+          }).join("") + '</div></div>';
       } else if (nav.level === "chapters") {
         var subj = findSubject(nav.subjectId);
-        var chaps = dpChaptersWithContent(subj);
-        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoSubjects()">← Retour aux matières</button>' +
-          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj.name) + ' — choisis un chapitre</h3><div class="dp-subject-grid">' +
+        var theme = findTheme(subj, nav.themeId);
+        var chaps = dpChaptersWithContent(theme);
+        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoThemes(\'' + subj.id + '\')">← Retour aux thèmes</button>' +
+          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj.name) + ' / ' + esc(theme.name) + ' — choisis un chapitre</h3><div class="dp-subject-grid">' +
           chaps.map(function (c) {
             return '<div class="dp-subject-card" onclick="App.dpQuizGoChapter(\'' + c.id + '\')">' + icon("folder") + '<span>' + esc(c.name) + '</span></div>';
           }).join("") + '</div></div>';
       } else {
         var subj2 = findSubject(nav.subjectId);
-        var chap2 = findChapter(subj2, nav.chapterId);
+        var theme2 = findTheme(subj2, nav.themeId);
+        var chap2 = findChapter(theme2, nav.chapterId);
         var courses = dpCoursesWithContent(chap2);
-        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoChapters(\'' + subj2.id + '\')">← Retour aux chapitres</button>' +
-          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj2.name) + ' / ' + esc(chap2.name) + '</h3><div class="dp-subject-grid">' +
+        list = '<button class="btn btn-ghost" style="width:auto;margin-bottom:16px" onclick="App.dpQuizGoChapters(\'' + subj2.id + '\',\'' + theme2.id + '\')">← Retour aux chapitres</button>' +
+          '<div class="dp-section"><h3 class="dp-section-title">' + esc(subj2.name) + ' / ' + esc(theme2.name) + ' / ' + esc(chap2.name) + '</h3><div class="dp-subject-grid">' +
           courses.map(function (co) {
             var qCount = (co.quizQuestions || []).length;
             var exCount = (co.exercises || []).length;
@@ -1447,13 +1569,22 @@
 
   function renderDinoTimePage() {
     if (dtState.mode === "running" && dtRunning) { renderDinoTimeRunning(); return; }
+    if (dtState.mode === "running" && dtPomoRunning) { renderPomodoroRunning(); return; }
     renderDinoTimeSetup();
   }
 
   function renderDinoTimeSetup() {
-    var encs = dtAllEnclosures();
     var head = '<div class="page-head"><div><div class="page-title-row">' + icon("clock") + '<h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
+    var tabsHtml = '<div class="tabs">' +
+      '<button class="tab-btn ' + (dtState.tab !== "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'chrono\')">⏱️ Chrono simple</button>' +
+      '<button class="tab-btn ' + (dtState.tab === "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'pomodoro\')">🍅 Pomorodosaure</button>' +
+      '</div>';
+    var body = dtState.tab === "pomodoro" ? renderDinoTimePomodoroSetup() : renderDinoTimeChronoSetup();
+    renderShell(["dinotime"], head + tabsHtml + body);
+  }
 
+  function renderDinoTimeChronoSetup() {
+    var encs = dtAllEnclosures();
     var durationHtml = '<div class="dp-section"><h3 class="dp-section-title">Durée</h3><div class="dt-duration-row">' +
       DT_DURATIONS.map(function (m) {
         return '<button class="dt-duration-btn' + (dtState.durationMin === m ? " selected" : "") + '" onclick="App.dtSetDuration(' + m + ')">' + m + ' min</button>';
@@ -1486,7 +1617,45 @@
     }
 
     var startBtn = '<button class="btn btn-primary" style="width:auto" onclick="App.dtStart()">▶ Commencer</button>';
-    renderShell(["dinotime"], head + durationHtml + encHtml + startBtn);
+    return durationHtml + encHtml + startBtn;
+  }
+
+  function renderDinoTimePomodoroSetup() {
+    var pomoFields = [
+      { field: "pomoWork", label: "Travail (min)", value: dtState.pomoWork, max: 180 },
+      { field: "pomoBreak", label: "Pause courte (min)", value: dtState.pomoBreak, max: 60 },
+      { field: "pomoCycles", label: "Nombre de cycles", value: dtState.pomoCycles, max: 12 }
+    ];
+    var settingsHtml = '<div class="dp-section"><h3 class="dp-section-title">Réglages du cycle</h3>' +
+      '<p class="dp-empty-note" style="margin-bottom:14px">Travaille sans interruption, fais une pause courte, répète.</p>' +
+      '<div class="dt-pomo-fields">' +
+      pomoFields.map(function (f) {
+        return '<div class="dt-pomo-field-card">' +
+          '<div class="dt-pomo-field-label">' + esc(f.label) + '</div>' +
+          '<input type="number" class="dt-pomo-field-input" min="1" max="' + f.max + '" value="' + f.value + '" onchange="App.dtSetPomoField(\'' + f.field + '\',this.value)">' +
+          '</div>';
+      }).join("") +
+      '</div></div>';
+
+    var dinos = dpData().dinosaurs;
+    var dinoHtml;
+    if (!dinos.length) {
+      dinoHtml = '<div class="dp-section"><h3 class="dp-section-title">Dino compagnon</h3><p class="dp-empty-note">.</p></div>';
+    } else {
+      dinoHtml = '<div class="dp-section"><h3 class="dp-section-title">Choisis ton dino compagnon</h3><div class="dt-enc-grid">' +
+        dinos.map(function (d) {
+          var sp = dpSpecies(d.speciesId);
+          var zone = dpZone(sp.zone);
+          var selected = dtState.pomoDinoId === d.id;
+          return '<button class="dt-enc-card' + (selected ? " selected" : "") + '" onclick="App.dtSetPomoDino(\'' + d.id + '\')">' +
+            '<div class="dt-enc-thumb-wrap" style="background:' + zone.color + '">' + dpSquareHtml(sp.id, { className: "dt-enc-thumb", kind: "profil" }) + '</div>' +
+            '<div class="dt-enc-info"><span>' + esc(d.name) + '</span><span class="dt-enc-dinos mono">' + esc(sp.name) + '</span></div>' +
+            '</button>';
+        }).join("") + '</div></div>';
+    }
+
+    var startBtn = '<button class="btn btn-primary" style="width:auto" onclick="App.dtStartPomodoro()">▶ Commencer le Pomorodosaure</button>';
+    return settingsHtml + dinoHtml + startBtn;
   }
 
   var DT_CYCLE = ["walk", "pause", "look", "pause"];
@@ -1538,20 +1707,73 @@
     dtStartWalkLoop();
   }
 
-  // Le décompte tourne en continu (indépendant de la page affichée) tant que dtRunning existe —
-  // seuls dtStop/dtComplete l'arrêtent. Basé sur une échéance absolue (endsAt) plutôt qu'un simple
-  // compteur, pour rester exact même si le tick est retardé par le navigateur (onglet en arrière-plan).
+  var DT_POMO_PHASE_LABEL = { work: "Travail", break: "☕ Pause courte" };
+  // Position (0 à 1) du dino sur la ligne : avance pendant le travail, s'arrête pile au checkpoint
+  // pendant la pause, reprend là où il en était au cycle suivant, repart de 0 après le dernier cycle.
+  function dtPomoProgress(p) {
+    var segStart = (p.cycleIndex - 1) / p.cycles;
+    var segEnd = p.cycleIndex / p.cycles;
+    if (p.phase === "break") return segEnd;
+    var workTotal = p.workMin * 60;
+    var elapsedFrac = workTotal > 0 ? Math.min(1, Math.max(0, 1 - p.remainingSec / workTotal)) : 0;
+    return segStart + elapsedFrac * (segEnd - segStart);
+  }
+  function renderPomodoroRunning() {
+    var p = dtPomoRunning;
+    var dino = p.dinoId ? dpData().dinosaurs.find(function (d) { return d.id === p.dinoId; }) : null;
+    var sp = dino ? dpSpecies(dino.speciesId) : null;
+    var looking = p.phase !== "work";
+    var artPath = sp ? dpArtPath(sp.id, looking ? "face" : "profil") : null;
+    var dinoHtml;
+    if (artPath) {
+      dinoHtml = '<img class="dt-pomo-dino' + (looking ? " sprite-bob" : "") + '" src="' + artPath + '" alt="" onerror="this.style.display=\'none\'">';
+    } else if (sp) {
+      dinoHtml = '<div class="dt-pomo-dino-fallback' + (looking ? " sprite-bob" : "") + '" style="background:' + dpHashColor(sp.id) + '"></div>';
+    } else {
+      dinoHtml = '<div class="dt-pomo-dino-placeholder">.</div>';
+    }
+    var checkpoints = "";
+    for (var i = 0; i <= p.cycles; i++) checkpoints += '<span class="dt-pomo-checkpoint" style="left:' + (i / p.cycles * 100) + '%"></span>';
+    var cycleHtml = '<div class="dt-pomo-cycle mono">Cycle ' + p.cycleIndex + ' / ' + p.cycles + '</div>';
+    var html = '<div class="dt-scene dt-pomo-scene">' +
+      '<button class="dt-stop" onclick="App.dtStopPomodoro()">✕</button>' +
+      '<button class="dt-pause" id="dt-pause-btn" onclick="App.dtTogglePausePomo()">⏸</button>' +
+      '<div class="dt-pomo-phase">' + DT_POMO_PHASE_LABEL[p.phase] + '</div>' +
+      '<div class="dt-timer mono" id="dt-timer-display">' + dpFormatCountdown(p.remainingSec * 1000) + '</div>' +
+      cycleHtml +
+      '<div class="dt-pomo-track">' +
+      '<div class="dt-pomo-track-line"></div>' +
+      checkpoints +
+      '<div class="dt-pomo-runner' + (p.phase === "work" ? " working" : "") + '" id="dt-pomo-runner" style="left:' + (dtPomoProgress(p) * 100) + '%">' + dinoHtml + '</div>' +
+      '</div>' +
+      '</div>';
+    document.getElementById("app").innerHTML = html;
+    dtEnsureTimerInterval();
+  }
+
+  // Le décompte tourne en continu (indépendant de la page affichée) tant qu'une séance existe —
+  // seuls dtStop/dtComplete/dtStopPomodoro l'arrêtent. Basé sur une échéance absolue (endsAt) plutôt
+  // qu'un simple compteur, pour rester exact même si le tick est retardé (onglet en arrière-plan).
   function dtStopTimerInterval() {
     if (dtTimerInterval) { clearInterval(dtTimerInterval); dtTimerInterval = null; }
   }
   function dtEnsureTimerInterval() {
     if (dtTimerInterval) return;
     dtTimerInterval = setInterval(function () {
-      if (!dtRunning || dtRunning.paused) return;
-      dtRunning.remainingSec = Math.max(0, Math.round((dtRunning.endsAt - Date.now()) / 1000));
-      var el = document.getElementById("dt-timer-display");
-      if (el) el.textContent = dpFormatCountdown(dtRunning.remainingSec * 1000);
-      if (dtRunning.remainingSec <= 0) { App.dtComplete(); }
+      if (dtRunning && !dtRunning.paused) {
+        dtRunning.remainingSec = Math.max(0, Math.round((dtRunning.endsAt - Date.now()) / 1000));
+        var el = document.getElementById("dt-timer-display");
+        if (el) el.textContent = dpFormatCountdown(dtRunning.remainingSec * 1000);
+        if (dtRunning.remainingSec <= 0) { App.dtComplete(); }
+      }
+      if (dtPomoRunning && !dtPomoRunning.paused) {
+        dtPomoRunning.remainingSec = Math.max(0, Math.round((dtPomoRunning.endsAt - Date.now()) / 1000));
+        var pel = document.getElementById("dt-timer-display");
+        if (pel) pel.textContent = dpFormatCountdown(dtPomoRunning.remainingSec * 1000);
+        var runnerEl = document.getElementById("dt-pomo-runner");
+        if (runnerEl) runnerEl.style.left = (dtPomoProgress(dtPomoRunning) * 100) + "%";
+        if (dtPomoRunning.remainingSec <= 0) { App.dtPomoPhaseComplete(); }
+      }
     }, 1000);
   }
   // L'animation de balade des dinos, elle, s'arrête d'elle-même dès que la scène n'est plus affichée
@@ -1627,15 +1849,20 @@
     if (parts[0] === "subject" && parts[1]) {
       var s = findSubject(parts[1]);
       if (s) trail.push({ label: s.name, hash: "#/subject/" + s.id });
-      if (parts[2] === "chapter" && parts[3]) {
-        var c = findChapter(s, parts[3]);
-        if (c) trail.push({ label: c.name, hash: "#/subject/" + s.id + "/chapter/" + c.id });
+      if (parts[2] === "theme" && parts[3]) {
+        var th = findTheme(s, parts[3]);
+        if (th) trail.push({ label: th.name, hash: "#/subject/" + s.id + "/theme/" + th.id });
+        if (parts[4] === "chapter" && parts[5]) {
+          var c = findChapter(th, parts[5]);
+          if (c) trail.push({ label: c.name, hash: "#/subject/" + s.id + "/theme/" + th.id + "/chapter/" + c.id });
+        }
       }
     } else if (parts[0] === "course" && parts[1]) {
       var loc = locateCourse(parts[1]);
       if (loc) {
         trail.push({ label: loc.subject.name, hash: "#/subject/" + loc.subject.id });
-        trail.push({ label: loc.chapter.name, hash: "#/subject/" + loc.subject.id + "/chapter/" + loc.chapter.id });
+        trail.push({ label: loc.theme.name, hash: "#/subject/" + loc.subject.id + "/theme/" + loc.theme.id });
+        trail.push({ label: loc.chapter.name, hash: "#/subject/" + loc.subject.id + "/theme/" + loc.theme.id + "/chapter/" + loc.chapter.id });
         trail.push({ label: loc.course.title, hash: "#/course/" + loc.course.id });
         var tabNames = { transcription: "Retranscription", explication: "Explication", videos: "Vidéos", flashcards: "Flashcards", quiz: "Contrôle" };
         var tab = parts[3] || "transcription";
@@ -1655,6 +1882,9 @@
       else if (dpView.mode === "quiz") trail.push({ label: "Questions" });
     } else if (parts[0] === "dinotime") {
       trail.push({ label: "DinoTime" });
+    } else if (parts[0] === "revision" && parts[1]) {
+      var rs = userData().revisionSheets.find(function (x) { return x.id === parts[1]; });
+      if (rs) trail.push({ label: rs.title });
     }
     return trail;
   }
@@ -1820,7 +2050,7 @@
   /* ---------------- Dashboard ---------------- */
   function allCourses() {
     var out = [];
-    userData().subjects.forEach(function (s) { s.chapters.forEach(function (c) { c.courses.forEach(function (co) { out.push(co); }); }); });
+    userData().subjects.forEach(function (s) { s.themes.forEach(function (t) { t.chapters.forEach(function (c) { c.courses.forEach(function (co) { out.push(co); }); }); }); });
     return out;
   }
   function computeStats() {
@@ -1838,7 +2068,10 @@
     var subs = userData().subjects;
     var stats = computeStats();
     var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Bibliothèque</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
-      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
+      '<div style="display:flex;gap:10px">' +
+      '<button class="btn btn-metal" style="width:auto" onclick="App.openRevisionSheetModal()">' + icon("doc") + ' Générer une fiche de révision</button>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button>' +
+      '</div></div>';
     var statsHtml = '<div class="stat-row">' +
       '<div class="stat-card"><div class="stat-num mono">' + stats.total + '</div><div class="stat-lbl">Cours importés</div></div>' +
       '<div class="stat-card"><div class="stat-num mono">' + (stats.avgScore == null ? "—" : stats.avgScore + "/20") + '</div><div class="stat-lbl">Moyenne aux contrôles</div></div>' +
@@ -1850,64 +2083,114 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
     } else {
       grid = '<div class="card-grid-signs-short">' + subs.map(function (s) {
-        var count = s.chapters.reduce(function (n, c) { return n + c.courses.length; }, 0);
+        var courseCount = s.themes.reduce(function (n, t) { return n + t.chapters.reduce(function (n2, c) { return n2 + c.courses.length; }, 0); }, 0);
         return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '\'">' +
+          '<button class="tile-rename" style="right:40px" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'subject\',\'' + s.id + '\')">✏️</button>' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'subject\',\'' + s.id + '\')">' + icon("trash") + '</button>' +
           '<div class="tile-icon">' + icon("book") + '</div>' +
           '<div class="tile-title">' + esc(s.name) + '</div>' +
-          '<div class="tile-meta">' + s.chapters.length + ' chapitre' + (s.chapters.length !== 1 ? "s" : "") + ' · ' + count + ' cours</div>' +
+          '<div class="tile-meta">' + s.themes.length + ' thème' + (s.themes.length !== 1 ? "s" : "") + ' · ' + courseCount + ' cours</div>' +
           '</div>';
       }).join("") + '<button class="add-tile" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button></div>';
     }
-    renderShell([], head + statsHtml + grid);
+    var sheets = userData().revisionSheets;
+    var sheetsHtml = "";
+    if (sheets.length) {
+      sheetsHtml = '<div class="page-head" style="margin-top:34px"><h2 class="page-title" style="font-size:17px">Fiches de révision</h2></div>' +
+        '<div class="card-grid-signs-short">' + sheets.slice().reverse().map(function (sheet) {
+          var subj = findSubject(sheet.subjectId);
+          var statusHtml = sheet.status === "processing"
+            ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…</span>'
+            : sheet.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
+            : '<span class="status-pill status-ready">Prêt</span>';
+          return '<div class="tile tile-sign tile-sign-metal" onclick="location.hash=\'#/revision/' + sheet.id + '\'">' +
+            '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'revisionSheet\',null,null,null,\'' + sheet.id + '\')">' + icon("trash") + '</button>' +
+            '<div class="tile-icon">' + icon("doc") + '</div>' +
+            '<div class="tile-title">' + esc(sheet.title) + '</div>' +
+            '<div class="tile-meta">' + (subj ? esc(subj.name) : "") + '</div>' +
+            statusHtml +
+            '</div>';
+        }).join("") + '</div>';
+    }
+    renderShell([], head + statsHtml + grid + sheetsHtml);
   }
 
   function renderSubjectPage(subjectId) {
     var s = findSubject(subjectId);
     if (!s) { navigate("#/"); return; }
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(s.name) + '</h1></div><p class="page-sub">' + s.chapters.length + ' chapitre' + (s.chapters.length !== 1 ? "s" : "") + '</p></div>' +
-      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(s.name) + '</h1></div><p class="page-sub">' + s.themes.length + ' thème' + (s.themes.length !== 1 ? "s" : "") + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'theme\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau thème</button></div>';
     var grid;
-    if (!s.chapters.length) {
-      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun chapitre encore</h3><p>Ajoute un chapitre pour commencer à y importer des cours.</p>' +
-        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    if (!s.themes.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun thème encore</h3><p>Ajoute un thème pour commencer à y ranger des chapitres.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'theme\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau thème</button></div>';
     } else {
-      grid = '<div class="card-grid-signs-short">' + s.chapters.map(function (c) {
-        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/chapter/' + c.id + '\'">' +
-          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'chapter\',\'' + s.id + '\',\'' + c.id + '\')">' + icon("trash") + '</button>' +
-          '<div class="tile-icon">' + icon("folder") + '</div>' +
-          '<div class="tile-title">' + esc(c.name) + '</div>' +
-          '<div class="tile-meta">' + c.courses.length + ' cours</div>' +
+      grid = '<div class="card-grid-signs-short">' + s.themes.map(function (t) {
+        var courseCount = t.chapters.reduce(function (n, c) { return n + c.courses.length; }, 0);
+        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/theme/' + t.id + '\'">' +
+          '<button class="tile-rename" style="right:40px" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'theme\',\'' + s.id + '\',\'' + t.id + '\')">✏️</button>' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'theme\',\'' + s.id + '\',\'' + t.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("book") + '</div>' +
+          '<div class="tile-title">' + esc(t.name) + '</div>' +
+          '<div class="tile-meta">' + t.chapters.length + ' chapitre' + (t.chapters.length !== 1 ? "s" : "") + ' · ' + courseCount + ' cours</div>' +
           '</div>';
-      }).join("") + '<button class="add-tile" onclick="App.openModal(\'chapter\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'theme\', \'' + s.id + '\')">' + icon("plus") + ' Nouveau thème</button></div>';
     }
     renderShell(["subject", subjectId], head + grid);
   }
 
-  function renderChapterPage(subjectId, chapterId) {
+  function renderThemePage(subjectId, themeId) {
     var s = findSubject(subjectId);
-    var c = findChapter(s, chapterId);
-    if (!s || !c) { navigate("#/"); return; }
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(c.name) + '</h1></div><p class="page-sub">' + c.courses.length + ' cours importé' + (c.courses.length !== 1 ? "s" : "") + '</p></div>' +
-      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+    var th = findTheme(s, themeId);
+    if (!s || !th) { navigate("#/"); return; }
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(th.name) + '</h1></div><p class="page-sub">' + esc(s.name) + ' · ' + th.chapters.length + ' chapitre' + (th.chapters.length !== 1 ? "s" : "") + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'chapter\', \'' + s.id + '\', \'' + th.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    var grid;
+    if (!th.chapters.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun chapitre encore</h3><p>Ajoute un chapitre pour commencer à y importer des cours.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'chapter\', \'' + s.id + '\', \'' + th.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    } else {
+      grid = '<div class="card-grid-signs-short">' + th.chapters.map(function (c) {
+        return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/theme/' + th.id + '/chapter/' + c.id + '\'">' +
+          '<button class="tile-rename" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'chapter\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">✏️</button>' +
+          '<button class="tile-move" title="Déplacer" onclick="event.stopPropagation();App.openMoveChapterModal(\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">🔀</button>' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'chapter\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("folder") + '</div>' +
+          '<div class="tile-title">' + esc(c.name) + '</div>' +
+          '<div class="tile-meta">' + c.courses.length + ' cours</div>' +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'chapter\', \'' + s.id + '\', \'' + th.id + '\')">' + icon("plus") + ' Nouveau chapitre</button></div>';
+    }
+    renderShell(["subject", subjectId, "theme", themeId], head + grid);
+  }
+
+  function renderChapterPage(subjectId, themeId, chapterId) {
+    var s = findSubject(subjectId);
+    var th = findTheme(s, themeId);
+    var c = findChapter(th, chapterId);
+    if (!s || !th || !c) { navigate("#/"); return; }
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">' + esc(c.name) + '</h1></div><p class="page-sub">' + esc(s.name) + ' · ' + esc(th.name) + ' · ' + c.courses.length + ' cours importé' + (c.courses.length !== 1 ? "s" : "") + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + th.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
     var grid;
     if (!c.courses.length) {
       grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun cours encore</h3><p>Importe une photo de cours pour générer automatiquement retranscription, explication, flashcards et contrôle.</p>' +
-        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + th.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
     } else {
       grid = '<div class="card-grid-signs-short">' + c.courses.map(function (co) {
         var statusHtml = co.status === "processing"
           ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…</span>'
           : '<span class="status-pill status-ready">Prêt</span>';
         return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/course/' + co.id + '\'">' +
-          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'course\',\'' + s.id + '\',\'' + c.id + '\',\'' + co.id + '\')">' + icon("trash") + '</button>' +
+          '<button class="tile-rename" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'course\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\',\'' + co.id + '\')">✏️</button>' +
+          '<button class="tile-move" title="Déplacer" onclick="event.stopPropagation();App.openMoveCourseModal(\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\',\'' + co.id + '\')">🔀</button>' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'course\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\',\'' + co.id + '\')">' + icon("trash") + '</button>' +
           '<div class="tile-icon">' + icon("doc") + '</div>' +
           '<div class="tile-title">' + esc(co.title) + '</div>' +
           statusHtml +
           '</div>';
-      }).join("") + '<button class="add-tile" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'course\', \'' + s.id + '\', \'' + th.id + '\', \'' + c.id + '\')">' + icon("camera") + ' Importer un cours</button></div>';
     }
-    renderShell(["subject", subjectId, "chapter", chapterId], head + grid);
+    renderShell(["subject", subjectId, "theme", themeId, "chapter", chapterId], head + grid);
   }
 
   /* ---------------- Importer un exercice ---------------- */
@@ -1921,15 +2204,19 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'exercice\')">' + icon("camera") + ' Importer un exercice</button></div>';
     } else {
       grid = '<div class="card-grid">' + list.map(function (en) {
+        var gradedCount = en.status === "ready" ? en.exercises.filter(function (ex) { return ex.answerStatus === "graded"; }).length : 0;
+        var totalCount = en.status === "ready" ? en.exercises.length : 0;
         var statusHtml = en.status === "processing"
           ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…</span>'
           : en.status === "error"
           ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
-          : en.answerStatus === "graded"
-          ? '<span class="status-pill status-ready">' + (en.correct ? "✅ Corrigé" : "❌ Corrigé") + '</span>'
-          : '<span class="status-pill status-ready">Prêt</span>';
+          : gradedCount === 0
+          ? '<span class="status-pill status-ready">' + (totalCount > 1 ? totalCount + " exercices prêts" : "Prêt") + '</span>'
+          : gradedCount === totalCount
+          ? '<span class="status-pill status-ready">' + (totalCount > 1 ? "✅ " + gradedCount + "/" + totalCount + " corrigés" : (en.exercises[0].correct ? "✅ Corrigé" : "❌ Corrigé")) + '</span>'
+          : '<span class="status-pill status-ready">' + gradedCount + "/" + totalCount + ' corrigés</span>';
         return '<div class="tile" onclick="location.hash=\'#/exercices/' + en.id + '\'">' +
-          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'importedExercise\',null,null,\'' + en.id + '\')">' + icon("trash") + '</button>' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'importedExercise\',null,null,null,\'' + en.id + '\')">' + icon("trash") + '</button>' +
           '<div class="tile-icon">' + icon("doc") + '</div>' +
           '<div class="tile-title">' + esc(en.title) + '</div>' +
           (en.subjectGuess ? '<span class="demo-badge">' + esc(en.subjectGuess) + '</span>' : '') +
@@ -1958,22 +2245,29 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryImportedExerciseGeneration(\'' + entry.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      var col = '<div class="prose">' + mdToHtml(entry.statement) + '</div>';
-      if (entry.answerStatus === "grading") {
-        col += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
-      } else if (entry.answerStatus === "graded") {
-        col += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
-          '<div class="rte-display" style="margin-bottom:14px">' + (entry.answerHtml || "<em>(vide)</em>") + '</div>' +
-          '<div class="quiz-feedback ' + (entry.correct ? "correct" : "wrong") + '">' +
-          '<div class="quiz-feedback-title ' + (entry.correct ? "correct" : "wrong") + '">' + (entry.correct ? "✅ Correct !" : "❌ Pas tout à fait") + '</div>' +
-          '<div class="correction-exp">' + mdToHtml(entry.feedback) + '</div>' +
-          '</div>' +
-          '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(entry.solution) + '</div></div>' +
-          '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.retryImportedExerciseAnswer(\'' + entry.id + '\')">Refaire cet exercice</button><button class="btn btn-ghost" style="width:auto" onclick="App.downloadImportedExercisePdf(\'' + entry.id + '\')">⬇️ Télécharger en PDF</button></div>';
-      } else {
-        col += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("ie-answer", "Écris ton raisonnement et ta réponse…", entry.answerHtml || "", true) + '</div>' +
-          '<button class="btn btn-primary" style="width:auto" onclick="App.submitImportedExerciseAnswer(\'' + entry.id + '\')">Valider ma réponse</button>';
-      }
+      var multi = entry.exercises.length > 1;
+      var allGraded = entry.exercises.length && entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; });
+      var col = entry.exercises.map(function (ex, i) {
+        var block = (multi ? '<div class="dp-exercise-label" style="margin-bottom:8px">Exercice ' + (i + 1) + ' / ' + entry.exercises.length + '</div>' : '') +
+          '<div class="prose">' + mdToHtml(ex.statement) + '</div>';
+        if (ex.answerStatus === "grading") {
+          block += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+        } else if (ex.answerStatus === "graded") {
+          block += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+            '<div class="rte-display" style="margin-bottom:14px">' + (ex.answerHtml || "<em>(vide)</em>") + '</div>' +
+            '<div class="quiz-feedback ' + (ex.correct ? "correct" : "wrong") + '">' +
+            '<div class="quiz-feedback-title ' + (ex.correct ? "correct" : "wrong") + '">' + (ex.correct ? "✅ Correct !" : "❌ Pas tout à fait") + '</div>' +
+            '<div class="correction-exp">' + mdToHtml(ex.feedback) + '</div>' +
+            '</div>' +
+            '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
+            '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.retryImportedExerciseAnswer(\'' + entry.id + '\',' + i + ')">Refaire cet exercice</button></div>';
+        } else {
+          block += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("ie-answer-" + i, "Écris ton raisonnement et ta réponse…", ex.answerHtml || "", true) + '</div>' +
+            '<button class="btn btn-primary" style="width:auto" onclick="App.submitImportedExerciseAnswer(\'' + entry.id + '\',' + i + ')">Valider ma réponse</button>';
+        }
+        return '<div class="dp-exercise-item"' + (multi ? ' style="margin-bottom:26px;padding-bottom:22px;border-bottom:2px solid var(--border-soft)"' : '') + '>' + block + '</div>';
+      }).join("") +
+        (allGraded ? '<button class="btn btn-ghost" style="width:auto" onclick="App.downloadImportedExercisePdf(\'' + entry.id + '\')">⬇️ Télécharger en PDF</button>' : "");
       body = '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + col + '</div>' + dinoCompanionHtml() + '</div>';
     }
     renderShell(["exercices", exId], head + body, { narrow: entry.status !== "ready" });
@@ -1988,16 +2282,49 @@
     { id: "quiz", label: "Contrôle" }
   ];
 
+  function renderRevisionSheetPage(sheetId) {
+    var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
+    if (!sheet) { navigate("#/"); return; }
+    var subj = findSubject(sheet.subjectId);
+    var theme = subj && findTheme(subj, sheet.themeId);
+    var chap = theme && findChapter(theme, sheet.chapterId);
+    var head = '<div class="course-head"><div><h1 class="page-title" style="margin-bottom:6px">📋 ' + esc(sheet.title) + '</h1>' +
+      '<p class="page-sub">' + (subj ? esc(subj.name) : "") + (theme ? ' · ' + esc(theme.name) : "") + (chap ? ' · ' + esc(chap.name) : "") + ' · Fiche de ' + (sheet.scope === "course" ? "cours" : "chapitre") + '</p></div>' +
+      '<div style="display:flex;gap:10px;margin-left:auto">' +
+      (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.downloadRevisionSheetPdf(\'' + sheet.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'revisionSheet\',null,null,null,\'' + sheet.id + '\')">' + icon("trash") + ' Supprimer</button>' +
+      '</div>' +
+      '</div>';
+    var body;
+    if (sheet.status === "processing") {
+      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini rédige ta fiche…</span></div>';
+    } else if (sheet.status === "error") {
+      body = '<div class="processing-box"><span>⚠️ ' + esc(sheet.error || "La génération a échoué.") + '</span>' +
+        '<div style="display:flex;gap:10px">' +
+        (sheet.errorDetail ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.openRevisionSheetErrorDetail(\'' + sheet.id + '\')">Détails</button>' : '') +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">Réessayer</button>' +
+        '</div></div>';
+    } else {
+      body = '<div class="prose">' + mdToHtml(sheet.content) + '</div>';
+    }
+    renderShell(["revision", sheetId], head + body, { narrow: true });
+  }
+
   function renderCoursePage(courseId, tab) {
     var loc = locateCourse(courseId);
     if (!loc) { navigate("#/"); return; }
     var course = loc.course;
     tab = tab || "transcription";
     var head = '<div class="course-head">' +
-      (course.images && course.images.length ? '<img class="course-thumb" src="' + course.images[0] + '">' : '') +
+      (course.images && course.images.length ? (isPdfDataUrl(course.images[0]) ? '<div class="course-thumb file-thumb-pdf">📄<span>PDF</span></div>' : '<img class="course-thumb" src="' + course.images[0] + '">') : '') +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(course.title) + '</h1>' +
       '<p class="page-sub">' + esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) + '</p></div>' +
-      (course.status !== "processing" ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' : '') +
+      (course.status !== "processing" ? (
+        '<div style="display:flex;gap:10px;margin-left:auto">' +
+        (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
+        '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
+        '</div>'
+      ) : "") +
       '</div>';
     var tabsHtml = '<div class="tabs">' + TABS.map(function (t) {
       return '<button class="tab-btn ' + (t.id === tab ? "active" : "") + '" onclick="location.hash=\'#/course/' + course.id + '/' + t.id + '\'">' + t.label + '</button>';
@@ -2018,17 +2345,51 @@
     renderShell(["course", courseId, null, tab], head + tabsHtml + body, { narrow: true });
   }
 
+  function mdIsTableSep(line) {
+    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  }
+  function mdPipeCount(line) {
+    var m = line.match(/\|/g);
+    return m ? m.length : 0;
+  }
+  function mdTableRow(line) {
+    var t = line.trim();
+    if (t.charAt(0) === "|") t = t.slice(1);
+    if (t.charAt(t.length - 1) === "|") t = t.slice(0, -1);
+    return t.split("|").map(function (c) { return c.trim(); });
+  }
   function mdToHtml(md) {
     var lines = md.split("\n");
     var html = "";
     var inList = false;
-    lines.forEach(function (line) {
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      // Tableau : ligne d'en-tête suivie idéalement d'une ligne |---|---|, mais on l'accepte
+      // aussi sans cette ligne de séparation (l'IA l'omet parfois) tant qu'au moins deux lignes
+      // consécutives contiennent des pipes.
+      var nextLine = i + 1 < lines.length ? lines[i + 1] : "";
+      var looksLikeTable = mdPipeCount(line) >= 1 && nextLine.trim() !== "" && (mdIsTableSep(nextLine) || mdPipeCount(nextLine) >= 1);
+      if (looksLikeTable) {
+        if (inList) { html += "</ul>"; inList = false; }
+        var head = mdTableRow(line);
+        html += "<table><thead><tr>" + head.map(function (c) { return "<th>" + inlineMd(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+        i++;
+        while (i < lines.length && mdPipeCount(lines[i]) >= 1 && lines[i].trim() !== "") {
+          if (mdIsTableSep(lines[i])) { i++; continue; }
+          var row = mdTableRow(lines[i]);
+          html += "<tr>" + row.map(function (c) { return "<td>" + inlineMd(c) + "</td>"; }).join("") + "</tr>";
+          i++;
+        }
+        html += "</tbody></table>";
+        i--;
+        continue;
+      }
       if (/^###\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h4>" + esc(line.replace(/^###\s+/, "")) + "</h4>"; }
       else if (/^##\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h3>" + esc(line.replace(/^##\s+/, "")) + "</h3>"; }
       else if (/^-\s+/.test(line)) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.replace(/^-\s+/, "")) + "</li>"; }
       else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
       else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
-    });
+    }
     if (inList) html += "</ul>";
     return html;
   }
@@ -2510,6 +2871,16 @@
       '<h2>Solution de référence</h2><div class="print-block">' + solutionHtml + '</div>' +
       '</div>';
   }
+  function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
+    return '<div class="print-doc print-doc-fiche">' +
+      '<div class="print-fiche-header">' +
+      '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
+      '<h1>' + esc(sheet.title) + '</h1>' +
+      '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
+      '</div>' +
+      '<div class="print-fiche-body">' + mdToHtml(sheet.content) + '</div>' +
+      '</div>';
+  }
   function printAndDownload(html) {
     var area = document.getElementById("print-area");
     if (!area) { area = document.createElement("div"); area.id = "print-area"; document.body.appendChild(area); }
@@ -2617,6 +2988,7 @@
 
   /* ---------------- Modals ---------------- */
   function renderModal() {
+    document.querySelectorAll(".modal-overlay").forEach(function (el) { el.remove(); });
     var LIGHT_MODAL_TYPES = { companion: 1, latex: 1, periodic: 1, table: 1 };
     var overlay = document.createElement("div");
     overlay.className = "modal-overlay" + (modal.type === "latex" ? " modal-overlay-top" : "");
@@ -2625,6 +2997,11 @@
     if (modal.type === "subject") {
       inner = '<h3>Nouvelle matière</h3><form onsubmit="App.createSubject(event)">' +
         '<div class="field"><label>Nom</label><input name="name" placeholder="Ex. Mathématiques" required autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Créer</button></div>' +
+        '</form>';
+    } else if (modal.type === "theme") {
+      inner = '<h3>Nouveau thème</h3><form onsubmit="App.createTheme(event)">' +
+        '<div class="field"><label>Nom</label><input name="name" placeholder="Ex. Algèbre" required autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Créer</button></div>' +
         '</form>';
     } else if (modal.type === "chapter") {
@@ -2636,47 +3013,111 @@
       var subs = userData().subjects;
       var subjectOptions = subs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
       var currentSubj = findSubject(modal.subjectId) || subs[0];
-      var chapterOptions = (currentSubj ? currentSubj.chapters : []).map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
+      var themeOptions = (currentSubj ? currentSubj.themes : []).map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.themeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
+      var currentTheme = currentSubj ? (findTheme(currentSubj, modal.themeId) || currentSubj.themes[0]) : null;
+      var chapterOptions = (currentTheme ? currentTheme.chapters : []).map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
       inner = '<h3>Importer un cours</h3><form onsubmit="App.createCourse(event)">' +
-        '<div class="field"><label>Photos du cours (une ou plusieurs pages)</label>' +
+        '<div class="field"><label>Photos ou PDF du cours (une ou plusieurs pages)</label>' +
         '<div class="file-thumbs">' +
-        modal.imagePreviews.map(function (src, i) {
-          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
-        }).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'courseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        modal.imagePreviews.map(fileThumbHtml).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'courseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
         '</div>' +
-        '<input id="courseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<input id="courseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="field"><label>Titre du cours</label><input name="title" placeholder="Ex. Le théorème de Pythagore" required autofocus></div>' +
         '<div class="field"><label>Matière</label><select name="subjectId" onchange="App.changeModalSubject(this.value)">' + subjectOptions + '</select></div>' +
-        '<div class="field"><label>Chapitre</label><select name="chapterId">' + chapterOptions + '</select></div>' +
-        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Générer le cours</button></div>' +
+        (currentSubj && currentSubj.themes.length ? '<div class="field"><label>Thème</label><select name="themeId" onchange="App.changeModalTheme(this.value)">' + themeOptions + '</select></div>' +
+          '<div class="field"><label>Chapitre</label><select name="chapterId">' + chapterOptions + '</select></div>'
+          : '<p class="modal-warn">Cette matière n\'a aucun thème — crée-en un d\'abord.</p>') +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary" ' + (currentSubj && currentSubj.themes.length ? "" : "disabled") + '>Générer le cours</button></div>' +
         '</form>';
     } else if (modal.type === "addCourseDocs") {
       inner = '<h3>Ajouter des documents</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Les nouvelles photos s\'ajoutent aux ' + modal.existingCount + ' déjà importées, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
         '<form onsubmit="App.addCourseDocs(event)">' +
-        '<div class="field"><label>Nouvelles photos</label>' +
+        '<div class="field"><label>Nouvelles photos ou PDF</label>' +
         '<div class="file-thumbs">' +
-        modal.imagePreviews.map(function (src, i) {
-          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
-        }).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'addDocsFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        modal.imagePreviews.map(fileThumbHtml).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'addDocsFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
         '</div>' +
-        '<input id="addDocsFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<input id="addDocsFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Ajouter et régénérer</button></div>' +
         '</form>';
+    } else if (modal.type === "revisionSheetGen") {
+      var rsSubs = userData().subjects;
+      if (!rsSubs.length) {
+        inner = '<h3>Générer une fiche de révision</h3>' +
+          '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>' +
+          '<div class="modal-actions"><button type="button" class="btn btn-ghost" style="width:100%" onclick="App.closeModal()">Fermer</button></div>';
+      } else {
+        var rsSubjectOptions = rsSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+        var rsSubj = findSubject(modal.subjectId) || rsSubs[0];
+        var rsThemes = dpThemesWithContent(rsSubj);
+        var rsThemeOptions = rsThemes.map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.themeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
+        var rsTheme = findTheme(rsSubj, modal.themeId) || rsThemes[0];
+        var rsChapters = rsTheme ? dpChaptersWithContent(rsTheme) : [];
+        var rsChapterOptions = rsChapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
+        var rsChap = (rsTheme && findChapter(rsTheme, modal.chapterId)) || rsChapters[0];
+        var rsCourses = rsChap ? dpCoursesWithContent(rsChap) : [];
+        var rsCourseOptions = rsCourses.map(function (co) { return '<option value="' + co.id + '" ' + (co.id === modal.courseId ? "selected" : "") + '>' + esc(co.title) + '</option>'; }).join("");
+        inner = '<h3>Générer une fiche de révision</h3>' +
+          '<div class="field"><label>Matière</label><select onchange="App.changeRevisionSheetSubject(this.value)">' + rsSubjectOptions + '</select></div>' +
+          (rsThemes.length ? (
+            '<div class="field"><label>Thème</label><select onchange="App.changeRevisionSheetTheme(this.value)">' + rsThemeOptions + '</select></div>' +
+            (rsChapters.length ? (
+              '<div class="field"><label>Portée</label><div class="modal-actions" style="margin:0 0 4px">' +
+              '<button type="button" class="btn btn-sm ' + (modal.scope === "chapter" ? "btn-primary" : "btn-ghost") + '" onclick="App.changeRevisionSheetScope(\'chapter\')">Chapitre entier</button>' +
+              '<button type="button" class="btn btn-sm ' + (modal.scope === "course" ? "btn-primary" : "btn-ghost") + '" onclick="App.changeRevisionSheetScope(\'course\')">Un seul cours</button>' +
+              '</div></div>' +
+              '<div class="field"><label>Chapitre</label><select onchange="App.changeRevisionSheetChapter(this.value)">' + rsChapterOptions + '</select></div>' +
+              (modal.scope === "course" ? '<div class="field"><label>Cours</label><select onchange="App.changeRevisionSheetCourse(this.value)">' + rsCourseOptions + '</select></div>' : "") +
+              '<p class="modal-warn" style="margin-top:4px">Fiche ULTRA COMPLÈTE : reprend absolument tout ce qu\'il y a à savoir, sans rien couper.</p>'
+            ) : '<p class="modal-warn">Ce thème n\'a aucun cours généré pour l\'instant.</p>')
+          ) : '<p class="modal-warn">Cette matière n\'a aucun cours généré pour l\'instant.</p>') +
+          '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+          (rsChapters.length ? '<button type="button" class="btn btn-primary" onclick="App.generateRevisionSheet()">Générer</button>' : "") +
+          '</div>';
+      }
+    } else if (modal.type === "moveChapter") {
+      var mcSubs = userData().subjects;
+      var mcSubj = findSubject(modal.destSubjectId) || mcSubs[0];
+      var mcSubjectOptions = mcSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.destSubjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+      var mcThemes = mcSubj ? mcSubj.themes : [];
+      var mcThemeOptions = mcThemes.map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.destThemeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
+      inner = '<h3>Déplacer le chapitre</h3>' +
+        '<div class="field"><label>Matière de destination</label><select onchange="App.changeMoveChapterSubject(this.value)">' + mcSubjectOptions + '</select></div>' +
+        (mcThemes.length ? '<div class="field"><label>Thème de destination</label><select onchange="App.changeMoveChapterTheme(this.value)">' + mcThemeOptions + '</select></div>'
+          : '<p class="modal-warn">Cette matière n\'a aucun thème — crée-en un d\'abord.</p>') +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+        (mcThemes.length ? '<button type="button" class="btn btn-primary" onclick="App.confirmMoveChapter()">Déplacer</button>' : "") +
+        '</div>';
+    } else if (modal.type === "moveCourse") {
+      var mvSubs = userData().subjects;
+      var mvSubj = findSubject(modal.destSubjectId) || mvSubs[0];
+      var mvSubjectOptions = mvSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.destSubjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+      var mvThemes = mvSubj ? mvSubj.themes : [];
+      var mvThemeOptions = mvThemes.map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.destThemeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
+      var mvTheme = findTheme(mvSubj, modal.destThemeId) || mvThemes[0];
+      var mvChapters = mvTheme ? mvTheme.chapters : [];
+      var mvChapterOptions = mvChapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.destChapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
+      inner = '<h3>Déplacer le cours</h3>' +
+        '<div class="field"><label>Matière de destination</label><select onchange="App.changeMoveCourseSubject(this.value)">' + mvSubjectOptions + '</select></div>' +
+        (mvThemes.length ? '<div class="field"><label>Thème de destination</label><select onchange="App.changeMoveCourseTheme(this.value)">' + mvThemeOptions + '</select></div>' +
+          (mvChapters.length ? '<div class="field"><label>Chapitre de destination</label><select onchange="App.changeMoveCourseChapter(this.value)">' + mvChapterOptions + '</select></div>'
+            : '<p class="modal-warn">Ce thème n\'a aucun chapitre — crée-en un d\'abord.</p>')
+          : '<p class="modal-warn">Cette matière n\'a aucun thème — crée-en un d\'abord.</p>') +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+        (mvChapters.length ? '<button type="button" class="btn btn-primary" onclick="App.confirmMoveCourse()">Déplacer</button>' : "") +
+        '</div>';
     } else if (modal.type === "exercice") {
       inner = '<h3>Importer un exercice</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Ton propre exercice, dans n\'importe quelle matière — corrigé par l\'IA, mais ne rapporte pas de points Dino Park.</p>' +
         '<form onsubmit="App.createImportedExercise(event)">' +
-        '<div class="field"><label>Photos de l\'exercice</label>' +
+        '<div class="field"><label>Photos ou PDF de l\'exercice</label>' +
         '<div class="file-thumbs">' +
-        modal.imagePreviews.map(function (src, i) {
-          return '<div class="file-thumb"><img src="' + src + '"><button type="button" class="file-thumb-remove" onclick="App.removeCourseImage(' + i + ')">×</button></div>';
-        }).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'exerciseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images") + '</div></div>' +
+        modal.imagePreviews.map(fileThumbHtml).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'exerciseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
         '</div>' +
-        '<input id="exerciseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        '<input id="exerciseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="field"><label>Titre (optionnel)</label><input name="title" placeholder="Ex. Exercice de géométrie" autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Importer</button></div>' +
         '</form>';
@@ -2685,15 +3126,22 @@
       if (modal.kind === "subject") {
         var ds = findSubject(modal.subjectId);
         name = ds ? ds.name : "";
-        warn = "Tous ses chapitres et tous les cours qu'elle contient seront supprimés avec elle.";
+        warn = "Tous ses thèmes, chapitres et cours seront supprimés avec elle.";
+      } else if (modal.kind === "theme") {
+        var dsu = findSubject(modal.subjectId);
+        var dth = findTheme(dsu, modal.themeId);
+        name = dth ? dth.name : "";
+        warn = "Tous ses chapitres et tous les cours qu'ils contiennent seront supprimés avec lui.";
       } else if (modal.kind === "chapter") {
         var dsub = findSubject(modal.subjectId);
-        var dch = findChapter(dsub, modal.chapterId);
+        var dthe = findTheme(dsub, modal.themeId);
+        var dch = findChapter(dthe, modal.chapterId);
         name = dch ? dch.name : "";
         warn = "Tous les cours qu'il contient seront supprimés avec lui.";
       } else if (modal.kind === "course") {
         var dsub2 = findSubject(modal.subjectId);
-        var dch2 = findChapter(dsub2, modal.chapterId);
+        var dthe2 = findTheme(dsub2, modal.themeId);
+        var dch2 = findChapter(dthe2, modal.chapterId);
         var dco = findCourse(dch2, modal.courseId);
         name = dco ? dco.title : "";
         warn = "Sa retranscription, ses flashcards et son contrôle seront perdus.";
@@ -2701,10 +3149,19 @@
         var die = userData().importedExercises.find(function (x) { return x.id === modal.courseId; });
         name = die ? die.title : "";
         warn = "Son énoncé, ta réponse et sa correction seront perdus.";
+      } else if (modal.kind === "revisionSheet") {
+        var drs = userData().revisionSheets.find(function (x) { return x.id === modal.courseId; });
+        name = drs ? drs.title : "";
+        warn = "Cette fiche de révision sera définitivement perdue.";
       }
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
+    } else if (modal.type === "renameItem") {
+      inner = '<h3>Renommer</h3><form onsubmit="App.confirmRename(event)">' +
+        '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
+        '</form>';
     } else if (modal.type === "apiKey") {
       inner = '<h3>Clé API Gemini</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Stockée uniquement dans le stockage local de ce navigateur, envoyée uniquement à l\'API Google Gemini pour générer tes cours.</p>' +
@@ -2855,12 +3312,19 @@
       html.setAttribute("data-app-theme", next);
       localStorage.setItem("recto_theme", next);
     },
-    openModal: function (type, subjectId, chapterId) {
-      modal = { type: type, subjectId: subjectId || (userData().subjects[0] && userData().subjects[0].id), chapterId: chapterId, imagePreviews: [] };
+    openModal: function (type, subjectId, themeId, chapterId) {
+      modal = { type: type, subjectId: subjectId || (userData().subjects[0] && userData().subjects[0].id), themeId: themeId, chapterId: chapterId, imagePreviews: [] };
       render();
     },
     closeModal: function () { modal = null; render(); },
-    changeModalSubject: function (subjectId) { modal.subjectId = subjectId; modal.chapterId = null; render(); },
+    changeModalSubject: function (subjectId) {
+      modal.subjectId = subjectId;
+      var subj = findSubject(subjectId);
+      modal.themeId = subj && subj.themes[0] ? subj.themes[0].id : null;
+      modal.chapterId = null;
+      render();
+    },
+    changeModalTheme: function (themeId) { modal.themeId = themeId; modal.chapterId = null; render(); },
     handleFile: function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
       if (!files.length) return;
@@ -2980,11 +3444,11 @@
         }
       }
       modal = { type: "periodic", editorId: editorId, savedRange: savedRange, selected: null };
-      render();
+      renderModal();
     },
     selectPeriodicElement: function (sym) {
       modal.selected = sym;
-      render();
+      renderModal();
     },
     insertPeriodicElement: function () {
       var m = modal;
@@ -3023,7 +3487,7 @@
         }
       }
       modal = { type: "table", editorId: editorId, savedRange: savedRange };
-      render();
+      renderModal();
     },
     insertTable: function (e) {
       e.preventDefault();
@@ -3059,35 +3523,116 @@
       e.preventDefault();
       var name = e.target.name.value.trim();
       if (!name) return;
-      var s = { id: uid(), name: name, chapters: [] };
+      var s = { id: uid(), name: name, themes: [] };
       userData().subjects.push(s);
       saveDB();
       modal = null;
       toast("Matière créée");
       navigate("#/subject/" + s.id);
     },
+    createTheme: function (e) {
+      e.preventDefault();
+      var name = e.target.name.value.trim();
+      if (!name) return;
+      var s = findSubject(modal.subjectId);
+      var t = { id: uid(), name: name, chapters: [] };
+      s.themes.push(t);
+      saveDB();
+      modal = null;
+      toast("Thème créé");
+      navigate("#/subject/" + s.id + "/theme/" + t.id);
+    },
     createChapter: function (e) {
       e.preventDefault();
       var name = e.target.name.value.trim();
       if (!name) return;
       var s = findSubject(modal.subjectId);
+      var th = findTheme(s, modal.themeId);
       var c = { id: uid(), name: name, courses: [] };
-      s.chapters.push(c);
+      th.chapters.push(c);
       saveDB();
       modal = null;
       toast("Chapitre créé");
-      navigate("#/subject/" + s.id + "/chapter/" + c.id);
+      navigate("#/subject/" + s.id + "/theme/" + th.id + "/chapter/" + c.id);
+    },
+    openMoveChapterModal: function (subjectId, themeId, chapterId) {
+      modal = { type: "moveChapter", subjectId: subjectId, themeId: themeId, chapterId: chapterId, destSubjectId: subjectId, destThemeId: null };
+      render();
+    },
+    changeMoveChapterSubject: function (subjectId) {
+      modal.destSubjectId = subjectId;
+      var subj = findSubject(subjectId);
+      modal.destThemeId = subj && subj.themes[0] ? subj.themes[0].id : null;
+      render();
+    },
+    changeMoveChapterTheme: function (themeId) { modal.destThemeId = themeId; render(); },
+    confirmMoveChapter: function () {
+      var m = modal;
+      var srcSubj = findSubject(m.subjectId);
+      var srcTheme = findTheme(srcSubj, m.themeId);
+      var chap = findChapter(srcTheme, m.chapterId);
+      var destSubj = findSubject(m.destSubjectId);
+      var destTheme = findTheme(destSubj, m.destThemeId);
+      if (!chap || !destTheme) { toast("Choisis une destination valide"); return; }
+      if (destTheme.id === srcTheme.id) { toast("Le chapitre est déjà dans ce thème"); App.closeModal(); return; }
+      srcTheme.chapters = srcTheme.chapters.filter(function (c) { return c.id !== chap.id; });
+      destTheme.chapters.push(chap);
+      saveDB();
+      modal = null;
+      toast("Chapitre déplacé dans « " + destTheme.name + " »");
+      navigate("#/subject/" + destSubj.id + "/theme/" + destTheme.id);
+    },
+    openMoveCourseModal: function (subjectId, themeId, chapterId, courseId) {
+      modal = { type: "moveCourse", subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId, destSubjectId: subjectId, destThemeId: themeId, destChapterId: null };
+      render();
+    },
+    changeMoveCourseSubject: function (subjectId) {
+      modal.destSubjectId = subjectId;
+      var subj = findSubject(subjectId);
+      var firstTheme = subj && subj.themes[0];
+      modal.destThemeId = firstTheme ? firstTheme.id : null;
+      var firstChap = firstTheme && firstTheme.chapters[0];
+      modal.destChapterId = firstChap ? firstChap.id : null;
+      render();
+    },
+    changeMoveCourseTheme: function (themeId) {
+      modal.destThemeId = themeId;
+      var theme = findTheme(findSubject(modal.destSubjectId), themeId);
+      var firstChap = theme && theme.chapters[0];
+      modal.destChapterId = firstChap ? firstChap.id : null;
+      render();
+    },
+    changeMoveCourseChapter: function (chapterId) { modal.destChapterId = chapterId; render(); },
+    confirmMoveCourse: function () {
+      var m = modal;
+      var srcSubj = findSubject(m.subjectId);
+      var srcTheme = findTheme(srcSubj, m.themeId);
+      var srcChap = findChapter(srcTheme, m.chapterId);
+      var co = findCourse(srcChap, m.courseId);
+      var destSubj = findSubject(m.destSubjectId);
+      var destTheme = findTheme(destSubj, m.destThemeId);
+      var destChap = findChapter(destTheme, m.destChapterId);
+      if (!co || !destChap) { toast("Choisis une destination valide"); return; }
+      if (destChap.id === srcChap.id) { toast("Le cours est déjà dans ce chapitre"); App.closeModal(); return; }
+      srcChap.courses = srcChap.courses.filter(function (c) { return c.id !== co.id; });
+      destChap.courses.push(co);
+      saveDB();
+      modal = null;
+      toast("Cours déplacé dans « " + destChap.name + " »");
+      navigate("#/course/" + co.id);
     },
     createCourse: function (e) {
       e.preventDefault();
       var f = e.target;
       var title = f.title.value.trim();
       var subjectId = f.subjectId.value;
-      var chapterId = f.chapterId.value;
-      if (!title || !subjectId || !chapterId) return;
+      var themeId = f.themeId ? f.themeId.value : null;
+      var chapterId = f.chapterId ? f.chapterId.value : null;
+      if (!title || !subjectId || !themeId || !chapterId) return;
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var s = findSubject(subjectId);
-      var c = findChapter(s, chapterId);
+      var th = findTheme(s, themeId);
+      var c = findChapter(th, chapterId);
       var course = {
         id: uid(), title: title, images: modal.imagePreviews.slice(), status: "processing",
         transcription: "", explanation: "", videos: [], flashcards: [], quizQuestions: [], exercises: [], attempts: [], error: null
@@ -3128,6 +3673,109 @@
       render();
     },
 
+    openRevisionSheetModal: function () {
+      var subs = userData().subjects;
+      var firstSubj = subs[0];
+      var firstTheme = firstSubj && dpThemesWithContent(firstSubj)[0];
+      var firstChap = firstTheme && dpChaptersWithContent(firstTheme)[0];
+      modal = { type: "revisionSheetGen", subjectId: firstSubj && firstSubj.id, themeId: firstTheme && firstTheme.id, chapterId: firstChap && firstChap.id, scope: "chapter", courseId: null };
+      render();
+    },
+    changeRevisionSheetSubject: function (subjectId) {
+      modal.subjectId = subjectId;
+      var subj = findSubject(subjectId);
+      var firstTheme = subj && dpThemesWithContent(subj)[0];
+      modal.themeId = firstTheme ? firstTheme.id : null;
+      var firstChap = firstTheme ? dpChaptersWithContent(firstTheme)[0] : null;
+      modal.chapterId = firstChap ? firstChap.id : null;
+      var firstCourses = firstChap ? dpCoursesWithContent(firstChap) : [];
+      modal.courseId = modal.scope === "course" && firstCourses[0] ? firstCourses[0].id : null;
+      render();
+    },
+    changeRevisionSheetTheme: function (themeId) {
+      modal.themeId = themeId;
+      var theme = findTheme(findSubject(modal.subjectId), themeId);
+      var firstChap = theme ? dpChaptersWithContent(theme)[0] : null;
+      modal.chapterId = firstChap ? firstChap.id : null;
+      var courses = firstChap ? dpCoursesWithContent(firstChap) : [];
+      modal.courseId = modal.scope === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeRevisionSheetScope: function (scope) {
+      modal.scope = scope;
+      var theme = findTheme(findSubject(modal.subjectId), modal.themeId);
+      var chap = findChapter(theme, modal.chapterId);
+      var courses = chap ? dpCoursesWithContent(chap) : [];
+      modal.courseId = scope === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeRevisionSheetChapter: function (chapterId) {
+      modal.chapterId = chapterId;
+      var theme = findTheme(findSubject(modal.subjectId), modal.themeId);
+      var chap = findChapter(theme, chapterId);
+      var courses = chap ? dpCoursesWithContent(chap) : [];
+      modal.courseId = modal.scope === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeRevisionSheetCourse: function (courseId) { modal.courseId = courseId; render(); },
+    generateRevisionSheet: function () {
+      var m = modal;
+      var subj = findSubject(m.subjectId);
+      if (!subj) return;
+      var theme = findTheme(subj, m.themeId);
+      if (!theme) { toast("Choisis un thème"); return; }
+      var chap = findChapter(theme, m.chapterId);
+      if (!chap) { toast("Choisis un chapitre"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var courses, title;
+      if (m.scope === "course") {
+        var co = findCourse(chap, m.courseId);
+        if (!co || !dpCourseHasContent(co)) { toast("Choisis un cours"); return; }
+        courses = [co];
+        title = co.title;
+      } else {
+        courses = chap.courses.filter(dpCourseHasContent);
+        if (!courses.length) { toast("Ce chapitre n'a aucun cours généré"); return; }
+        title = chap.name;
+      }
+      var sheet = {
+        id: uid(), title: title, scope: m.scope, subjectId: subj.id, themeId: theme.id, chapterId: chap.id, courseId: m.scope === "course" ? m.courseId : null,
+        content: "", status: "processing", error: null, errorStatus: null, errorDetail: null, createdAt: Date.now()
+      };
+      userData().revisionSheets.push(sheet);
+      saveDB();
+      modal = null;
+      navigate("#/revision/" + sheet.id);
+      runRevisionSheetGeneration(sheet, courses, subj.name, chap.name);
+    },
+    retryRevisionSheetGeneration: function (sheetId) {
+      var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
+      if (!sheet) return;
+      var subj = findSubject(sheet.subjectId);
+      var theme = subj && findTheme(subj, sheet.themeId);
+      var chap = theme && findChapter(theme, sheet.chapterId);
+      if (!subj || !theme || !chap) { toast("Matière, thème ou chapitre introuvable"); return; }
+      var courses = sheet.scope === "course"
+        ? [findCourse(chap, sheet.courseId)].filter(Boolean)
+        : chap.courses.filter(dpCourseHasContent);
+      if (!courses.length) { toast("Plus aucun cours source disponible"); return; }
+      runRevisionSheetGeneration(sheet, courses, subj.name, chap.name);
+    },
+    openRevisionSheetErrorDetail: function (sheetId) {
+      var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
+      if (!sheet) return;
+      modal = { type: "errorDetail", status: sheet.errorStatus, detail: sheet.errorDetail };
+      render();
+    },
+    downloadRevisionSheetPdf: function (sheetId) {
+      var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
+      if (!sheet || sheet.status !== "ready") return;
+      var subj = findSubject(sheet.subjectId);
+      var theme = subj && findTheme(subj, sheet.themeId);
+      var chap = theme && findChapter(theme, sheet.chapterId);
+      printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
+    },
+
     createImportedExercise: function (e) {
       e.preventDefault();
       if (!modal.imagePreviews.length) { toast("Ajoute au moins une photo de ton exercice"); return; }
@@ -3135,9 +3783,8 @@
       var title = e.target.title.value.trim() || ("Exercice du " + new Date().toLocaleDateString("fr-FR"));
       var entry = {
         id: uid(), title: title, images: modal.imagePreviews.slice(), status: "processing", error: null,
-        subjectGuess: "", statement: "", solution: "",
-        answerStatus: "unanswered", answerHtml: "", answerText: "",
-        correct: null, feedback: "", createdAt: Date.now()
+        subjectGuess: "", exercises: [],
+        createdAt: Date.now()
       };
       userData().importedExercises.push(entry);
       saveDB();
@@ -3162,41 +3809,47 @@
       modal = { type: "errorDetail", status: d.status, detail: d.detail };
       render();
     },
-    submitImportedExerciseAnswer: function (exId) {
+    submitImportedExerciseAnswer: function (exId, idx) {
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
       if (!entry) return;
-      entry.answerHtml = rteValue("ie-answer");
-      var answerText = rteText("ie-answer");
+      var ex = entry.exercises[idx];
+      if (!ex) return;
+      ex.answerHtml = rteValue("ie-answer-" + idx);
+      var answerText = rteText("ie-answer-" + idx);
       if (!answerText) { toast("Écris une réponse avant de valider"); return; }
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      entry.answerText = answerText;
-      entry.answerStatus = "grading";
+      ex.answerText = answerText;
+      ex.answerStatus = "grading";
       saveDB(); render();
-      gradeExerciseAnswer(entry.statement, entry.solution, answerText).then(function (result) {
-        entry.answerStatus = "graded";
-        entry.correct = !!result.correct;
-        entry.feedback = result.feedback || "";
+      gradeExerciseAnswer(ex.statement, ex.solution, answerText).then(function (result) {
+        ex.answerStatus = "graded";
+        ex.correct = !!result.correct;
+        ex.feedback = result.feedback || "";
         saveDB();
         render();
-        dinoReact(entry.correct);
+        dinoReact(ex.correct);
       }).catch(function (err) {
-        entry.answerStatus = "unanswered";
+        ex.answerStatus = "unanswered";
         toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
         render();
       });
     },
-    retryImportedExerciseAnswer: function (exId) {
+    retryImportedExerciseAnswer: function (exId, idx) {
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
       if (!entry) return;
-      entry.answerStatus = "unanswered";
-      entry.answerHtml = ""; entry.answerText = ""; entry.correct = null; entry.feedback = "";
+      var ex = entry.exercises[idx];
+      if (!ex) return;
+      ex.answerStatus = "unanswered";
+      ex.answerHtml = ""; ex.answerText = ""; ex.correct = null; ex.feedback = "";
       saveDB();
       render();
     },
     downloadImportedExercisePdf: function (exId) {
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
-      if (!entry || entry.answerStatus !== "graded") return;
-      var html = buildExercisePrintHtml(entry.title, entry.subjectGuess, mdToHtml(entry.statement), entry.answerHtml, entry.correct, entry.feedback, mdToHtml(entry.solution));
+      if (!entry || !entry.exercises.length || !entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; })) return;
+      var html = entry.exercises.map(function (ex, i) {
+        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement), ex.answerHtml, ex.correct, ex.feedback, mdToHtml(ex.solution));
+      }).join("");
       printAndDownload(html);
     },
     openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
@@ -3213,8 +3866,35 @@
       render();
     },
 
-    askDelete: function (kind, subjectId, chapterId, courseId) {
-      modal = { type: "confirmDelete", kind: kind, subjectId: subjectId, chapterId: chapterId, courseId: courseId };
+    askDelete: function (kind, subjectId, themeId, chapterId, courseId) {
+      modal = { type: "confirmDelete", kind: kind, subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId };
+      render();
+    },
+    openRenameModal: function (kind, subjectId, themeId, chapterId, courseId) {
+      var item = null;
+      if (kind === "subject") item = findSubject(subjectId);
+      else if (kind === "theme") item = findTheme(findSubject(subjectId), themeId);
+      else if (kind === "chapter") item = findChapter(findTheme(findSubject(subjectId), themeId), chapterId);
+      else if (kind === "course") item = findCourse(findChapter(findTheme(findSubject(subjectId), themeId), chapterId), courseId);
+      if (!item) return;
+      modal = { type: "renameItem", kind: kind, subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId, currentName: kind === "course" ? item.title : item.name };
+      render();
+    },
+    confirmRename: function (e) {
+      e.preventDefault();
+      var name = e.target.name.value.trim();
+      if (!name) return;
+      var m = modal;
+      var item = null;
+      if (m.kind === "subject") item = findSubject(m.subjectId);
+      else if (m.kind === "theme") item = findTheme(findSubject(m.subjectId), m.themeId);
+      else if (m.kind === "chapter") item = findChapter(findTheme(findSubject(m.subjectId), m.themeId), m.chapterId);
+      else if (m.kind === "course") item = findCourse(findChapter(findTheme(findSubject(m.subjectId), m.themeId), m.chapterId), m.courseId);
+      if (!item) { App.closeModal(); return; }
+      if (m.kind === "course") item.title = name; else item.name = name;
+      saveDB();
+      modal = null;
+      toast("Nom modifié");
       render();
     },
     executeDelete: function () {
@@ -3223,19 +3903,29 @@
         var d = userData();
         d.subjects = d.subjects.filter(function (s) { return s.id !== m.subjectId; });
         toast("Matière supprimée");
+      } else if (m.kind === "theme") {
+        var st = findSubject(m.subjectId);
+        st.themes = st.themes.filter(function (t) { return t.id !== m.themeId; });
+        toast("Thème supprimé");
       } else if (m.kind === "chapter") {
         var s = findSubject(m.subjectId);
-        s.chapters = s.chapters.filter(function (c) { return c.id !== m.chapterId; });
+        var th = findTheme(s, m.themeId);
+        th.chapters = th.chapters.filter(function (c) { return c.id !== m.chapterId; });
         toast("Chapitre supprimé");
       } else if (m.kind === "course") {
         var s2 = findSubject(m.subjectId);
-        var c2 = findChapter(s2, m.chapterId);
+        var th2 = findTheme(s2, m.themeId);
+        var c2 = findChapter(th2, m.chapterId);
         c2.courses = c2.courses.filter(function (co) { return co.id !== m.courseId; });
         toast("Cours supprimé");
       } else if (m.kind === "importedExercise") {
         var d2 = userData();
         d2.importedExercises = d2.importedExercises.filter(function (x) { return x.id !== m.courseId; });
         toast("Exercice supprimé");
+      } else if (m.kind === "revisionSheet") {
+        var d3 = userData();
+        d3.revisionSheets = d3.revisionSheets.filter(function (x) { return x.id !== m.courseId; });
+        toast("Fiche supprimée");
       }
       saveDB();
       modal = null;
@@ -3243,6 +3933,7 @@
     },
 
     dtGoDinoTime: function () { dtState.mode = "setup"; navigate("#/dinotime"); render(); },
+    dtSetTab: function (tab) { dtState.tab = tab; render(); },
     dtSetDuration: function (min) {
       min = parseInt(min, 10);
       if (!min || min < 1) return;
@@ -3250,13 +3941,67 @@
       render();
     },
     dtSelectEnclosure: function (encId) { dtState.enclosureId = encId; render(); },
+    dtSetPomoField: function (field, val) {
+      var caps = { pomoWork: 180, pomoBreak: 60, pomoCycles: 12 };
+      var n = Math.max(1, Math.min(caps[field] || 999, parseInt(val, 10) || 1));
+      dtState[field] = n;
+      render();
+    },
+    dtSetPomoDino: function (dinoId) { dtState.pomoDinoId = (dtState.pomoDinoId === dinoId ? null : dinoId); render(); },
     dtStart: function () {
       var enc = dtAllEnclosures().find(function (e) { return e.id === dtState.enclosureId; });
       if (!enc) { toast("Choisis un enclos"); return; }
       var dinos = dtEnclosureDinos(enc.id).map(dtInitDinoState);
       var durSec = dtState.durationMin * 60;
+      dtPomoRunning = null;
       dtRunning = { enclosureId: enc.id, remainingSec: durSec, endsAt: Date.now() + durSec * 1000, dinos: dinos, paused: false };
       dtState.mode = "running";
+      render();
+    },
+    dtStartPomodoro: function () {
+      var workSec = dtState.pomoWork * 60;
+      dtRunning = null;
+      dtPomoRunning = {
+        dinoId: dtState.pomoDinoId,
+        workMin: dtState.pomoWork, breakMin: dtState.pomoBreak, cycles: dtState.pomoCycles,
+        phase: "work", cycleIndex: 1,
+        remainingSec: workSec, endsAt: Date.now() + workSec * 1000, paused: false
+      };
+      dtState.mode = "running";
+      render();
+    },
+    dtTogglePausePomo: function () {
+      if (!dtPomoRunning) return;
+      dtPomoRunning.paused = !dtPomoRunning.paused;
+      if (dtPomoRunning.paused) {
+        dtPomoRunning.remainingSec = Math.max(0, Math.round((dtPomoRunning.endsAt - Date.now()) / 1000));
+      } else {
+        dtPomoRunning.endsAt = Date.now() + dtPomoRunning.remainingSec * 1000;
+      }
+      var btn = document.getElementById("dt-pause-btn");
+      if (btn) btn.textContent = dtPomoRunning.paused ? "▶" : "⏸";
+      var scene = document.querySelector(".dt-scene");
+      if (scene) scene.classList.toggle("paused", dtPomoRunning.paused);
+    },
+    dtStopPomodoro: function () {
+      dtStopTimerInterval();
+      dtPomoRunning = null;
+      dtState.mode = "setup";
+      render();
+    },
+    dtPomoPhaseComplete: function () {
+      var p = dtPomoRunning;
+      if (!p) return;
+      if (p.phase === "work") {
+        p.phase = "break";
+      } else {
+        p.cycleIndex = p.cycleIndex >= p.cycles ? 1 : p.cycleIndex + 1;
+        p.phase = "work";
+      }
+      var durMin = p.phase === "work" ? p.workMin : p.breakMin;
+      p.remainingSec = durMin * 60;
+      p.endsAt = Date.now() + p.remainingSec * 1000;
+      toast(DT_POMO_PHASE_LABEL[p.phase] + " !");
       render();
     },
     dtTogglePause: function () {
@@ -3294,8 +4039,10 @@
     dpGoEncyclopedia: function () { dpView = { mode: "encyclopedia" }; render(); },
     dpGoQuiz: function () { dpView = { mode: "quiz", quizNav: { level: "subjects" } }; render(); },
     dpQuizGoSubjects: function () { dpView.quizNav = { level: "subjects" }; render(); },
-    dpQuizGoSubject: function (subjectId) { dpView.quizNav = { level: "chapters", subjectId: subjectId }; render(); },
-    dpQuizGoChapters: function (subjectId) { dpView.quizNav = { level: "chapters", subjectId: subjectId }; render(); },
+    dpQuizGoSubject: function (subjectId) { dpView.quizNav = { level: "themes", subjectId: subjectId }; render(); },
+    dpQuizGoThemes: function (subjectId) { dpView.quizNav = { level: "themes", subjectId: subjectId }; render(); },
+    dpQuizGoTheme: function (themeId) { dpView.quizNav.level = "chapters"; dpView.quizNav.themeId = themeId; render(); },
+    dpQuizGoChapters: function (subjectId, themeId) { dpView.quizNav = { level: "chapters", subjectId: subjectId, themeId: themeId }; render(); },
     dpQuizGoChapter: function (chapterId) { dpView.quizNav.level = "courses"; dpView.quizNav.chapterId = chapterId; render(); },
     dpUnlockZone: function (zoneId) {
       var dp = dpData(); var z = dpZone(zoneId);
@@ -3580,13 +4327,15 @@
     if (!DB.currentUser) { renderAuth(parseHash()[0] === "signup" ? "signup" : "login"); return; }
     var parts = parseHash();
     if (parts.length === 0) { renderDashboard(); return; }
-    if (parts[0] === "subject" && parts[1] && parts[2] === "chapter" && parts[3]) { renderChapterPage(parts[1], parts[3]); return; }
+    if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3] && parts[4] === "chapter" && parts[5]) { renderChapterPage(parts[1], parts[3], parts[5]); return; }
+    if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3]) { renderThemePage(parts[1], parts[3]); return; }
     if (parts[0] === "subject" && parts[1]) { renderSubjectPage(parts[1]); return; }
     if (parts[0] === "course" && parts[1]) { renderCoursePage(parts[1], parts[2]); return; }
     if (parts[0] === "exercices" && parts[1]) { renderImportedExercisePage(parts[1]); return; }
     if (parts[0] === "exercices") { renderImportedExercisesPage(); return; }
     if (parts[0] === "dinopark") { renderDinoParkPage(); return; }
     if (parts[0] === "dinotime") { renderDinoTimePage(); return; }
+    if (parts[0] === "revision" && parts[1]) { renderRevisionSheetPage(parts[1]); return; }
     renderDashboard();
   }
 
@@ -3609,6 +4358,17 @@
       var shop = dpData().shops[zoneId];
       if (!shop) return;
       var remain = shop.expiresAt - Date.now();
+      if (remain <= 0) { render(); return; }
+      el.textContent = "⏳ " + dpFormatCountdown(remain);
+    });
+    document.querySelectorAll(".dp-inc-timer").forEach(function (el) {
+      var i = +el.getAttribute("data-slot");
+      var inc = dpData().incubators[i];
+      if (!inc) { render(); return; }
+      var sp = dpSpecies(inc.speciesId);
+      if (!sp) return;
+      var rarity = DP_RARITY[sp.rarity];
+      var remain = rarity.hatch * 1000 - (Date.now() - inc.startedAt);
       if (remain <= 0) { render(); return; }
       el.textContent = "⏳ " + dpFormatCountdown(remain);
     });

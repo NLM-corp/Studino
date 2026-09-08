@@ -127,6 +127,12 @@
   .btn-ghost:hover { background: var(--surface); }
   .btn-danger { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); box-shadow: 0 3px 0 var(--danger); }
   .btn-danger:hover { filter: brightness(1.05); }
+  .btn-metal {
+    background-image: url('assets/objects/decor/plaque en metal.png');
+    background-size: 100% 100%; background-position: center; background-repeat: no-repeat;
+    background-color: transparent; border: none; box-shadow: none; color: #EDEDED;
+  }
+  .btn-metal:hover { filter: brightness(1.15); }
   .btn-sm { padding: 7px 12px; font-size: 10px; }
   .auth-switch { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
   .auth-switch button { background: none; border: none; color: var(--accent-strong); font-weight: 700; cursor: pointer; padding: 0; font-size: inherit; text-decoration: underline; }
@@ -199,6 +205,12 @@
   .tile-del { position: absolute; top: 10px; right: 10px; background: none; border: none; color: var(--text-muted); opacity: 0; cursor: pointer; padding: 5px; border-radius: 6px; }
   .tile:hover .tile-del, .tile:focus-within .tile-del { opacity: 1; }
   .tile-del:hover { color: var(--danger); background: var(--danger-soft); }
+  .tile-move { position: absolute; top: 10px; right: 40px; background: none; border: none; color: var(--text-muted); opacity: 0; cursor: pointer; padding: 5px; border-radius: 6px; font-size: 14px; }
+  .tile:hover .tile-move, .tile:focus-within .tile-move { opacity: 1; }
+  .tile-move:hover { color: var(--accent-strong); background: var(--accent-soft); }
+  .tile-rename { position: absolute; top: 10px; right: 70px; background: none; border: none; color: var(--text-muted); opacity: 0; cursor: pointer; padding: 5px; border-radius: 6px; font-size: 14px; }
+  .tile:hover .tile-rename, .tile:focus-within .tile-rename { opacity: 1; }
+  .tile-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
 
   .card-grid-signs-short { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px 16px; align-items: start; }
   .card-grid-signs-long { display: flex; flex-direction: column; gap: 14px; }
@@ -213,8 +225,22 @@
   .tile-sign .tile-meta { color: #000; text-shadow: 0 1px 0 rgba(255,255,255,0.25); }
   .tile-sign .tile-del { color: #000; }
   .tile-sign .tile-del:hover { color: var(--danger); background: rgba(255,255,255,0.4); }
+  .tile-sign .tile-move { color: #000; }
+  .tile-sign .tile-move:hover { color: var(--accent-strong); background: rgba(255,255,255,0.4); }
+  .tile-sign .tile-rename { color: #000; }
+  .tile-sign .tile-rename:hover { color: var(--accent-strong); background: rgba(255,255,255,0.4); }
   .tile-sign-short { background-image: url('assets/objects/decor/pancarte courte.png'); aspect-ratio: 140 / 64; }
   .tile-sign-long { background-image: url('assets/objects/decor/Pancarte longue.png'); aspect-ratio: 260 / 76; }
+  .tile-sign-metal { background-image: url('assets/objects/decor/plaque en metal.png'); aspect-ratio: 140 / 64; }
+  .tile-sign-metal .tile-icon { background: rgba(255,255,255,0.14); color: #EDEDED; }
+  .tile-sign-metal .tile-title { color: #EDEDED; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+  .tile-sign-metal .tile-meta { color: #C9C9C9; text-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  .tile-sign-metal .tile-del { color: #EDEDED; }
+  .tile-sign-metal .tile-del:hover { color: var(--danger); background: rgba(255,255,255,0.2); }
+  .tile-sign-metal .tile-move { color: #EDEDED; }
+  .tile-sign-metal .tile-move:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
+  .tile-sign-metal .tile-rename { color: #EDEDED; }
+  .tile-sign-metal .tile-rename:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
 
   .add-tile {
     border: 2.5px dashed var(--border-soft); border-radius: 12px; background: none; display: flex; flex-direction: column;
@@ -249,6 +275,9 @@
   .file-thumbs { display: flex; flex-wrap: wrap; gap: 10px; }
   .file-thumb { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 2px solid var(--border-soft); }
   .file-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .file-thumb-pdf { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 26px; background: var(--bg-soft, #f1ede4); color: var(--ink, #333); }
+  .file-thumb-pdf span { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .course-thumb.file-thumb-pdf { border-radius: 10px; border: 2px solid var(--border); }
   .file-thumb-remove { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(0,0,0,0.65); color: #fff; font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .file-drop-add { width: 84px; height: 84px; padding: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10.5px; }
   .file-drop-add svg { width: 16px; height: 16px; }
@@ -269,6 +298,9 @@
   .prose p { margin: 0 0 12px; color: var(--text); }
   .prose ul { margin: 0 0 12px; padding-left: 20px; }
   .prose li { margin-bottom: 4px; }
+  .prose table { width: 100%; max-width: 100%; border-collapse: collapse; margin: 4px 0 16px; font-size: 14px; display: block; overflow-x: auto; }
+  .prose th, .prose td { border: 2px solid var(--border-soft); padding: 8px 10px; text-align: left; }
+  .prose th { background: var(--surface-2); font-weight: 700; }
 
   .video-list { display: flex; flex-direction: column; gap: 10px; max-width: 66ch; }
   .video-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; background: var(--surface); text-decoration: none; box-shadow: 0 3px 0 var(--border-soft); }
@@ -578,6 +610,37 @@
   .dt-scene.paused .dt-dino-walking { animation-play-state: paused; }
   @keyframes dtBob { from { transform: translateY(0); } to { transform: translateY(-5px); } }
 
+  .dt-pomo-fields { display: flex; flex-wrap: wrap; gap: 18px; }
+  .dt-pomo-field-card {
+    width: 180px; box-sizing: border-box; min-height: 128px;
+    background-image: url('assets/objects/decor/pancarte courte.png');
+    background-size: 100% 100%; background-position: center; background-repeat: no-repeat;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    padding: 16px 16px 20px;
+  }
+  .dt-pomo-field-label { font-family: 'Press Start 2P', monospace; font-size: 9.5px; color: #000; text-align: center; line-height: 1.4; }
+  .dt-pomo-field-input {
+    width: 100%; box-sizing: border-box; text-align: center; font-family: 'Press Start 2P', monospace; font-size: 15px; font-weight: 700;
+    background-image: url('assets/objects/decor/plaque en metal.png');
+    background-size: 100% 100%; background-position: center; background-repeat: no-repeat;
+    background-color: transparent; border: none; color: #EDEDED; padding: 10px 6px;
+  }
+  .dt-pomo-field-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .dt-pomo-scene { background-image: url('assets/objects/Pomodorausre.png'); }
+  .dt-pomo-scene .dt-timer { top: 13%; font-size: 64px; }
+  .dt-pomo-phase { position: absolute; top: 5%; left: 50%; transform: translateX(-50%); font-family: 'Press Start 2P', monospace; font-size: 17px; color: #fff; text-shadow: 0 3px 0 rgba(0,0,0,0.35), 0 6px 16px rgba(0,0,0,0.5); z-index: 2; text-align: center; }
+  .dt-pomo-cycle { position: absolute; top: 24%; left: 50%; transform: translateX(-50%); font-size: 14px; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,0.35); z-index: 2; }
+  .dt-pomo-track { position: absolute; left: 10%; right: 10%; bottom: 20%; height: 4px; z-index: 2; }
+  .dt-pomo-track-line { position: absolute; left: 0; right: 0; top: 50%; height: 4px; background: rgba(255,255,255,0.55); border-radius: 999px; transform: translateY(-50%); }
+  .dt-pomo-checkpoint { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid rgba(0,0,0,0.25); transform: translate(-50%, -50%); box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+  .dt-pomo-runner { position: absolute; bottom: 0; transform: translateX(-50%); transition: left 1s linear; }
+  .dt-pomo-dino { display: block; height: 130px; width: auto; transform: translateY(-2px); filter: drop-shadow(0 8px 6px rgba(0,0,0,0.35)); }
+  .dt-pomo-dino-fallback { display: block; width: 80px; height: 70px; border-radius: 14px; box-shadow: 0 8px 12px rgba(0,0,0,0.3); }
+  .dt-pomo-dino-placeholder { display: block; font-size: 60px; font-weight: 800; color: #fff; opacity: .8; text-align: center; transform: translateY(-30px); }
+  .dt-pomo-runner.working .dt-pomo-dino, .dt-pomo-runner.working .dt-pomo-dino-fallback, .dt-pomo-runner.working .dt-pomo-dino-placeholder { animation: dtBob 0.5s ease-in-out infinite alternate; }
+  .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino, .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino-fallback, .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino-placeholder { animation-play-state: paused; }
+  .dt-pomo-scene.paused .dt-pomo-dino.sprite-bob { animation-play-state: paused; }
+
   /* ---------- Dino study companion ---------- */
   .exercise-layout { display: flex; gap: 24px; align-items: flex-start; }
   .exercise-layout > .quiz-wrap { flex: 1; min-width: 0; }
@@ -661,6 +724,7 @@
     body > *:not(#print-area) { display: none !important; }
     #print-area { display: block !important; }
     .print-doc { max-width: 100%; color: #111; }
+    .print-doc + .print-doc { break-before: page; page-break-before: always; margin-top: 0; }
     .print-doc h1 { font-size: 20px; margin: 0 0 4px; }
     .print-meta { color: #555; margin: 0 0 16px; font-size: 12px; }
     .print-doc h2 { font-size: 14px; margin: 18px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
@@ -668,6 +732,22 @@
     .print-verdict { font-weight: 700; margin: 0 0 6px; }
     .print-verdict.good { color: #1a7a3c; }
     .print-verdict.bad { color: #b3261e; }
+    .print-doc table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12.5px; }
+    .print-doc th, .print-doc td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+    .print-doc th { background: #eee; font-weight: 700; }
+
+    .print-doc-fiche { font-family: 'Public Sans', Arial, sans-serif; }
+    .print-fiche-header { border-bottom: 3px solid #3E7A3F; margin-bottom: 22px; padding-bottom: 14px; }
+    .print-fiche-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #3E7A3F; font-weight: 700; margin-bottom: 6px; }
+    .print-doc-fiche h1 { font-size: 27px; margin: 0 0 4px; color: #1c2b16; }
+    .print-fiche-sub { font-size: 12px; color: #666; }
+    .print-fiche-body { font-size: 13.5px; line-height: 1.6; color: #222; }
+    .print-fiche-body h3 { font-size: 18px; margin: 24px 0 8px; color: #2c6e3f; border-bottom: 2px solid #d8e6d0; padding-bottom: 5px; break-after: avoid; }
+    .print-fiche-body h4 { font-size: 14.5px; margin: 16px 0 6px; color: #3a4a2f; break-after: avoid; }
+    .print-fiche-body ul { margin: 0 0 12px 20px; padding: 0; }
+    .print-fiche-body li { margin-bottom: 5px; }
+    .print-fiche-body p { margin: 0 0 10px; }
+    .print-fiche-body strong { color: #1c2b16; }
   }
 
   @media (prefers-reduced-motion: reduce) {
