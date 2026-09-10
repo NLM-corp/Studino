@@ -447,7 +447,7 @@
     return step1 + " Ne réponds pas encore aux exercices ici : \n" +
       "1. Repère CHAQUE exercice distinct présent dans le document (généralement numéroté \"Exercice 1\", \"Exercice 2\"... ou séparé visuellement) et crée une entrée dans \"exercises\" pour chacun, dans l'ordre d'apparition. S'il n'y a qu'un seul exercice, renvoie un tableau \"exercises\" avec un seul élément. S'il y en a 7 exercices distincts, renvoie exactement 7 éléments — ne fusionne jamais deux exercices ensemble et n'en invente aucun.\n" +
       "   ATTENTION, très important : les sous-questions ou étapes À L'INTÉRIEUR d'un même exercice (numérotées a, b, c, d... ou 1, 2, 3... ou 1), 2), 3)...) NE SONT PAS des exercices séparés — ce sont des questions qui font partie d'un seul et même exercice. Un exercice avec 5 sous-questions ou 5 étapes reste UN SEUL élément dans \"exercises\", avec toutes ses sous-questions rassemblées dans le même \"statement\" et une seule \"solution\" qui traite les 5. Ne crée une nouvelle entrée dans \"exercises\" QUE quand le document passe à un exercice numéroté différent (Exercice 1 → Exercice 2), jamais entre deux sous-questions du même exercice.\n" +
-      "2. Pour chaque exercice, retranscris fidèlement son énoncé complet en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\". Corrige les fautes évidentes mais garde le sens exact.\n" +
+      "2. Pour chaque exercice, retranscris fidèlement son énoncé complet dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\", chacune sur sa propre ligne (une ligne \"- \" par sous-question si elles sont nombreuses, sinon une ligne par ligne du document source). N'ajoute JAMAIS de titre du type \"## Exercice N\" ou \"### Énoncé\" en tête du \"statement\" : l'application affiche déjà le numéro de l'exercice ailleurs, ce serait redondant. Utilise ** pour le gras et $...$/$$...$$ pour les formules, mais pas de ## ni ### ici. Corrige les fautes évidentes mais garde le sens exact.\n" +
       "3. Devine la matière probable de l'ensemble des exercices (un seul \"subjectGuess\" pour tout le document).\n" +
       "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n" +
       "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou image NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte) et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
@@ -2459,9 +2459,13 @@
         if (inList) { html += "</ul>"; inList = false; }
         html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
       }
-      else if (/^###\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h4>" + esc(line.replace(/^###\s+/, "")) + "</h4>"; }
-      else if (/^##\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h3>" + esc(line.replace(/^##\s+/, "")) + "</h3>"; }
-      else if (/^-\s+/.test(line)) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.replace(/^-\s+/, "")) + "</li>"; }
+      else if (/^#{2,6}\s*/.test(line.trim())) {
+        if (inList) { html += "</ul>"; inList = false; }
+        var headingMatch = /^(#{2,6})\s*(.*)$/.exec(line.trim());
+        var tag = headingMatch[1].length <= 2 ? "h3" : "h4";
+        html += "<" + tag + ">" + esc(headingMatch[2]) + "</" + tag + ">";
+      }
+      else if (/^-\s+/.test(line.trim())) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.trim().replace(/^-\s+/, "")) + "</li>"; }
       else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
       else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
     }
@@ -2971,10 +2975,10 @@
 
   function renderTabBody(course, tab, loc) {
     if (tab === "transcription") {
-      return '<div class="prose">' + mdToHtml(course.transcription) + '</div>';
+      return '<div class="prose prose-lesson">' + mdToHtml(course.transcription) + '</div>';
     }
     if (tab === "explication") {
-      return '<div class="prose">' + mdToHtml(course.explanation) + '</div>';
+      return '<div class="prose prose-lesson">' + mdToHtml(course.explanation) + '</div>';
     }
     if (tab === "videos") {
       return '<span class="demo-badge">Recherches suggérées</span><div class="video-list">' + course.videos.map(function (v) {
