@@ -2457,7 +2457,7 @@
       var imgLine = /^!\[([^\]]*)\]\((\S+)\)\s*$/.exec(line.trim());
       if (imgLine) {
         if (inList) { html += "</ul>"; inList = false; }
-        html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+        html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
       }
       else if (/^#{2,6}\s*/.test(line.trim())) {
         if (inList) { html += "</ul>"; inList = false; }
@@ -3440,6 +3440,19 @@
       if (ov) ov.remove();
       if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.hide();
       modal = null;
+    },
+
+    openFigureLightbox: function (src) {
+      var ov = document.createElement("div");
+      ov.className = "figure-lightbox";
+      var img = document.createElement("img");
+      img.src = src;
+      ov.appendChild(img);
+      var close = function () { ov.remove(); document.removeEventListener("keydown", onKey); };
+      var onKey = function (e) { if (e.key === "Escape") close(); };
+      ov.addEventListener("click", close);
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(ov);
     },
     openCompanionModal: function () { modal = { type: "companion" }; renderModal(); },
     setCompanion: function (speciesId) {

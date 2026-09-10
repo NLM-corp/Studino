@@ -308,8 +308,11 @@
   .prose-lesson h3:first-child { margin-top: 0; }
   .prose-lesson > p:nth-of-type(even) { margin-left: auto; }
   .prose-figure { max-width: 100%; margin: 18px 0 22px; text-align: center; }
-  .prose-figure img { max-width: 100%; max-height: 420px; border: 2px solid var(--border-soft); border-radius: 10px; background: #fff; }
+  .prose-figure img { max-width: 100%; max-height: 420px; border: 2px solid var(--border-soft); border-radius: 10px; background: #fff; cursor: zoom-in; }
   .prose-figure figcaption { margin-top: 8px; font-size: 12.5px; color: var(--text-muted); font-style: italic; }
+  .figure-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 999; display: flex; align-items: center; justify-content: center; padding: 30px; cursor: zoom-out; animation: figureLightboxIn .12s ease-out; }
+  .figure-lightbox img { max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.55); }
+  @keyframes figureLightboxIn { from { opacity: 0; } to { opacity: 1; } }
 
   .video-list { display: flex; flex-direction: column; gap: 10px; max-width: 66ch; }
   .video-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; background: var(--surface); text-decoration: none; box-shadow: 0 3px 0 var(--border-soft); }
