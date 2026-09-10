@@ -113,6 +113,42 @@
     canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.72);
   }
+  function cropImageRegion(dataUrl, box) {
+    // box: [ymin, xmin, ymax, xmax] normalisé sur 0-1000 (convention utilisée par Gemini pour les zones détectées)
+    return loadImageEl(dataUrl).then(function (img) {
+      var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      var clamp = function (v) { return Math.max(0, Math.min(1000, v)); };
+      var xmin = clamp(box[1]) / 1000 * w, ymin = clamp(box[0]) / 1000 * h;
+      var xmax = clamp(box[3]) / 1000 * w, ymax = clamp(box[2]) / 1000 * h;
+      var cw = Math.max(1, Math.round(xmax - xmin)), ch = Math.max(1, Math.round(ymax - ymin));
+      var canvas = document.createElement("canvas");
+      canvas.width = cw; canvas.height = ch;
+      canvas.getContext("2d").drawImage(img, xmin, ymin, cw, ch, 0, 0, cw, ch);
+      return canvas.toDataURL("image/jpeg", 0.88);
+    });
+  }
+  function resolveFigures(figures, images) {
+    var list = figures || [];
+    return Promise.all(list.map(function (fig) {
+      var src = images[fig.imageIndex];
+      if (!src || isPdfDataUrl(src) || !Array.isArray(fig.box) || fig.box.length !== 4) return Promise.resolve(null);
+      return cropImageRegion(src, fig.box).catch(function () { return null; });
+    })).then(function (crops) {
+      return list.map(function (fig, i) {
+        var cropUrl = crops[i];
+        var caption = String(fig.caption || "").replace(/[[\]]/g, "");
+        return { placeholder: fig.placeholder || "", replacement: cropUrl ? ("![" + caption + "](" + cropUrl + ")") : "" };
+      });
+    });
+  }
+  function substituteFigures(text, subs) {
+    var out = text || "";
+    (subs || []).forEach(function (s) { if (s.placeholder) out = out.split(s.placeholder).join(s.replacement); });
+    return out;
+  }
+  function stripFigureMarkdown(text) {
+    return String(text || "").replace(/!\[[^\]]*\]\(data:[^)]+\)/g, "");
+  }
   function decodeTiffFile(file) {
     if (typeof UTIF === "undefined") return Promise.reject(new Error("Le support TIFF n'a pas pu se charger."));
     return file.arrayBuffer().then(function (buf) {
@@ -207,9 +243,23 @@
           },
           required: ["prompt", "solution"]
         }
+      },
+      figures: {
+        type: "array",
+        description: "Schémas, graphiques ou images des photos sources indispensables à la compréhension, à réinsérer dans le texte.",
+        items: {
+          type: "object",
+          properties: {
+            imageIndex: { type: "integer", description: "Index (à partir de 0) de la photo source où se trouve ce schéma." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo, sur une échelle 0-1000." },
+            caption: { type: "string", description: "Légende courte du schéma." },
+            placeholder: { type: "string", description: "Jeton unique au format [[figure:N]] (N = index de cette figure) à insérer tel quel dans \"transcription\" et/ou \"explanation\" à l'endroit exact où ce schéma doit apparaître." }
+          },
+          required: ["imageIndex", "box", "caption", "placeholder"]
+        }
       }
     },
-    required: ["transcription", "explanation", "videoQueries", "flashcards", "quizQuestions", "exercises"]
+    required: ["transcription", "explanation", "videoQueries", "flashcards", "quizQuestions", "exercises", "figures"]
   };
 
   function buildCoursePrompt(title, subjectName, chapterName, imageCount) {
@@ -227,7 +277,8 @@
       "3. Propose 3 requêtes de recherche YouTube pertinentes pour approfondir ce cours (un label court + la requête de recherche).\n" +
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota.\n" +
       "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Parmi ces questions, environ 70% de type \"qcm\" (4 choix, un seul indice correct de 0 à 3) et environ 30% de type \"ouverte\" (le joueur tape une réponse courte — laisse \"choices\" vide, \"correctIndex\" à 0, et renseigne \"answer\" avec la réponse attendue). Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
-      "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n\n" +
+      "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
+      (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou une image NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
       "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique (dans n'importe quel champ), utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule.\n\n" +
       "Si le contenu source (ou ton explication) comporte un tableau, reproduis-le comme un vrai tableau Markdown, avec EXACTEMENT ce format (une ligne d'en-tête, puis une ligne de séparation avec des tirets, puis une ligne par ligne du tableau, jamais de texte ou de liste à puces à la place) :\n" +
@@ -296,7 +347,7 @@
   };
   function buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) {
     var sourceBlocks = courses.map(function (co) {
-      return "### Cours : " + co.title + "\n" + (co.transcription || "");
+      return "### Cours : " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
     return "Tu es un assistant pédagogique pour un élève francophone. Voici " + (scope === "course" ? "le contenu retranscrit d'un cours" : "le contenu retranscrit de tous les cours d'un chapitre") + " intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
       "Génère une fiche de révision ULTRA COMPLÈTE en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section avec des titres et sous-titres, prête à réviser juste avant un contrôle.\n\n" +
@@ -352,7 +403,7 @@
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
-    var parts = [{ text: buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) }];
+    var parts = [{ text: buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), studentAnswer) }];
     return callGemini(parts, EXERCISE_GRADE_SCHEMA);
   }
 
@@ -371,9 +422,23 @@
           },
           required: ["statement", "solution"]
         }
+      },
+      figures: {
+        type: "array",
+        description: "Schémas, graphiques ou images des photos sources indispensables à la compréhension d'un exercice, à réinsérer dans son énoncé.",
+        items: {
+          type: "object",
+          properties: {
+            imageIndex: { type: "integer", description: "Index (à partir de 0) de la photo source où se trouve ce schéma." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo, sur une échelle 0-1000." },
+            caption: { type: "string", description: "Légende courte du schéma." },
+            placeholder: { type: "string", description: "Jeton unique au format [[figure:N]] (N = index de cette figure) à insérer tel quel dans le \"statement\" de l'exercice concerné, à l'endroit exact où ce schéma doit apparaître." }
+          },
+          required: ["imageIndex", "box", "caption", "placeholder"]
+        }
       }
     },
-    required: ["subjectGuess", "exercises"]
+    required: ["subjectGuess", "exercises", "figures"]
   };
   function buildImportedExercisePrompt(imageCount) {
     var step1 = imageCount === 1
@@ -384,7 +449,8 @@
       "   ATTENTION, très important : les sous-questions ou étapes À L'INTÉRIEUR d'un même exercice (numérotées a, b, c, d... ou 1, 2, 3... ou 1), 2), 3)...) NE SONT PAS des exercices séparés — ce sont des questions qui font partie d'un seul et même exercice. Un exercice avec 5 sous-questions ou 5 étapes reste UN SEUL élément dans \"exercises\", avec toutes ses sous-questions rassemblées dans le même \"statement\" et une seule \"solution\" qui traite les 5. Ne crée une nouvelle entrée dans \"exercises\" QUE quand le document passe à un exercice numéroté différent (Exercice 1 → Exercice 2), jamais entre deux sous-questions du même exercice.\n" +
       "2. Pour chaque exercice, retranscris fidèlement son énoncé complet en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\". Corrige les fautes évidentes mais garde le sens exact.\n" +
       "3. Devine la matière probable de l'ensemble des exercices (un seul \"subjectGuess\" pour tout le document).\n" +
-      "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n\n" +
+      "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n" +
+      "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou image NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte) et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée.\n\n" +
       "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
@@ -403,13 +469,15 @@
     saveDB(); render();
     generateImportedExercise(entry.images).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
-      entry.exercises = (data.exercises || []).map(function (ex) {
-        return { statement: ex.statement || "", solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+      return resolveFigures(data.figures, entry.images).then(function (subs) {
+        entry.exercises = (data.exercises || []).map(function (ex) {
+          return { statement: substituteFigures(ex.statement || "", subs), solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+        });
+        entry.status = "ready";
+        saveDB();
+        toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
+        render();
       });
-      entry.status = "ready";
-      saveDB();
-      toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
-      render();
     }).catch(function (err) {
       entry.status = "error";
       entry.error = err.message || "Erreur inconnue";
@@ -426,20 +494,22 @@
     course.error = null;
     saveDB(); render();
     generateCourseContent(course.images, course.title, subjectName, chapterName).then(function (data) {
-      course.transcription = data.transcription;
-      course.explanation = data.explanation;
-      course.videos = (data.videoQueries || []).map(function (v) {
-        return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
+      return resolveFigures(data.figures, course.images).then(function (subs) {
+        course.transcription = substituteFigures(data.transcription, subs);
+        course.explanation = substituteFigures(data.explanation, subs);
+        course.videos = (data.videoQueries || []).map(function (v) {
+          return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
+        });
+        course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
+        course.quizQuestions = (data.quizQuestions || []).map(function (q) {
+          return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation };
+        });
+        course.exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution }; });
+        course.status = "ready";
+        saveDB();
+        toast("Cours généré · " + course.title);
+        render();
       });
-      course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
-      course.quizQuestions = (data.quizQuestions || []).map(function (q) {
-        return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation };
-      });
-      course.exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution }; });
-      course.status = "ready";
-      saveDB();
-      toast("Cours généré · " + course.title);
-      render();
     }).catch(function (err) {
       course.status = "error";
       course.error = err.message || "Erreur inconnue";
@@ -2384,7 +2454,12 @@
         i--;
         continue;
       }
-      if (/^###\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h4>" + esc(line.replace(/^###\s+/, "")) + "</h4>"; }
+      var imgLine = /^!\[([^\]]*)\]\((\S+)\)\s*$/.exec(line.trim());
+      if (imgLine) {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+      }
+      else if (/^###\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h4>" + esc(line.replace(/^###\s+/, "")) + "</h4>"; }
       else if (/^##\s+/.test(line)) { if (inList) { html += "</ul>"; inList = false; } html += "<h3>" + esc(line.replace(/^##\s+/, "")) + "</h3>"; }
       else if (/^-\s+/.test(line)) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.replace(/^-\s+/, "")) + "</li>"; }
       else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
@@ -2394,7 +2469,12 @@
     return html;
   }
   function inlineMdPlain(s) {
+    // Gemini insère parfois <br> à l'intérieur d'une cellule de tableau pour empiler plusieurs
+    // lignes — on le protège avant l'échappement HTML pour qu'il reste un vrai saut de ligne
+    // au lieu de s'afficher tel quel comme du texte brut "<br>".
+    s = String(s == null ? "" : s).replace(/<br\s*\/?>/gi, "");
     s = esc(s);
+    s = s.replace(//g, "<br>");
     s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     return s;
   }
