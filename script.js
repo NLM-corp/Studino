@@ -1755,13 +1755,22 @@
     return 5000 + Math.random() * 5000;
   }
   var DT_DINO_BASE_HEIGHT = 200;
+  // Échelle de taille propre à DinoTime (chrono + Pomorodosaure) : plus contrastée que celle des
+  // enclos pour que le Brachiosaure (le plus lourd) impose vraiment sa taille à l'écran.
+  var DT_DINO_MIN_SCALE = 0.45, DT_DINO_MAX_SCALE = 2.2;
+  function dtDinoSizeScale(weightKg) {
+    var t = Math.log(Math.max(1, weightKg || 1)) / DP_DINO_MAX_WEIGHT_LOG;
+    t = Math.max(0, Math.min(1, t));
+    return DT_DINO_MIN_SCALE + t * (DT_DINO_MAX_SCALE - DT_DINO_MIN_SCALE);
+  }
+  var DT_POMO_DINO_BASE_HEIGHT = 130, DT_POMO_DINO_FALLBACK_W = 80, DT_POMO_DINO_FALLBACK_H = 70;
   function dtInitDinoState(d) {
     var cycleIdx = Math.floor(Math.random() * DT_CYCLE.length);
     var sp = dpSpecies(d.speciesId);
     return {
       speciesId: d.speciesId,
       hasArt: !!DP_ART[d.speciesId],
-      heightPx: Math.round(DT_DINO_BASE_HEIGHT * dpDinoSizeScale(sp ? sp.weightKg : null)),
+      heightPx: Math.round(DT_DINO_BASE_HEIGHT * dtDinoSizeScale(sp ? sp.weightKg : null)),
       x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
       dir: Math.random() < 0.5 ? -1 : 1,
       cycleIdx: cycleIdx,
@@ -1814,11 +1823,12 @@
     var sp = dino ? dpSpecies(dino.speciesId) : null;
     var looking = p.phase !== "work";
     var artPath = sp ? dpArtPath(sp.id, looking ? "face" : "profil") : null;
+    var pomoScale = dtDinoSizeScale(sp ? sp.weightKg : null);
     var dinoHtml;
     if (artPath) {
-      dinoHtml = '<img class="dt-pomo-dino' + (looking ? " sprite-bob" : "") + '" src="' + artPath + '" alt="" onerror="this.style.display=\'none\'">';
+      dinoHtml = '<img class="dt-pomo-dino' + (looking ? " sprite-bob" : "") + '" src="' + artPath + '" alt="" style="height:' + Math.round(DT_POMO_DINO_BASE_HEIGHT * pomoScale) + 'px" onerror="this.style.display=\'none\'">';
     } else if (sp) {
-      dinoHtml = '<div class="dt-pomo-dino-fallback' + (looking ? " sprite-bob" : "") + '" style="background:' + dpHashColor(sp.id) + '"></div>';
+      dinoHtml = '<div class="dt-pomo-dino-fallback' + (looking ? " sprite-bob" : "") + '" style="background:' + dpHashColor(sp.id) + ';height:' + Math.round(DT_POMO_DINO_FALLBACK_H * pomoScale) + 'px;width:' + Math.round(DT_POMO_DINO_FALLBACK_W * pomoScale) + 'px"></div>';
     } else {
       dinoHtml = '<div class="dt-pomo-dino-placeholder">.</div>';
     }
