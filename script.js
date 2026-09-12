@@ -991,7 +991,27 @@
     hypacrosaure: { folder: "Hypacrosaure", face: "Hypacrosaure_face.png", profil: "Hypacrosaure_profil.png" },
     brachylophosaure: { folder: "Brachylophosaurus", face: "Brachylophosaurus_face.png", profil: "Brachylophosaurus_profil.png" },
     nodosaure: { folder: "Nodosaure", face: "Nodosaure_face.png", profil: "Nodosaure_profil.png" },
-    daspletosaure: { folder: "Daspletosaurus", face: "Daspletosaurus_face.png", profil: "Daspletosaurus_profil.png" }
+    daspletosaure: { folder: "Daspletosaurus", face: "Daspletosaurus_face.png", profil: "Daspletosaurus_profil.png" },
+    protoceratops: { folder: "Protoceratops", face: "Protoceratops_face.png", profil: "Protoceratops_profil.png" },
+    oviraptor: { folder: "Oviraptor", face: "Oviraptor_face.png", profil: "Oviraptor_profil.png" },
+    shuvuuia: { folder: "Shuvuuia", face: "Shuvuuia_face.png", profil: "Shuvuuia_profil.png" },
+    nemegtosaure: { folder: "Nemegtosaurus", face: "Nemegtosaurus_face.png", profil: "Nemegtosaurus_profil.png" },
+    bagaceratops: { folder: "Bagaceratops", face: "Bagaceratops_face.png", profil: "Bagaceratops_profil.png" },
+    archaeoceratops: { folder: "Archaeoceratops", face: "Archaeoceratops_face.png", profil: "Archaeoceratops_profil.png" },
+    avimimus: { folder: "Avimimus", face: "Avimimus_face.png", profil: "Avimimus_profil.png" },
+    elmisaurus: { folder: "Elmisaurus", face: "Elmisaurus_face.png", profil: "Elmisaurus_profil.png" },
+    carnotaurus: { folder: "Carnotaurus", face: "Carnotaurus_face.png", profil: "Carnotaurus_profil.png" },
+    pentaceratops: { folder: "Pentaceratops", face: "Pentaceratops_face.png", profil: "Pentaceratops_profil.png" },
+    tarchia: { folder: "Tarchia", face: "Tarchia_face.png", profil: "Tarchia_profil.png" },
+    segnosaure: { folder: "Segnosaure", face: "Segnosaure_face.png", profil: "Segnosaure_profil.png" },
+    alxasaure: { folder: "Alxasaurus", face: "Alxasaurus_face.png", profil: "Alxasaurus_profil.png" },
+    rinchenia: { folder: "Rinchenia", face: "Rinchenia_face.png", profil: "Rinchenia_profil.png" },
+    bactrosaure: { folder: "Bactrosaurus", face: "Bactrosaurus_face.png", profil: "Bactrosaurus_profil.png" },
+    nigersaurus: { folder: "Nigersaurus", face: "Nigersaurus_face.png", profil: "Nigersaurus_profil.png" },
+    alioramus: { folder: "Alioramus", face: "Alioramus_face.png", profil: "Alioramus_profil.png" },
+    gobisaure: { folder: "Gobisaurus", face: "Gobisaurus_face.png", profil: "Gobisaurus_profil.png" },
+    linhenykus: { folder: "Linhenykus", face: "Linhenykus_face.png", profil: "Linhenykus_profil.png" },
+    spinosaure: { folder: "spinosaure", face: "Spinosaure_face.png", profil: "Spinosaure_profil.png" }
   };
   function dpArtPath(speciesId, kind) {
     var a = DP_ART[speciesId];
