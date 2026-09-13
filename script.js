@@ -628,7 +628,10 @@
         (review.weak || []).forEach(function (t) { prep.topicStatus[t] = "weak"; });
       }
       prep.gapFlashcards = prep.gapFlashcards || [];
-      (gapFlashcards || []).forEach(function (f) { prep.gapFlashcards.push({ id: uid(), q: f.q, a: f.a, status: "new" }); });
+      // s.date est le jour où l'entraînement a démarré (fixé au clic sur "Commencer"), jamais la date
+      // du moment où l'IA termine son analyse — une séance commencée juste avant minuit et finie
+      // après doit quand même rattacher ses flashcards au jour d'entraînement, pas au lendemain.
+      (gapFlashcards || []).forEach(function (f) { prep.gapFlashcards.push({ id: uid(), day: s.date, q: f.q, a: f.a, status: "new" }); });
       prep.sessions = prep.sessions || {};
       prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review || null, newFlashcards: (gapFlashcards || []).length, completedAt: Date.now() };
       saveDB();
@@ -2809,21 +2812,18 @@
     } else {
       var todayEntry = prep.days.find(function (d) { return d.date === today; });
       var todaySession = prep.sessions && prep.sessions[today];
-      var fcCount = (prep.gapFlashcards || []).length;
-      var fcToggleBtn = fcCount ? '<button class="ep-fc-toggle" onclick="App.toggleExamPrepFlashcards(\'' + prep.id + '\')">📇 Flashcards (' + fcCount + ')</button>' : "";
       var cta;
       if (daysLeft < 0) {
-        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">📅 Cet examen est passé.</div></div>';
+        cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
       } else if (!todayEntry) {
-        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
+        cta = '<div class="ep-today-card"><div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
       } else if (todaySession && todaySession.status === "done") {
-        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
+        cta = '<div class="ep-today-card"><div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
           '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button></div>';
       } else {
-        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
+        cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
           '<button class="btn btn-primary" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
       }
-      var fcSection = epGapFcOpen[prep.id] ? renderExamPrepGapFlashcards(prep) : "";
       var daysHtml = prep.days.map(function (d) {
         var sess = prep.sessions && prep.sessions[d.date];
         var done = sess && sess.status === "done";
@@ -2831,14 +2831,22 @@
         var isPast = d.date < today;
         var cls = "ep-day" + (isToday ? " ep-day-today" : "") + (done ? " ep-day-done" : "") + (isPast && !done ? " ep-day-missed" : "");
         var statusLabel = done ? "✅ " + sess.correct + "/" + sess.total : (isPast ? "manqué" : d.minutes + " min");
-        return '<div class="' + cls + '">' +
+        var dayCards = (prep.gapFlashcards || []).filter(function (f) { return f.day === d.date; });
+        var fcKey = prep.id + "::" + d.date;
+        var dayFcToggle = dayCards.length ? '<button class="ep-day-fc-toggle" onclick="event.stopPropagation();App.toggleExamPrepFlashcards(\'' + fcKey + '\')">📇 ' + dayCards.length + '</button>' : "";
+        var dayFcSection = (dayCards.length && epGapFcOpen[fcKey]) ? renderExamPrepGapFlashcards(dayCards, fcKey) : "";
+        return '<div class="ep-day-wrap">' +
+          '<div class="' + cls + '">' +
           '<div class="ep-day-date mono">' + esc(epFormatDateFr(d.date)) + '</div>' +
           '<div class="ep-day-body"><div class="ep-day-focus">' + esc(d.focus) + '</div>' +
           '<div class="ep-day-topics">' + (d.topics || []).map(function (t) { return '<span class="ep-day-topic">' + esc(t) + '</span>'; }).join("") + '</div></div>' +
           '<div class="ep-day-status mono">' + statusLabel + '</div>' +
+          dayFcToggle +
+          '</div>' +
+          dayFcSection +
           '</div>';
       }).join("");
-      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + fcSection + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -3493,29 +3501,27 @@
       '</div>';
   }
 
-  function renderExamPrepGapFlashcards(prep) {
-    var cards = prep.gapFlashcards || [];
+  function renderExamPrepGapFlashcards(cards, key) {
     if (!cards.length) return "";
-    var st = epFcState[prep.id] || { idx: 0, flipped: false };
-    epFcState[prep.id] = st;
+    var st = epFcState[key] || { idx: 0, flipped: false };
+    epFcState[key] = st;
     if (st.idx >= cards.length) st.idx = cards.length - 1;
     var card = cards[st.idx];
     var known = cards.filter(function (f) { return f.status === "known"; }).length;
-    return '<h3 style="font-size:16px;margin:22px 0 12px">📇 Flashcards des lacunes (' + cards.length + ')</h3>' +
-      '<div class="fc-wrap">' +
+    return '<div class="fc-wrap ep-day-fc" onclick="event.stopPropagation()">' +
       '<div class="fc-progress"><span>Carte ' + (st.idx + 1) + ' / ' + cards.length + '</span><span>' + known + ' su' + (known !== 1 ? "es" : "e") + '</span></div>' +
       '<div class="fc-bar"><div class="fc-bar-fill" style="width:' + Math.round(((st.idx + 1) / cards.length) * 100) + '%"></div></div>' +
-      '<div class="fc-hint">Une carte par erreur détectée pendant tes séances — clique pour la retourner</div>' +
-      '<div class="flip-card' + (st.flipped ? " flipped" : "") + '" onclick="App.epFlipCard(\'' + prep.id + '\')">' +
+      '<div class="fc-hint">Une carte par erreur détectée ce jour-là — clique pour la retourner</div>' +
+      '<div class="flip-card' + (st.flipped ? " flipped" : "") + '" onclick="App.epFlipCard(\'' + key + '\')">' +
       '<div class="flip-inner">' +
       '<div class="flip-face"><span class="flip-eyebrow">Question</span><span class="flip-text">' + esc(card.q) + '</span></div>' +
       '<div class="flip-face flip-face-back"><span class="flip-eyebrow">Réponse</span><span class="flip-text">' + esc(card.a) + '</span></div>' +
       '</div></div>' +
       '<div class="fc-controls">' +
-      '<button class="btn btn-ghost" onclick="App.epMarkCard(\'' + prep.id + '\',\'review\')">À revoir</button>' +
-      '<button class="btn btn-primary" style="width:auto;flex:1" onclick="App.epMarkCard(\'' + prep.id + '\',\'known\')">Je la sais</button>' +
+      '<button class="btn btn-ghost" onclick="App.epMarkCard(\'' + key + '\',\'review\')">À revoir</button>' +
+      '<button class="btn btn-primary" style="width:auto;flex:1" onclick="App.epMarkCard(\'' + key + '\',\'known\')">Je la sais</button>' +
       '</div>' +
-      '<div class="fc-nav"><button ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + prep.id + '\',-1)">← Précédente</button><button ' + (st.idx === cards.length - 1 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + prep.id + '\',1)">Suivante →</button></div>' +
+      '<div class="fc-nav"><button ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + key + '\',-1)">← Précédente</button><button ' + (st.idx === cards.length - 1 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + key + '\',1)">Suivante →</button></div>' +
       '</div>';
   }
 
@@ -5115,24 +5121,28 @@
       render();
     },
 
-    toggleExamPrepFlashcards: function (prepId) { epGapFcOpen[prepId] = !epGapFcOpen[prepId]; render(); },
-    epFlipCard: function (prepId) {
-      var st = epFcState[prepId] || { idx: 0, flipped: false };
-      st.flipped = !st.flipped; epFcState[prepId] = st; render();
+    toggleExamPrepFlashcards: function (key) { epGapFcOpen[key] = !epGapFcOpen[key]; render(); },
+    epFlipCard: function (key) {
+      var st = epFcState[key] || { idx: 0, flipped: false };
+      st.flipped = !st.flipped; epFcState[key] = st; render();
     },
-    epNavCard: function (prepId, dir) {
-      var st = epFcState[prepId] || { idx: 0, flipped: false };
-      st.idx += dir; st.flipped = false; epFcState[prepId] = st; render();
+    epNavCard: function (key, dir) {
+      var st = epFcState[key] || { idx: 0, flipped: false };
+      st.idx += dir; st.flipped = false; epFcState[key] = st; render();
     },
-    epMarkCard: function (prepId, status) {
-      var prep = epFind(prepId);
+    epMarkCard: function (key, status) {
+      var sep = key.indexOf("::");
+      var prep = epFind(sep === -1 ? key : key.slice(0, sep));
       if (!prep) return;
-      var st = epFcState[prepId] || { idx: 0, flipped: false };
-      var card = prep.gapFlashcards[st.idx];
+      var day = sep === -1 ? null : key.slice(sep + 2);
+      var cards = (prep.gapFlashcards || []).filter(function (f) { return f.day === day; });
+      var st = epFcState[key] || { idx: 0, flipped: false };
+      var card = cards[st.idx];
+      if (!card) return;
       card.status = status;
       saveDB();
-      if (st.idx < prep.gapFlashcards.length - 1) { st.idx += 1; st.flipped = false; }
-      epFcState[prepId] = st;
+      if (st.idx < cards.length - 1) { st.idx += 1; st.flipped = false; }
+      epFcState[key] = st;
       render();
     },
 
