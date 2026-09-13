@@ -579,6 +579,19 @@
      des réponses vérifiées (jamais par du simple temps passé), avec rendements décroissants près de
      100 et pénalité plus lourde en cas d'erreurs répétées ou de fausse confiance (score déjà haut). --- */
   var EP_MASTERY_WEIGHT = { qcm: 1, open: 1.4, exercise: 2.2, flashcard: 0.4 };
+  // Points Dino Park gagnés par bonne réponse pendant une séance de prépa — un cran sous les montants
+  // équivalents du quiz/exercice dédiés de Dino Park (25 / 150), puisqu'une prépa se rejoue "Refaire la
+  // séance" à volonté ; ça reste une vraie récompense quotidienne sans permettre de exploser l'économie.
+  var EP_SESSION_POINTS_PER_CORRECT = { qcm: 12, open: 16, exercise: 40 };
+  function epSessionPointsEarned(s) {
+    var total = 0;
+    s.history.forEach(function (h, i) {
+      if (!h.wasCorrect) return;
+      var kind = s.pool[i] ? s.pool[i].kind : "qcm";
+      total += EP_SESSION_POINTS_PER_CORRECT[kind] || EP_SESSION_POINTS_PER_CORRECT.qcm;
+    });
+    return total;
+  }
   function epTopicMastery(prep, topic) {
     var t = prep.topicMastery && prep.topicMastery[topic];
     return t ? t.score : 0;
@@ -705,10 +718,14 @@
         });
       }
       var readinessAfter = epReadinessPercent(prep);
+      var pointsEarned = epSessionPointsEarned(s);
+      if (pointsEarned > 0) dpData().points += pointsEarned;
       prep.sessions = prep.sessions || {};
-      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, completedAt: Date.now() };
+      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, pointsEarned: pointsEarned, completedAt: Date.now() };
       saveDB();
       s.readinessAfter = readinessAfter;
+      s.pointsEarned = pointsEarned;
+      if (pointsEarned > 0) toast("+" + pointsEarned + " pts Dino Park !");
     }
     s.readinessBefore = readinessBefore;
     s.review = review;
@@ -2815,6 +2832,7 @@
         ? '<div class="result-total">Niveau de préparation : ' + s.readinessBefore + '% → <strong>' + s.readinessAfter + '%</strong></div>' : "";
       renderShell(["examprep", prep.id], head +
         '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div>' +
+        (s.pointsEarned ? '<div class="result-total">🪙 +' + s.pointsEarned + ' pts Dino Park</div>' : '') +
         readinessDelta +
         (s.newFlashcardsCount ? '<div class="result-total">📇 +' + s.newFlashcardsCount + ' flashcards de lacunes créées</div>' : '') + '</div>' +
         (s.readinessAfter != null ? epReadinessBarHtml(s.readinessAfter, false) : "") +
