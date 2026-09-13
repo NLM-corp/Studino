@@ -389,6 +389,13 @@
   .ep-day-topics { display: flex; flex-wrap: wrap; gap: 5px; }
   .ep-day-topic { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); }
   .ep-day-status { font-size: 11.5px; color: var(--text-muted); flex: none; white-space: nowrap; }
+  .ep-review { max-width: 480px; margin: 0 auto 20px; display: flex; flex-direction: column; gap: 10px; }
+  .ep-review-group { border-radius: 10px; padding: 10px 14px; border: 2px solid var(--border-soft); }
+  .ep-review-title { font-weight: 700; font-size: 12.5px; margin-bottom: 6px; }
+  .ep-review-chip { display: inline-block; font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); margin: 0 5px 5px 0; }
+  .ep-review-good { border-color: var(--success); background: rgba(80,170,110,0.08); }
+  .ep-review-mid { border-color: #d4a017; background: rgba(212,160,23,0.1); }
+  .ep-review-bad { border-color: var(--danger); background: rgba(210,90,90,0.08); }
   .quiz-choice.disabled { cursor: default; }
   .quiz-batch-note { font-size: 11.5px; color: var(--text-muted); margin-bottom: 10px; }
   .quiz-feedback { border-radius: 10px; padding: 14px 16px; margin-top: 16px; border: 2px solid var(--border); }

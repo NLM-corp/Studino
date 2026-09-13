@@ -517,34 +517,98 @@
     });
   }
   function epQuestionPool(courses) {
+    // Trois "kinds" uniformisés : qcm/open reprennent les questions du contrôle du cours, exercise
+    // reprend les VRAIS exercices multi-étapes du cours (mêmes objets que dans l'onglet Exercices).
     var pool = [];
     courses.forEach(function (co) {
-      (co.quizQuestions || []).forEach(function (q) { pool.push({ q: q, courseId: co.id, courseTitle: co.title }); });
+      (co.quizQuestions || []).forEach(function (q) {
+        if (q.type === "qcm") pool.push({ kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
+        else pool.push({ kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
+      });
+      (co.exercises || []).forEach(function (ex) {
+        pool.push({ kind: "exercise", prompt: ex.prompt, solution: ex.solution, courseId: co.id, courseTitle: co.title });
+      });
     });
     return pool;
   }
-  function epPickDayQuestions(pool, dayEntry, weakTopics) {
+  function epEstimatedMinutes(item) { return item.kind === "exercise" ? 7 : 1.5; }
+  function epPickDayQuestions(pool, dayEntry, topicStatus) {
     if (!pool.length) return [];
-    var target = Math.max(5, Math.min(pool.length, Math.round((dayEntry.minutes || 20) / 1.5)));
-    var weakSet = {};
-    (weakTopics || []).forEach(function (w) { weakSet[w] = true; });
+    var weakTerms = [], unclearTerms = [];
+    Object.keys(topicStatus || {}).forEach(function (t) {
+      if (topicStatus[t] === "weak") weakTerms.push(t.toLowerCase());
+      else if (topicStatus[t] === "unclear") unclearTerms.push(t.toLowerCase());
+    });
     var topicsLower = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
     var scored = pool.map(function (item) {
       var score = Math.random() * 2;
-      if (weakSet[item.q.prompt]) score += 12;
-      var hay = (item.q.prompt + " " + item.courseTitle).toLowerCase();
+      var hay = (item.prompt + " " + item.courseTitle).toLowerCase();
+      weakTerms.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 12; });
+      unclearTerms.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 6; });
       topicsLower.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 5; });
       return { item: item, score: score };
     });
     scored.sort(function (a, b) { return b.score - a.score; });
-    var picked = scored.slice(0, target).map(function (s) { return s.item; });
-    for (var i = picked.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = picked[i]; picked[i] = picked[j]; picked[j] = t; }
+    var budget = Math.max(10, dayEntry.minutes || 20);
+    var picked = [];
+    var used = 0;
+    // Une séance d'au moins 15 min doit inclure un vrai exercice (pas que du QCM), s'il y en a un dispo.
+    if (budget >= 15) {
+      var exIdx = scored.findIndex(function (s) { return s.item.kind === "exercise"; });
+      if (exIdx !== -1) { picked.push(scored[exIdx].item); used += epEstimatedMinutes(scored[exIdx].item); scored.splice(exIdx, 1); }
+    }
+    for (var i = 0; i < scored.length && used < budget; i++) {
+      picked.push(scored[i].item);
+      used += epEstimatedMinutes(scored[i].item);
+    }
+    if (!picked.length && scored.length) picked.push(scored[0].item);
+    for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
   }
-  function epFinishSessionAnswer(s, q, yourAnswerText, correctAnswerText, wasCorrect) {
+  function epFinishSessionAnswer(s, item, yourAnswerText, correctAnswerText, wasCorrect) {
     s.wasCorrect = wasCorrect;
     if (wasCorrect) s.correct++; else s.wrong++;
-    s.history.push({ prompt: q.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: q.explanation, wasCorrect: wasCorrect });
+    s.history.push({ prompt: item.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: item.explanation || "", wasCorrect: wasCorrect });
+  }
+  var EXAM_SESSION_REVIEW_SCHEMA = {
+    type: "object",
+    properties: {
+      mastered: { type: "array", items: { type: "string" }, description: "Notions maîtrisées durant cette séance (réponses quasi toutes réussies)." },
+      unclear: { type: "array", items: { type: "string" }, description: "Notions dans le flou (résultats mitigés, mélange de réussites et d'échecs)." },
+      weak: { type: "array", items: { type: "string" }, description: "Notions en lacune (réponses quasi toutes ratées)." }
+    },
+    required: ["mastered", "unclear", "weak"]
+  };
+  function buildExamSessionReviewPrompt(history) {
+    var lines = history.map(function (h, i) { return (i + 1) + ". [" + (h.wasCorrect ? "Réussi" : "Raté") + "] " + h.prompt; }).join("\n");
+    return "Voici les résultats d'une séance de révision d'un élève francophone (question, et si sa réponse était réussie ou ratée) :\n\n" + lines + "\n\n" +
+      "Regroupe ces questions par notion précise (2 à 6 mots chacune, en français, sans doublon), puis classe chaque notion dans EXACTEMENT une des trois catégories selon les résultats obtenus sur les questions qui la concernent :\n" +
+      "- \"mastered\" : notion où les réponses étaient (quasi) toutes réussies.\n" +
+      "- \"weak\" : notion où les réponses étaient (quasi) toutes ratées — une vraie lacune à retravailler en priorité.\n" +
+      "- \"unclear\" : notion avec des résultats mitigés (mélange de réussites et d'échecs) — pas encore solide.\n" +
+      "Ne classe une notion que si elle est vraiment couverte par au moins une question ci-dessus, et ne mets jamais la même notion dans deux catégories différentes.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateExamSessionReview(history) {
+    var parts = [{ text: buildExamSessionReviewPrompt(history) }];
+    return callGemini(parts, EXAM_SESSION_REVIEW_SCHEMA);
+  }
+  function epFinalizeSession(prep, s, review) {
+    if (prep) {
+      prep.topicStatus = prep.topicStatus || {};
+      if (review) {
+        (review.mastered || []).forEach(function (t) { prep.topicStatus[t] = "mastered"; });
+        (review.unclear || []).forEach(function (t) { prep.topicStatus[t] = "unclear"; });
+        (review.weak || []).forEach(function (t) { prep.topicStatus[t] = "weak"; });
+      }
+      prep.sessions = prep.sessions || {};
+      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review || null, completedAt: Date.now() };
+      saveDB();
+    }
+    s.review = review || null;
+    s.status = "done";
+    s.done = true;
+    render();
   }
   var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
 
@@ -2616,6 +2680,10 @@
     var s = epSession;
     var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.examPrepExitSession()">← Retour à la prépa</button>';
     var head = '<div class="page-head"><div><h1 class="page-title">' + esc(prep.title) + '</h1><p class="page-sub">Entraînement du ' + esc(epFormatDateFr(s.date)) + '</p></div></div>';
+    if (s.status === "reviewing") {
+      renderShell(["examprep", prep.id], head + '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Studino analyse ta séance…</span></div>');
+      return;
+    }
     if (s.done) {
       var items = s.history.map(function (h) {
         return '<div class="correction-item ' + (h.wasCorrect ? "correct" : "wrong") + '">' +
@@ -2625,22 +2693,35 @@
           '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
           '</div>';
       }).join("");
+      var reviewGroup = function (list, cls, title) {
+        return (list && list.length) ? '<div class="ep-review-group ' + cls + '"><div class="ep-review-title">' + title + '</div>' + list.map(function (t) { return '<span class="ep-review-chip">' + esc(t) + '</span>'; }).join("") + '</div>' : "";
+      };
+      var reviewHtml = s.review ? '<div class="ep-review">' +
+        reviewGroup(s.review.mastered, "ep-review-good", "✅ Maîtrisé") +
+        reviewGroup(s.review.unclear, "ep-review-mid", "🤔 Dans le flou") +
+        reviewGroup(s.review.weak, "ep-review-bad", "⚠️ Lacunes") +
+        '</div>' : "";
       renderShell(["examprep", prep.id], head +
         '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div></div>' +
+        reviewHtml +
         '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.examPrepExitSession()">Retour à la prépa</button>' +
         '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items);
       return;
     }
-    var q = s.pool[s.idx].q;
-    var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + '</div>' +
-      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>';
-    if (q.type === "qcm") {
-      body += q.choices.map(function (c, i) {
+    var item = s.pool[s.idx];
+    var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + '</div>';
+    if (item.kind === "exercise") {
+      body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(item.prompt) + '</div></div>';
+    } else {
+      body += '<div class="quiz-q-text">' + esc(item.prompt) + '</div>';
+    }
+    if (item.kind === "qcm") {
+      body += item.choices.map(function (c, i) {
         var cls = "quiz-choice";
         var attrs = "";
         if (s.revealed) {
           cls += " disabled";
-          if (i === q.correctIndex) cls += " correct";
+          if (i === item.correctIndex) cls += " correct";
           else if (i === s.answer) cls += " wrong";
         } else {
           attrs = ' onclick="App.examPrepAnswerQcm(' + i + ')"';
@@ -2650,20 +2731,24 @@
     } else if (s.status === "grading") {
       body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
     } else if (s.status !== "graded") {
-      body += '<div class="field">' + richEditorHtml("ep-open-answer", "Tape ta réponse…", s.answerHtml || "") + '</div>' +
+      body += '<div class="field">' + richEditorHtml("ep-open-answer", "Écris ton raisonnement et ta réponse…", s.answerHtml || "", item.kind === "exercise") + '</div>' +
         '<button class="btn btn-primary" style="width:auto" onclick="App.examPrepSubmitOpenAnswer()">Valider</button>';
+    } else if (item.kind === "exercise") {
+      body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+        '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>';
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(q.answer) + '</strong></p>';
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(item.answer) + '</strong></p>';
     }
     if (s.revealed && s.wasCorrect != null) {
       body += '<div class="quiz-feedback ' + (s.wasCorrect ? "correct" : "wrong") + '">' +
         '<div class="quiz-feedback-title ' + (s.wasCorrect ? "correct" : "wrong") + '">' + (s.wasCorrect ? "✅ Bonne réponse !" : "❌ Pas tout à fait") + '</div>' +
         (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
-        '<div class="correction-exp">' + mdToHtml(q.explanation || "") + '</div>' +
+        (item.kind === "exercise" ? '' : '<div class="correction-exp">' + mdToHtml(item.explanation || "") + '</div>') +
         '</div>' +
-        '<div class="quiz-nav"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
+        (item.kind === "exercise" ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(item.solution) + '</div></div>' : '') +
+        '<div class="quiz-nav" style="margin-top:14px"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
     }
     renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
   }
@@ -4360,7 +4445,7 @@
       var prep = {
         id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
         planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
-        overview: "", days: [], weakTopics: [], sessions: {}
+        overview: "", days: [], topicStatus: {}, sessions: {}
       };
       userData().examPreps.push(prep);
       saveDB();
@@ -4387,37 +4472,38 @@
       if (!dayEntry) { toast("Pas de séance prévue aujourd'hui pour cette prépa"); return; }
       var pool = epQuestionPool(epScopeCourses(prep.scope));
       if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
-      var picked = epPickDayQuestions(pool, dayEntry, prep.weakTopics);
-      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], done: false };
+      var picked = epPickDayQuestions(pool, dayEntry, prep.topicStatus);
+      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, done: false };
       render();
     },
     examPrepAnswerQcm: function (i) {
       var s = epSession;
       if (!s || s.revealed) return;
-      var q = s.pool[s.idx].q;
+      var item = s.pool[s.idx];
       s.answer = i;
       s.revealed = true;
-      var wasCorrect = i === q.correctIndex;
-      epFinishSessionAnswer(s, q, q.choices[i], q.choices[q.correctIndex], wasCorrect);
+      var wasCorrect = i === item.correctIndex;
+      epFinishSessionAnswer(s, item, item.choices[i], item.choices[item.correctIndex], wasCorrect);
       render();
       dinoReact(wasCorrect);
     },
     examPrepSubmitOpenAnswer: function () {
       var s = epSession;
       if (!s) return;
-      var q = s.pool[s.idx].q;
+      var item = s.pool[s.idx];
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       s.answerHtml = rteValue("ep-open-answer");
       var answerText = rteText("ep-open-answer");
       s.answer = answerText;
       s.status = "grading";
       render();
-      gradeExerciseAnswer(q.prompt, q.answer, answerText).then(function (result) {
+      var referenceAnswer = item.kind === "exercise" ? item.solution : item.answer;
+      gradeExerciseAnswer(item.prompt, referenceAnswer, answerText).then(function (result) {
         s.status = "graded";
         s.revealed = true;
         s.aiFeedback = result.feedback || "";
         var wasCorrect = !!result.correct;
-        epFinishSessionAnswer(s, q, answerText, q.answer, wasCorrect);
+        epFinishSessionAnswer(s, item, answerText, referenceAnswer, wasCorrect);
         render();
         dinoReact(wasCorrect);
       }).catch(function (err) {
@@ -4437,20 +4523,14 @@
       var s = epSession;
       if (!s) return;
       var prep = epFind(s.prepId);
-      if (prep) {
-        prep.weakTopics = prep.weakTopics || [];
-        s.history.forEach(function (h) {
-          var idx = prep.weakTopics.indexOf(h.prompt);
-          if (h.wasCorrect) { if (idx !== -1) prep.weakTopics.splice(idx, 1); }
-          else if (idx === -1) prep.weakTopics.push(h.prompt);
-        });
-        if (prep.weakTopics.length > 40) prep.weakTopics = prep.weakTopics.slice(-40);
-        prep.sessions = prep.sessions || {};
-        prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, completedAt: Date.now() };
-        saveDB();
-      }
-      s.done = true;
+      s.status = "reviewing";
       render();
+      if (!getApiKey()) { epFinalizeSession(prep, s, null); return; }
+      generateExamSessionReview(s.history).then(function (review) {
+        epFinalizeSession(prep, s, review);
+      }).catch(function () {
+        epFinalizeSession(prep, s, null);
+      });
     },
     examPrepExitSession: function () { epSession = null; render(); },
 
