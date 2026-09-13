@@ -593,7 +593,33 @@
     var parts = [{ text: buildExamSessionReviewPrompt(history) }];
     return callGemini(parts, EXAM_SESSION_REVIEW_SCHEMA);
   }
-  function epFinalizeSession(prep, s, review) {
+  var EXAM_GAP_FLASHCARDS_SCHEMA = {
+    type: "object",
+    properties: {
+      flashcards: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { q: { type: "string" }, a: { type: "string" } },
+          required: ["q", "a"]
+        }
+      }
+    },
+    required: ["flashcards"]
+  };
+  function buildGapFlashcardsPrompt(wrongItems) {
+    var lines = wrongItems.map(function (h, i) {
+      return (i + 1) + ". Question posée : " + h.prompt + "\nBonne réponse : " + h.correctAnswer + (h.explanation ? "\nExplication : " + h.explanation : "");
+    }).join("\n\n");
+    return "Un élève francophone a fait les erreurs suivantes pendant une séance de révision :\n\n" + lines + "\n\n" +
+      "Pour CHAQUE erreur ci-dessus, crée exactement 2 flashcards de révision (une question courte au recto dans \"q\", une réponse courte et précise au verso dans \"a\") qui aident à retravailler la notion à l'origine de CETTE erreur précise. Les 2 flashcards d'une même erreur doivent aborder la notion sous deux angles différents (pas juste reformuler la même question), pour bien l'ancrer. Il y a " + wrongItems.length + " erreur(s) : renvoie EXACTEMENT " + (wrongItems.length * 2) + " flashcards, dans l'ordre des erreurs listées (les 2 premières pour l'erreur 1, les 2 suivantes pour l'erreur 2, etc.).\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateGapFlashcards(wrongItems) {
+    var parts = [{ text: buildGapFlashcardsPrompt(wrongItems) }];
+    return callGemini(parts, EXAM_GAP_FLASHCARDS_SCHEMA);
+  }
+  function epFinalizeSession(prep, s, review, gapFlashcards) {
     if (prep) {
       prep.topicStatus = prep.topicStatus || {};
       if (review) {
@@ -601,16 +627,20 @@
         (review.unclear || []).forEach(function (t) { prep.topicStatus[t] = "unclear"; });
         (review.weak || []).forEach(function (t) { prep.topicStatus[t] = "weak"; });
       }
+      prep.gapFlashcards = prep.gapFlashcards || [];
+      (gapFlashcards || []).forEach(function (f) { prep.gapFlashcards.push({ id: uid(), q: f.q, a: f.a, status: "new" }); });
       prep.sessions = prep.sessions || {};
-      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review || null, completedAt: Date.now() };
+      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review || null, newFlashcards: (gapFlashcards || []).length, completedAt: Date.now() };
       saveDB();
     }
     s.review = review || null;
+    s.newFlashcardsCount = (gapFlashcards || []).length;
     s.status = "done";
     s.done = true;
     render();
   }
   var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
+  var epFcState = {}; // per prepId: { idx, flipped } — état du flip-card des "Flashcards des lacunes"
 
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
@@ -2702,7 +2732,8 @@
         reviewGroup(s.review.weak, "ep-review-bad", "⚠️ Lacunes") +
         '</div>' : "";
       renderShell(["examprep", prep.id], head +
-        '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div></div>' +
+        '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div>' +
+        (s.newFlashcardsCount ? '<div class="result-total">📇 +' + s.newFlashcardsCount + ' flashcards de lacunes créées</div>' : '') + '</div>' +
         reviewHtml +
         '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.examPrepExitSession()">Retour à la prépa</button>' +
         '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items);
@@ -2803,7 +2834,7 @@
           '<div class="ep-day-status mono">' + statusLabel + '</div>' +
           '</div>';
       }).join("");
-      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + renderExamPrepGapFlashcards(prep) + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -3455,6 +3486,32 @@
       '<button class="btn btn-primary" style="width:auto;flex:1" onclick="App.markCard(\'' + course.id + '\',\'known\')">Je la sais</button>' +
       '</div>' +
       '<div class="fc-nav"><button ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.navCard(\'' + course.id + '\',-1)">← Précédente</button><button ' + (st.idx === course.flashcards.length - 1 ? "disabled" : "") + ' onclick="App.navCard(\'' + course.id + '\',1)">Suivante →</button></div>' +
+      '</div>';
+  }
+
+  function renderExamPrepGapFlashcards(prep) {
+    var cards = prep.gapFlashcards || [];
+    if (!cards.length) return "";
+    var st = epFcState[prep.id] || { idx: 0, flipped: false };
+    epFcState[prep.id] = st;
+    if (st.idx >= cards.length) st.idx = cards.length - 1;
+    var card = cards[st.idx];
+    var known = cards.filter(function (f) { return f.status === "known"; }).length;
+    return '<h3 style="font-size:16px;margin:22px 0 12px">📇 Flashcards des lacunes (' + cards.length + ')</h3>' +
+      '<div class="fc-wrap">' +
+      '<div class="fc-progress"><span>Carte ' + (st.idx + 1) + ' / ' + cards.length + '</span><span>' + known + ' su' + (known !== 1 ? "es" : "e") + '</span></div>' +
+      '<div class="fc-bar"><div class="fc-bar-fill" style="width:' + Math.round(((st.idx + 1) / cards.length) * 100) + '%"></div></div>' +
+      '<div class="fc-hint">Une carte par erreur détectée pendant tes séances — clique pour la retourner</div>' +
+      '<div class="flip-card' + (st.flipped ? " flipped" : "") + '" onclick="App.epFlipCard(\'' + prep.id + '\')">' +
+      '<div class="flip-inner">' +
+      '<div class="flip-face"><span class="flip-eyebrow">Question</span><span class="flip-text">' + esc(card.q) + '</span></div>' +
+      '<div class="flip-face flip-face-back"><span class="flip-eyebrow">Réponse</span><span class="flip-text">' + esc(card.a) + '</span></div>' +
+      '</div></div>' +
+      '<div class="fc-controls">' +
+      '<button class="btn btn-ghost" onclick="App.epMarkCard(\'' + prep.id + '\',\'review\')">À revoir</button>' +
+      '<button class="btn btn-primary" style="width:auto;flex:1" onclick="App.epMarkCard(\'' + prep.id + '\',\'known\')">Je la sais</button>' +
+      '</div>' +
+      '<div class="fc-nav"><button ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + prep.id + '\',-1)">← Précédente</button><button ' + (st.idx === cards.length - 1 ? "disabled" : "") + ' onclick="App.epNavCard(\'' + prep.id + '\',1)">Suivante →</button></div>' +
       '</div>';
   }
 
@@ -4445,7 +4502,7 @@
       var prep = {
         id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
         planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
-        overview: "", days: [], topicStatus: {}, sessions: {}
+        overview: "", days: [], topicStatus: {}, sessions: {}, gapFlashcards: []
       };
       userData().examPreps.push(prep);
       saveDB();
@@ -4525,11 +4582,13 @@
       var prep = epFind(s.prepId);
       s.status = "reviewing";
       render();
-      if (!getApiKey()) { epFinalizeSession(prep, s, null); return; }
-      generateExamSessionReview(s.history).then(function (review) {
-        epFinalizeSession(prep, s, review);
-      }).catch(function () {
-        epFinalizeSession(prep, s, null);
+      if (!getApiKey()) { epFinalizeSession(prep, s, null, null); return; }
+      var wrongItems = s.history.filter(function (h) { return !h.wasCorrect; });
+      Promise.all([
+        generateExamSessionReview(s.history).catch(function () { return null; }),
+        wrongItems.length ? generateGapFlashcards(wrongItems).then(function (r) { return r.flashcards; }).catch(function () { return null; }) : Promise.resolve(null)
+      ]).then(function (results) {
+        epFinalizeSession(prep, s, results[0], results[1]);
       });
     },
     examPrepExitSession: function () { epSession = null; render(); },
@@ -5049,6 +5108,26 @@
       saveDB();
       if (st.idx < loc.course.flashcards.length - 1) { st.idx += 1; st.flipped = false; }
       fcState[courseId] = st;
+      render();
+    },
+
+    epFlipCard: function (prepId) {
+      var st = epFcState[prepId] || { idx: 0, flipped: false };
+      st.flipped = !st.flipped; epFcState[prepId] = st; render();
+    },
+    epNavCard: function (prepId, dir) {
+      var st = epFcState[prepId] || { idx: 0, flipped: false };
+      st.idx += dir; st.flipped = false; epFcState[prepId] = st; render();
+    },
+    epMarkCard: function (prepId, status) {
+      var prep = epFind(prepId);
+      if (!prep) return;
+      var st = epFcState[prepId] || { idx: 0, flipped: false };
+      var card = prep.gapFlashcards[st.idx];
+      card.status = status;
+      saveDB();
+      if (st.idx < prep.gapFlashcards.length - 1) { st.idx += 1; st.flipped = false; }
+      epFcState[prepId] = st;
       render();
     },
 
