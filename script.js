@@ -2458,7 +2458,21 @@
     if (t.charAt(t.length - 1) === "|") t = t.slice(0, -1);
     return t.split("|").map(function (c) { return c.trim(); });
   }
-  function mdToHtml(md) {
+  function mdExtractMath(md) {
+    // Gemini met parfois les délimiteurs $ / $$ sur leur propre ligne, avec la formule au milieu
+    // (ex. "$\n\\rightarrow ...\n$") : ça casse le rendu si on cherche les paires $...$ ligne par
+    // ligne. On extrait donc TOUTES les formules sur le texte entier (avant de couper en lignes) et
+    // on les remplace par un jeton mono-ligne, substitué par le vrai chip KaTeX à la toute fin.
+    var chips = [];
+    var text = String(md || "").replace(/\$\$([^$]+?)\$\$|\$([^$]+?)\$/g, function (m, block, inline) {
+      chips.push((block !== undefined ? block : inline).trim());
+      return "" + (chips.length - 1) + "";
+    });
+    return { text: text, chips: chips };
+  }
+  function mdToHtml(rawMd) {
+    var extracted = mdExtractMath(rawMd);
+    var md = extracted.text;
     var lines = md.split("\n");
     var html = "";
     var inList = false;
@@ -2500,6 +2514,7 @@
       else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
     }
     if (inList) html += "</ul>";
+    html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx]); });
     return html;
   }
   function inlineMdPlain(s) {
