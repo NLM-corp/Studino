@@ -2775,14 +2775,14 @@
   function renderExamPrepListPage() {
     var list = epData().slice().sort(function (a, b) { return a.examDate < b.examDate ? -1 : (a.examDate > b.examDate ? 1 : 0); });
     var head = '<div class="page-head"><div><div class="page-title-row">' + icon("calendar") + '<h1 class="page-title">Prépa examens</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
-      '<button class="btn btn-primary" style="width:auto" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
+      '<button class="btn btn-metal" style="width:auto" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
     var grid;
     if (!list.length) {
       grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucune prépa en cours</h3><p>Indique la date de ton prochain examen : Studino te prépare un planning de révision jour par jour.</p>' +
-        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
+        '<button class="btn btn-metal" style="width:auto;margin-top:14px" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
     } else {
       var today = epTodayStr();
-      grid = '<div class="card-grid">' + list.map(function (p) {
+      grid = '<div class="card-grid-signs-short">' + list.map(function (p) {
         var daysLeft = epDaysBetween(today, p.examDate);
         var todaySession = p.sessions && p.sessions[today];
         var statusHtml = p.planStatus === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Planning…</span>'
@@ -2790,7 +2790,7 @@
           : daysLeft < 0 ? '<span class="status-pill status-ready">Examen passé</span>'
           : daysLeft === 0 ? '<span class="status-pill status-ready">Examen aujourd\'hui !</span>'
           : '<span class="status-pill status-ready">' + (todaySession && todaySession.status === "done" ? "✅ Fait aujourd'hui" : "J-" + daysLeft) + '</span>';
-        return '<div class="tile" onclick="location.hash=\'#/examprep/' + p.id + '\'">' +
+        return '<div class="tile tile-sign tile-sign-metal ep-tile-tall" onclick="location.hash=\'#/examprep/' + p.id + '\'">' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'examPrep\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
           '<div class="tile-icon">' + icon("calendar") + '</div>' +
           '<div class="tile-title">' + esc(p.title) + '</div>' +
@@ -2933,7 +2933,7 @@
           '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button></div>';
       } else {
         cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
-          '<button class="btn btn-primary" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
+          '<button class="btn btn-metal" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
       }
       var daysHtml = prep.days.map(function (d) {
         var sess = prep.sessions && prep.sessions[d.date];
@@ -3823,7 +3823,7 @@
             ) : "")
           ) : '<p class="modal-warn">Cette matière n\'a aucun cours généré pour l\'instant.</p>') +
           '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
-          (epmThemes.length && epmReady ? '<button type="button" class="btn btn-primary" onclick="App.createExamPrep()">Générer le planning</button>' : "") +
+          (epmThemes.length && epmReady ? '<button type="button" class="btn btn-metal" onclick="App.createExamPrep()">Générer le planning</button>' : "") +
           '</div>';
       }
     } else if (modal.type === "moveChapter") {

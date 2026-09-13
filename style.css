@@ -241,6 +241,9 @@
   .tile-sign-metal .tile-move:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
   .tile-sign-metal .tile-rename { color: #EDEDED; }
   .tile-sign-metal .tile-rename:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
+  .ep-tile-tall { aspect-ratio: auto; min-height: 168px; }
+  .tile-sign-metal .ep-readiness-head { color: #EDEDED; }
+  .tile-sign-metal .ep-readiness-bar { border-color: rgba(255,255,255,0.25); background: rgba(0,0,0,0.25); }
 
   .add-tile {
     border: 2.5px dashed var(--border-soft); border-radius: 12px; background: none; display: flex; flex-direction: column;
@@ -375,9 +378,13 @@
   .quiz-choice.wrong { border-color: var(--danger); background: rgba(210,90,90,0.14); }
 
   /* Prépa examens */
-  .ep-today-card { border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px; background: var(--accent-soft); box-shadow: 0 3px 0 var(--border-soft); margin-bottom: 6px; }
-  .ep-today-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
-  .ep-today-sub { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; }
+  .ep-today-card {
+    border: none; box-shadow: none; border-radius: 0; margin-bottom: 6px; padding: 24px 28px;
+    background-image: url('assets/objects/decor/Pancarte longue.png');
+    background-size: 100% 100%; background-position: center; background-repeat: no-repeat; background-color: transparent;
+  }
+  .ep-today-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; color: #000; text-shadow: 0 1px 0 rgba(255,255,255,0.3); }
+  .ep-today-sub { font-size: 12.5px; margin-bottom: 12px; color: #1a1a1a; text-shadow: 0 1px 0 rgba(255,255,255,0.25); }
   .ep-day-list { display: flex; flex-direction: column; gap: 8px; }
   .ep-day-wrap { display: flex; flex-direction: column; }
   .ep-day { display: flex; align-items: center; gap: 14px; border: 2px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; background: var(--surface); }
