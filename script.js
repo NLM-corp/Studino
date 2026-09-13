@@ -502,6 +502,10 @@
       prep.days = (data.days || []).map(function (d) {
         return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
       }).sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+      var allTopics = [];
+      prep.days.forEach(function (d) { (d.topics || []).forEach(function (t) { if (allTopics.indexOf(t) === -1) allTopics.push(t); }); });
+      prep.topics = allTopics;
+      prep.topicMastery = prep.topicMastery || {};
       prep.planStatus = "ready";
       saveDB();
       toast("Planning de révision prêt · " + prep.title);
@@ -532,19 +536,19 @@
     return pool;
   }
   function epEstimatedMinutes(item) { return item.kind === "exercise" ? 7 : 1.5; }
-  function epPickDayQuestions(pool, dayEntry, topicStatus) {
+  function epPickDayQuestions(pool, dayEntry, prep) {
     if (!pool.length) return [];
-    var weakTerms = [], unclearTerms = [];
-    Object.keys(topicStatus || {}).forEach(function (t) {
-      if (topicStatus[t] === "weak") weakTerms.push(t.toLowerCase());
-      else if (topicStatus[t] === "unclear") unclearTerms.push(t.toLowerCase());
-    });
     var topicsLower = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
     var scored = pool.map(function (item) {
       var score = Math.random() * 2;
       var hay = (item.prompt + " " + item.courseTitle).toLowerCase();
-      weakTerms.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 12; });
-      unclearTerms.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 6; });
+      (prep.topics || []).forEach(function (topic) {
+        if (hay.indexOf(topic.toLowerCase()) === -1) return;
+        var t = prep.topicMastery && prep.topicMastery[topic];
+        var mastery = t ? t.score : 0;
+        score += ((100 - mastery) / 100) * 14; // faible maîtrise = forte priorité
+        if (t && t.streak <= -2) score += 6; // erreurs répétées = encore plus prioritaire
+      });
       topicsLower.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 5; });
       return { item: item, score: score };
     });
@@ -570,28 +574,74 @@
     if (wasCorrect) s.correct++; else s.wrong++;
     s.history.push({ prompt: item.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: item.explanation || "", wasCorrect: wasCorrect });
   }
-  var EXAM_SESSION_REVIEW_SCHEMA = {
+
+  /* --- Baromètre de préparation : un score de maîtrise 0-100 par notion, mis à jour uniquement par
+     des réponses vérifiées (jamais par du simple temps passé), avec rendements décroissants près de
+     100 et pénalité plus lourde en cas d'erreurs répétées ou de fausse confiance (score déjà haut). --- */
+  var EP_MASTERY_WEIGHT = { qcm: 1, open: 1.4, exercise: 2.2, flashcard: 0.4 };
+  function epTopicMastery(prep, topic) {
+    var t = prep.topicMastery && prep.topicMastery[topic];
+    return t ? t.score : 0;
+  }
+  function epApplyMasteryUpdate(prep, topic, kind, wasCorrect) {
+    prep.topicMastery = prep.topicMastery || {};
+    var t = prep.topicMastery[topic] || { score: 0, streak: 0 };
+    var weight = EP_MASTERY_WEIGHT[kind] || 1;
+    if (wasCorrect) {
+      t.streak = t.streak > 0 ? t.streak + 1 : 1;
+      var room = (100 - t.score) / 100; // rendements décroissants : un sujet déjà solide progresse peu
+      t.score = Math.min(100, t.score + 10 * weight * room);
+    } else {
+      t.streak = t.streak < 0 ? t.streak - 1 : -1;
+      var confidencePenalty = 8 + (t.score / 100) * 12; // casser un score déjà haut fait plus mal (fausse confiance)
+      var repeatMultiplier = Math.min(2.2, 1 + (Math.abs(t.streak) - 1) * 0.35); // erreurs répétées = pénalité qui s'aggrave
+      t.score = Math.max(0, t.score - confidencePenalty * weight * repeatMultiplier);
+    }
+    prep.topicMastery[topic] = t;
+  }
+  function epReadinessPercent(prep) {
+    var topics = prep.topics || [];
+    if (!topics.length) return 0;
+    var total = 0;
+    topics.forEach(function (t) { total += epTopicMastery(prep, t); });
+    return Math.round(total / topics.length);
+  }
+  function epReadinessLabel(pct) {
+    if (pct < 30) return "Pas encore prêt";
+    if (pct < 60) return "En cours d'apprentissage";
+    if (pct < 80) return "Plutôt bien préparé, encore des lacunes";
+    if (pct < 95) return "Presque prêt";
+    return "Prêt pour le contrôle";
+  }
+  var EXAM_TOPIC_MAP_SCHEMA = {
     type: "object",
     properties: {
-      mastered: { type: "array", items: { type: "string" }, description: "Notions maîtrisées durant cette séance (réponses quasi toutes réussies)." },
-      unclear: { type: "array", items: { type: "string" }, description: "Notions dans le flou (résultats mitigés, mélange de réussites et d'échecs)." },
-      weak: { type: "array", items: { type: "string" }, description: "Notions en lacune (réponses quasi toutes ratées)." }
+      mapping: {
+        type: "array",
+        description: "Une entrée par question de la séance qui correspond clairement à une notion de la liste fournie.",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer", description: "Index de la question dans la liste fournie (à partir de 0)." },
+            topic: { type: "string", description: "Notion concernée, reprise EXACTEMENT telle qu'elle apparaît dans la liste de notions fournie (aucune reformulation, aucune notion inventée)." }
+          },
+          required: ["index", "topic"]
+        }
+      }
     },
-    required: ["mastered", "unclear", "weak"]
+    required: ["mapping"]
   };
-  function buildExamSessionReviewPrompt(history) {
-    var lines = history.map(function (h, i) { return (i + 1) + ". [" + (h.wasCorrect ? "Réussi" : "Raté") + "] " + h.prompt; }).join("\n");
-    return "Voici les résultats d'une séance de révision d'un élève francophone (question, et si sa réponse était réussie ou ratée) :\n\n" + lines + "\n\n" +
-      "Regroupe ces questions par notion précise (2 à 6 mots chacune, en français, sans doublon), puis classe chaque notion dans EXACTEMENT une des trois catégories selon les résultats obtenus sur les questions qui la concernent :\n" +
-      "- \"mastered\" : notion où les réponses étaient (quasi) toutes réussies.\n" +
-      "- \"weak\" : notion où les réponses étaient (quasi) toutes ratées — une vraie lacune à retravailler en priorité.\n" +
-      "- \"unclear\" : notion avec des résultats mitigés (mélange de réussites et d'échecs) — pas encore solide.\n" +
-      "Ne classe une notion que si elle est vraiment couverte par au moins une question ci-dessus, et ne mets jamais la même notion dans deux catégories différentes.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  function buildExamTopicMapPrompt(topics, history) {
+    var topicsList = topics.map(function (t, i) { return (i + 1) + ". " + t; }).join("\n");
+    var qList = history.map(function (h, i) { return i + ". [" + (h.wasCorrect ? "Réussi" : "Raté") + "] " + h.prompt; }).join("\n");
+    return "Voici la liste des notions prévues pour cette préparation d'examen :\n" + topicsList + "\n\n" +
+      "Voici les questions posées lors de la séance de révision d'aujourd'hui, avec le résultat de l'élève :\n" + qList + "\n\n" +
+      "Pour CHAQUE question ci-dessus qui correspond clairement à l'une des notions listées, indique dans \"mapping\" son index (celui donné devant la question) et le nom de la notion concernée, repris EXACTEMENT tel qu'il apparaît dans la liste (ne reformule jamais, n'invente jamais de notion absente de la liste). Si une question ne correspond clairement à aucune notion de la liste, ne l'inclus pas.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
   }
-  function generateExamSessionReview(history) {
-    var parts = [{ text: buildExamSessionReviewPrompt(history) }];
-    return callGemini(parts, EXAM_SESSION_REVIEW_SCHEMA);
+  function generateExamTopicMap(topics, history) {
+    var parts = [{ text: buildExamTopicMapPrompt(topics, history) }];
+    return callGemini(parts, EXAM_TOPIC_MAP_SCHEMA);
   }
   var EXAM_GAP_FLASHCARDS_SCHEMA = {
     type: "object",
@@ -619,25 +669,50 @@
     var parts = [{ text: buildGapFlashcardsPrompt(wrongItems) }];
     return callGemini(parts, EXAM_GAP_FLASHCARDS_SCHEMA);
   }
-  function epFinalizeSession(prep, s, review, gapFlashcards) {
+  function epFinalizeSession(prep, s, mapping, gapFlashcardsFlat, wrongIdx) {
+    var review = { mastered: [], unclear: [], weak: [] };
+    var readinessBefore = prep ? epReadinessPercent(prep) : 0;
     if (prep) {
-      prep.topicStatus = prep.topicStatus || {};
-      if (review) {
-        (review.mastered || []).forEach(function (t) { prep.topicStatus[t] = "mastered"; });
-        (review.unclear || []).forEach(function (t) { prep.topicStatus[t] = "unclear"; });
-        (review.weak || []).forEach(function (t) { prep.topicStatus[t] = "weak"; });
-      }
+      prep.topicMastery = prep.topicMastery || {};
+      var topicByHistoryIdx = {};
+      (mapping || []).forEach(function (m) {
+        if (s.history[m.index] && prep.topics && prep.topics.indexOf(m.topic) !== -1) topicByHistoryIdx[m.index] = m.topic;
+      });
+      var touchedTopics = {};
+      Object.keys(topicByHistoryIdx).forEach(function (idxStr) {
+        var idx = +idxStr;
+        var topic = topicByHistoryIdx[idx];
+        var kind = s.pool[idx] ? s.pool[idx].kind : "qcm";
+        epApplyMasteryUpdate(prep, topic, kind, s.history[idx].wasCorrect);
+        touchedTopics[topic] = true;
+      });
+      Object.keys(touchedTopics).forEach(function (topic) {
+        var score = epTopicMastery(prep, topic);
+        if (score >= 70) review.mastered.push(topic);
+        else if (score <= 35) review.weak.push(topic);
+        else review.unclear.push(topic);
+      });
       prep.gapFlashcards = prep.gapFlashcards || [];
       // s.date est le jour où l'entraînement a démarré (fixé au clic sur "Commencer"), jamais la date
       // du moment où l'IA termine son analyse — une séance commencée juste avant minuit et finie
       // après doit quand même rattacher ses flashcards au jour d'entraînement, pas au lendemain.
-      (gapFlashcards || []).forEach(function (f) { prep.gapFlashcards.push({ id: uid(), day: s.date, q: f.q, a: f.a, status: "new" }); });
+      if (gapFlashcardsFlat && wrongIdx) {
+        wrongIdx.forEach(function (histIdx, wi) {
+          var topic = topicByHistoryIdx[histIdx] || null;
+          [gapFlashcardsFlat[wi * 2], gapFlashcardsFlat[wi * 2 + 1]].forEach(function (f) {
+            if (f) prep.gapFlashcards.push({ id: uid(), day: s.date, topic: topic, q: f.q, a: f.a, status: "new" });
+          });
+        });
+      }
+      var readinessAfter = epReadinessPercent(prep);
       prep.sessions = prep.sessions || {};
-      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review || null, newFlashcards: (gapFlashcards || []).length, completedAt: Date.now() };
+      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, completedAt: Date.now() };
       saveDB();
+      s.readinessAfter = readinessAfter;
     }
-    s.review = review || null;
-    s.newFlashcardsCount = (gapFlashcards || []).length;
+    s.readinessBefore = readinessBefore;
+    s.review = review;
+    s.newFlashcardsCount = (gapFlashcardsFlat || []).length;
     s.status = "done";
     s.done = true;
     render();
@@ -2703,6 +2778,7 @@
           '<div class="tile-icon">' + icon("calendar") + '</div>' +
           '<div class="tile-title">' + esc(p.title) + '</div>' +
           '<div class="tile-meta">' + esc(epScopeLabel(p.scope)) + '</div>' +
+          (p.planStatus === "ready" ? epReadinessBarHtml(epReadinessPercent(p), true) : "") +
           statusHtml +
           '</div>';
       }).join("") + '<button class="add-tile" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
@@ -2735,9 +2811,13 @@
         reviewGroup(s.review.unclear, "ep-review-mid", "🤔 Dans le flou") +
         reviewGroup(s.review.weak, "ep-review-bad", "⚠️ Lacunes") +
         '</div>' : "";
+      var readinessDelta = s.readinessAfter != null && s.readinessAfter !== s.readinessBefore
+        ? '<div class="result-total">Niveau de préparation : ' + s.readinessBefore + '% → <strong>' + s.readinessAfter + '%</strong></div>' : "";
       renderShell(["examprep", prep.id], head +
         '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div>' +
+        readinessDelta +
         (s.newFlashcardsCount ? '<div class="result-total">📇 +' + s.newFlashcardsCount + ' flashcards de lacunes créées</div>' : '') + '</div>' +
+        (s.readinessAfter != null ? epReadinessBarHtml(s.readinessAfter, false) : "") +
         reviewHtml +
         '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.examPrepExitSession()">Retour à la prépa</button>' +
         '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items);
@@ -2788,6 +2868,18 @@
     renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
   }
 
+  function epReadinessTier(pct) {
+    return pct < 30 ? "low" : pct < 60 ? "mid" : pct < 80 ? "okay" : pct < 95 ? "good" : "ready";
+  }
+  function epReadinessBarHtml(pct, compact) {
+    var tier = epReadinessTier(pct);
+    return '<div class="ep-readiness' + (compact ? " ep-readiness-compact" : "") + '">' +
+      '<div class="ep-readiness-head"><span>Niveau de préparation : <strong>' + pct + '%</strong></span>' +
+      (compact ? "" : '<span class="ep-readiness-label ep-readiness-' + tier + '">' + esc(epReadinessLabel(pct)) + '</span>') +
+      '</div>' +
+      '<div class="ep-readiness-bar"><div class="ep-readiness-fill ep-readiness-' + tier + '" style="width:' + pct + '%"></div></div>' +
+      '</div>';
+  }
   function renderExamPrepDetailPage(prepId) {
     var prep = epFind(prepId);
     if (!prep) { navigate("#/examprep"); return; }
@@ -2812,6 +2904,7 @@
     } else {
       var todayEntry = prep.days.find(function (d) { return d.date === today; });
       var todaySession = prep.sessions && prep.sessions[today];
+      var readinessHtml = epReadinessBarHtml(epReadinessPercent(prep), false);
       var cta;
       if (daysLeft < 0) {
         cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
@@ -2846,7 +2939,7 @@
           dayFcSection +
           '</div>';
       }).join("");
-      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      body = readinessHtml + '<div class="prose" style="margin:16px 0 20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -4539,8 +4632,8 @@
       if (!dayEntry) { toast("Pas de séance prévue aujourd'hui pour cette prépa"); return; }
       var pool = epQuestionPool(epScopeCourses(prep.scope));
       if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
-      var picked = epPickDayQuestions(pool, dayEntry, prep.topicStatus);
-      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, done: false };
+      var picked = epPickDayQuestions(pool, dayEntry, prep);
+      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), done: false };
       render();
     },
     examPrepAnswerQcm: function (i) {
@@ -4592,13 +4685,14 @@
       var prep = epFind(s.prepId);
       s.status = "reviewing";
       render();
-      if (!getApiKey()) { epFinalizeSession(prep, s, null, null); return; }
-      var wrongItems = s.history.filter(function (h) { return !h.wasCorrect; });
+      var wrongIdx = [];
+      s.history.forEach(function (h, i) { if (!h.wasCorrect) wrongIdx.push(i); });
+      if (!getApiKey() || !prep) { epFinalizeSession(prep, s, null, null, wrongIdx); return; }
       Promise.all([
-        generateExamSessionReview(s.history).catch(function () { return null; }),
-        wrongItems.length ? generateGapFlashcards(wrongItems).then(function (r) { return r.flashcards; }).catch(function () { return null; }) : Promise.resolve(null)
+        (prep.topics && prep.topics.length) ? generateExamTopicMap(prep.topics, s.history).then(function (r) { return r.mapping || []; }).catch(function () { return []; }) : Promise.resolve([]),
+        wrongIdx.length ? generateGapFlashcards(wrongIdx.map(function (i) { return s.history[i]; })).then(function (r) { return r.flashcards || []; }).catch(function () { return null; }) : Promise.resolve(null)
       ]).then(function (results) {
-        epFinalizeSession(prep, s, results[0], results[1]);
+        epFinalizeSession(prep, s, results[0], results[1], wrongIdx);
       });
     },
     examPrepExitSession: function () { epSession = null; render(); },
@@ -5140,6 +5234,11 @@
       var card = cards[st.idx];
       if (!card) return;
       card.status = status;
+      // "Je la sais" est un signal de maîtrise plus faible qu'une vraie question corrigée (auto-évaluation),
+      // mais ça compte quand même un peu — "À revoir" n'inflige aucune pénalité, ce n'est pas une erreur notée.
+      if (status === "known" && card.topic && prep.topics && prep.topics.indexOf(card.topic) !== -1) {
+        epApplyMasteryUpdate(prep, card.topic, "flashcard", true);
+      }
       saveDB();
       if (st.idx < cards.length - 1) { st.idx += 1; st.flipped = false; }
       epFcState[key] = st;
