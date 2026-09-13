@@ -641,6 +641,7 @@
   }
   var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
   var epFcState = {}; // per prepId: { idx, flipped } — état du flip-card des "Flashcards des lacunes"
+  var epGapFcOpen = {}; // per prepId: bool — le deck de flashcards des lacunes est replié par défaut
 
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
@@ -2808,18 +2809,21 @@
     } else {
       var todayEntry = prep.days.find(function (d) { return d.date === today; });
       var todaySession = prep.sessions && prep.sessions[today];
+      var fcCount = (prep.gapFlashcards || []).length;
+      var fcToggleBtn = fcCount ? '<button class="ep-fc-toggle" onclick="App.toggleExamPrepFlashcards(\'' + prep.id + '\')">📇 Flashcards (' + fcCount + ')</button>' : "";
       var cta;
       if (daysLeft < 0) {
-        cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
+        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">📅 Cet examen est passé.</div></div>';
       } else if (!todayEntry) {
-        cta = '<div class="ep-today-card"><div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
+        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
       } else if (todaySession && todaySession.status === "done") {
-        cta = '<div class="ep-today-card"><div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
+        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
           '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button></div>';
       } else {
-        cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
+        cta = '<div class="ep-today-card">' + fcToggleBtn + '<div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
           '<button class="btn btn-primary" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
       }
+      var fcSection = epGapFcOpen[prep.id] ? renderExamPrepGapFlashcards(prep) : "";
       var daysHtml = prep.days.map(function (d) {
         var sess = prep.sessions && prep.sessions[d.date];
         var done = sess && sess.status === "done";
@@ -2834,7 +2838,7 @@
           '<div class="ep-day-status mono">' + statusLabel + '</div>' +
           '</div>';
       }).join("");
-      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + renderExamPrepGapFlashcards(prep) + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + fcSection + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -5111,6 +5115,7 @@
       render();
     },
 
+    toggleExamPrepFlashcards: function (prepId) { epGapFcOpen[prepId] = !epGapFcOpen[prepId]; render(); },
     epFlipCard: function (prepId) {
       var st = epFcState[prepId] || { idx: 0, flipped: false };
       st.flipped = !st.flipped; epFcState[prepId] = st; render();

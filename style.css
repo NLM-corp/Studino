@@ -375,8 +375,10 @@
   .quiz-choice.wrong { border-color: var(--danger); background: rgba(210,90,90,0.14); }
 
   /* Prépa examens */
-  .ep-today-card { border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px; background: var(--accent-soft); box-shadow: 0 3px 0 var(--border-soft); margin-bottom: 6px; }
-  .ep-today-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .ep-today-card { position: relative; border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px; background: var(--accent-soft); box-shadow: 0 3px 0 var(--border-soft); margin-bottom: 6px; }
+  .ep-today-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; padding-right: 110px; }
+  .ep-fc-toggle { position: absolute; top: 14px; right: 16px; background: var(--surface); border: 2px solid var(--border-soft); border-radius: 999px; padding: 5px 12px; font-size: 11px; font-weight: 700; color: var(--text); cursor: pointer; }
+  .ep-fc-toggle:hover { border-color: var(--accent-strong); color: var(--accent-strong); }
   .ep-today-sub { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; }
   .ep-day-list { display: flex; flex-direction: column; gap: 8px; }
   .ep-day { display: flex; align-items: center; gap: 14px; border: 2px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; background: var(--surface); }
