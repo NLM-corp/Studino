@@ -373,6 +373,22 @@
 
   .quiz-choice.correct { border-color: var(--success); background: rgba(80,170,110,0.14); }
   .quiz-choice.wrong { border-color: var(--danger); background: rgba(210,90,90,0.14); }
+
+  /* Prépa examens */
+  .ep-today-card { border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px; background: var(--accent-soft); box-shadow: 0 3px 0 var(--border-soft); margin-bottom: 6px; }
+  .ep-today-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .ep-today-sub { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; }
+  .ep-day-list { display: flex; flex-direction: column; gap: 8px; }
+  .ep-day { display: flex; align-items: center; gap: 14px; border: 2px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; background: var(--surface); }
+  .ep-day-today { border-color: var(--accent); background: var(--accent-soft); }
+  .ep-day-done { opacity: 0.75; }
+  .ep-day-missed { border-color: var(--danger); opacity: 0.7; }
+  .ep-day-date { font-size: 11.5px; color: var(--text-muted); width: 70px; flex: none; text-transform: capitalize; }
+  .ep-day-body { flex: 1; min-width: 0; }
+  .ep-day-focus { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+  .ep-day-topics { display: flex; flex-wrap: wrap; gap: 5px; }
+  .ep-day-topic { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); }
+  .ep-day-status { font-size: 11.5px; color: var(--text-muted); flex: none; white-space: nowrap; }
   .quiz-choice.disabled { cursor: default; }
   .quiz-batch-note { font-size: 11.5px; color: var(--text-muted); margin-bottom: 10px; }
   .quiz-feedback { border-radius: 10px; padding: 14px 16px; margin-top: 16px; border: 2px solid var(--border); }

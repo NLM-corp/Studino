@@ -26,6 +26,7 @@
     if (!DB.data[u]) DB.data[u] = { subjects: [] };
     if (!DB.data[u].importedExercises) DB.data[u].importedExercises = [];
     if (!DB.data[u].revisionSheets) DB.data[u].revisionSheets = [];
+    if (!DB.data[u].examPreps) DB.data[u].examPreps = [];
     // Migration : ancienne hiérarchie matière -> chapitres directement, sans thème.
     // On enveloppe les chapitres existants dans un thème "Général" créé une seule fois.
     DB.data[u].subjects.forEach(function (s) {
@@ -385,6 +386,168 @@
     });
   }
 
+  /* ---------------- Prépa examens ---------------- */
+  function epData() { return userData().examPreps; }
+  function epFind(id) { return epData().find(function (p) { return p.id === id; }); }
+  function epScopeCourses(scope) {
+    var subj = findSubject(scope.subjectId);
+    if (!subj) return [];
+    if (scope.level === "subject") {
+      var all = [];
+      subj.themes.forEach(function (t) { t.chapters.forEach(function (c) { c.courses.forEach(function (co) { if (dpCourseHasContent(co)) all.push(co); }); }); });
+      return all;
+    }
+    var theme = findTheme(subj, scope.themeId);
+    if (!theme) return [];
+    if (scope.level === "theme") {
+      var all2 = [];
+      theme.chapters.forEach(function (c) { c.courses.forEach(function (co) { if (dpCourseHasContent(co)) all2.push(co); }); });
+      return all2;
+    }
+    var chap = findChapter(theme, scope.chapterId);
+    if (!chap) return [];
+    if (scope.level === "chapter") return chap.courses.filter(dpCourseHasContent);
+    var course = findCourse(chap, scope.courseId);
+    return course && dpCourseHasContent(course) ? [course] : [];
+  }
+  function epScopeLabel(scope) {
+    var subj = findSubject(scope.subjectId);
+    if (!subj) return "";
+    if (scope.level === "subject") return subj.name;
+    var theme = findTheme(subj, scope.themeId);
+    if (!theme) return subj.name;
+    if (scope.level === "theme") return subj.name + " · " + theme.name;
+    var chap = findChapter(theme, scope.chapterId);
+    if (!chap) return subj.name + " · " + theme.name;
+    if (scope.level === "chapter") return subj.name + " · " + theme.name + " · " + chap.name;
+    var course = findCourse(chap, scope.courseId);
+    return subj.name + " · " + theme.name + " · " + chap.name + (course ? " · " + course.title : "");
+  }
+  function epPad2(n) { return String(n).padStart(2, "0"); }
+  function epTodayStr() {
+    var d = new Date();
+    return d.getFullYear() + "-" + epPad2(d.getMonth() + 1) + "-" + epPad2(d.getDate());
+  }
+  function epDateFromStr(s) {
+    var p = s.split("-").map(Number);
+    return new Date(p[0], p[1] - 1, p[2]);
+  }
+  function epDaysBetween(fromStr, toStr) {
+    return Math.round((epDateFromStr(toStr) - epDateFromStr(fromStr)) / 86400000);
+  }
+  function epAddDays(dateStr, n) {
+    var d = epDateFromStr(dateStr);
+    d.setDate(d.getDate() + n);
+    return d.getFullYear() + "-" + epPad2(d.getMonth() + 1) + "-" + epPad2(d.getDate());
+  }
+  function epFormatDateFr(dateStr) {
+    return epDateFromStr(dateStr).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  }
+
+  var EXAM_PLAN_SCHEMA = {
+    type: "object",
+    properties: {
+      overview: { type: "string", description: "Stratégie de révision globale en 2-3 phrases motivantes, en français." },
+      days: {
+        type: "array",
+        description: "Un élément par jour de révision disponible avant l'examen.",
+        items: {
+          type: "object",
+          properties: {
+            offsetDays: { type: "integer", description: "Nombre de jours après aujourd'hui (0 = aujourd'hui)." },
+            minutes: { type: "integer", description: "Minutes de travail conseillées ce jour-là (réaliste, 15 à 45 minutes en général)." },
+            focus: { type: "string", description: "Objectif du jour en une phrase courte." },
+            topics: { type: "array", items: { type: "string" }, description: "Notions précises à réviser ce jour-là (2 à 6)." }
+          },
+          required: ["offsetDays", "minutes", "focus", "topics"]
+        }
+      }
+    },
+    required: ["overview", "days"]
+  };
+  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses) {
+    var sourceBlocks = courses.map(function (co) {
+      return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
+    }).join("\n\n");
+    return "Tu es un coach de révision pour un élève francophone qui prépare : « " + title + " ».\n" +
+      "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) de révision avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n\n" +
+      "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
+      "Construis un planning de révision étalé sur ces " + dayCount + " jours (un élément par jour, offsetDays de 0 à " + (dayCount - 1) + ", sans en sauter aucun), en respectant impérativement ces principes :\n" +
+      "- Ne JAMAIS tout mettre le dernier jour ou concentrer l'essentiel sur 1-2 jours : répartis le travail le plus régulièrement possible sur TOUS les jours disponibles, avec des séances courtes et réalistes (typiquement 15 à 45 minutes par jour, jamais plus de 60) — c'est tout l'intérêt d'étaler la révision au lieu de tout faire la veille au soir.\n" +
+      "- Couvre l'intégralité du contenu ci-dessus au moins une fois d'ici la fin du planning.\n" +
+      "- Plus on se rapproche de l'examen, plus les jours doivent revenir sur les notions déjà vues plus tôt (en plus des notions nouvelles du jour), façon répétition espacée, pour consolider — ce n'est pas qu'un simple découpage linéaire du programme.\n" +
+      "- Pour chaque jour, \"focus\" résume l'objectif du jour en une phrase, et \"topics\" liste 2 à 6 notions précises concernées.\n\n" +
+      "\"overview\" résume ta stratégie globale en 2-3 phrases motivantes, en français.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses) {
+    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses) }];
+    return callGemini(parts, EXAM_PLAN_SCHEMA);
+  }
+  function runExamPlanGeneration(prep) {
+    prep.planStatus = "processing";
+    prep.planError = null;
+    saveDB(); render();
+    var courses = epScopeCourses(prep.scope);
+    if (!courses.length) {
+      prep.planStatus = "error";
+      prep.planError = "Aucun cours généré dans cette sélection.";
+      saveDB(); render();
+      return;
+    }
+    var today = epTodayStr();
+    var dayCount = Math.max(1, epDaysBetween(today, prep.examDate));
+    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses).then(function (data) {
+      prep.overview = data.overview || "";
+      prep.days = (data.days || []).map(function (d) {
+        return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
+      }).sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+      prep.planStatus = "ready";
+      saveDB();
+      toast("Planning de révision prêt · " + prep.title);
+      render();
+    }).catch(function (err) {
+      prep.planStatus = "error";
+      prep.planError = err.message || "Erreur inconnue";
+      prep.planErrorStatus = err.status || null;
+      prep.planErrorDetail = err.detail || null;
+      saveDB();
+      toast("Échec du planning : " + prep.planError, { status: prep.planErrorStatus, detail: prep.planErrorDetail });
+      render();
+    });
+  }
+  function epQuestionPool(courses) {
+    var pool = [];
+    courses.forEach(function (co) {
+      (co.quizQuestions || []).forEach(function (q) { pool.push({ q: q, courseId: co.id, courseTitle: co.title }); });
+    });
+    return pool;
+  }
+  function epPickDayQuestions(pool, dayEntry, weakTopics) {
+    if (!pool.length) return [];
+    var target = Math.max(5, Math.min(pool.length, Math.round((dayEntry.minutes || 20) / 1.5)));
+    var weakSet = {};
+    (weakTopics || []).forEach(function (w) { weakSet[w] = true; });
+    var topicsLower = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
+    var scored = pool.map(function (item) {
+      var score = Math.random() * 2;
+      if (weakSet[item.q.prompt]) score += 12;
+      var hay = (item.q.prompt + " " + item.courseTitle).toLowerCase();
+      topicsLower.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 5; });
+      return { item: item, score: score };
+    });
+    scored.sort(function (a, b) { return b.score - a.score; });
+    var picked = scored.slice(0, target).map(function (s) { return s.item; });
+    for (var i = picked.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = picked[i]; picked[i] = picked[j]; picked[j] = t; }
+    return picked;
+  }
+  function epFinishSessionAnswer(s, q, yourAnswerText, correctAnswerText, wasCorrect) {
+    s.wasCorrect = wasCorrect;
+    if (wasCorrect) s.correct++; else s.wrong++;
+    s.history.push({ prompt: q.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: q.explanation, wasCorrect: wasCorrect });
+  }
+  var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
+
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
     properties: {
@@ -575,7 +738,8 @@
       doc: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/></svg>',
       play: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
       camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7l2-3h4l2 3"/><circle cx="12" cy="13.5" r="3.2"/></svg>',
-      clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 3.5"/></svg>'
+      clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 3.5"/></svg>',
+      calendar: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/><path d="M8 13h2M8 17h2M14 13h2M14 17h2"/></svg>'
     };
     return icons[name] || "";
   }
@@ -1985,6 +2149,12 @@
     } else if (parts[0] === "revision" && parts[1]) {
       var rs = userData().revisionSheets.find(function (x) { return x.id === parts[1]; });
       if (rs) trail.push({ label: rs.title });
+    } else if (parts[0] === "examprep") {
+      trail.push({ label: "Prépa examens", hash: "#/examprep" });
+      if (parts[1]) {
+        var ep = epFind(parts[1]);
+        if (ep) trail.push({ label: ep.title });
+      }
     }
     return trail;
   }
@@ -2019,6 +2189,7 @@
       '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'">' + icon("camera") + ' Mes exercices</button>' +
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()">' + sprite("dino", 3, { style: "margin-right:2px;" }) + ' Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()">' + icon("clock") + ' DinoTime</button>' +
+      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'">' + icon("calendar") + ' Prépa examens</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -2408,6 +2579,148 @@
       body = '<div class="prose">' + mdToHtml(sheet.content) + '</div>';
     }
     renderShell(["revision", sheetId], head + body, { narrow: true });
+  }
+
+  /* ---------------- Prépa examens (pages) ---------------- */
+  function renderExamPrepListPage() {
+    var list = epData().slice().sort(function (a, b) { return a.examDate < b.examDate ? -1 : (a.examDate > b.examDate ? 1 : 0); });
+    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("calendar") + '<h1 class="page-title">Prépa examens</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
+    var grid;
+    if (!list.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucune prépa en cours</h3><p>Indique la date de ton prochain examen : Studino te prépare un planning de révision jour par jour.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
+    } else {
+      var today = epTodayStr();
+      grid = '<div class="card-grid">' + list.map(function (p) {
+        var daysLeft = epDaysBetween(today, p.examDate);
+        var todaySession = p.sessions && p.sessions[today];
+        var statusHtml = p.planStatus === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Planning…</span>'
+          : p.planStatus === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
+          : daysLeft < 0 ? '<span class="status-pill status-ready">Examen passé</span>'
+          : daysLeft === 0 ? '<span class="status-pill status-ready">Examen aujourd\'hui !</span>'
+          : '<span class="status-pill status-ready">' + (todaySession && todaySession.status === "done" ? "✅ Fait aujourd'hui" : "J-" + daysLeft) + '</span>';
+        return '<div class="tile" onclick="location.hash=\'#/examprep/' + p.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'examPrep\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("calendar") + '</div>' +
+          '<div class="tile-title">' + esc(p.title) + '</div>' +
+          '<div class="tile-meta">' + esc(epScopeLabel(p.scope)) + '</div>' +
+          statusHtml +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
+    }
+    renderShell(["examprep"], head + grid);
+  }
+
+  function renderExamPrepSession(prep) {
+    var s = epSession;
+    var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.examPrepExitSession()">← Retour à la prépa</button>';
+    var head = '<div class="page-head"><div><h1 class="page-title">' + esc(prep.title) + '</h1><p class="page-sub">Entraînement du ' + esc(epFormatDateFr(s.date)) + '</p></div></div>';
+    if (s.done) {
+      var items = s.history.map(function (h) {
+        return '<div class="correction-item ' + (h.wasCorrect ? "correct" : "wrong") + '">' +
+          '<div class="correction-q">' + esc(h.prompt) + '</div>' +
+          '<div class="correction-ans ' + (h.wasCorrect ? "good" : "bad") + '">Ta réponse : ' + esc(h.yourAnswer || "(vide)") + '</div>' +
+          (h.wasCorrect ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
+          '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
+          '</div>';
+      }).join("");
+      renderShell(["examprep", prep.id], head +
+        '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div></div>' +
+        '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.examPrepExitSession()">Retour à la prépa</button>' +
+        '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items);
+      return;
+    }
+    var q = s.pool[s.idx].q;
+    var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + '</div>' +
+      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>';
+    if (q.type === "qcm") {
+      body += q.choices.map(function (c, i) {
+        var cls = "quiz-choice";
+        var attrs = "";
+        if (s.revealed) {
+          cls += " disabled";
+          if (i === q.correctIndex) cls += " correct";
+          else if (i === s.answer) cls += " wrong";
+        } else {
+          attrs = ' onclick="App.examPrepAnswerQcm(' + i + ')"';
+        }
+        return '<label class="' + cls + '"' + attrs + '><input type="radio" ' + (s.answer === i ? "checked" : "") + ' readonly disabled><span>' + esc(c) + '</span></label>';
+      }).join("");
+    } else if (s.status === "grading") {
+      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+    } else if (s.status !== "graded") {
+      body += '<div class="field">' + richEditorHtml("ep-open-answer", "Tape ta réponse…", s.answerHtml || "") + '</div>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.examPrepSubmitOpenAnswer()">Valider</button>';
+    } else {
+      body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+        '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>' +
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(q.answer) + '</strong></p>';
+    }
+    if (s.revealed && s.wasCorrect != null) {
+      body += '<div class="quiz-feedback ' + (s.wasCorrect ? "correct" : "wrong") + '">' +
+        '<div class="quiz-feedback-title ' + (s.wasCorrect ? "correct" : "wrong") + '">' + (s.wasCorrect ? "✅ Bonne réponse !" : "❌ Pas tout à fait") + '</div>' +
+        (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
+        '<div class="correction-exp">' + mdToHtml(q.explanation || "") + '</div>' +
+        '</div>' +
+        '<div class="quiz-nav"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
+    }
+    renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
+  }
+
+  function renderExamPrepDetailPage(prepId) {
+    var prep = epFind(prepId);
+    if (!prep) { navigate("#/examprep"); return; }
+    if (epSession && epSession.prepId === prepId) { renderExamPrepSession(prep); return; }
+    var today = epTodayStr();
+    var daysLeft = epDaysBetween(today, prep.examDate);
+    var head = '<div class="course-head"><div><h1 class="page-title" style="margin-bottom:6px">📅 ' + esc(prep.title) + '</h1>' +
+      '<p class="page-sub">' + esc(epScopeLabel(prep.scope)) + ' · Examen le ' + esc(epFormatDateFr(prep.examDate)) + (daysLeft >= 0 ? ' (J-' + daysLeft + ')' : ' (passé)') + '</p></div>' +
+      '<div style="display:flex;gap:10px;margin-left:auto">' +
+      (prep.planStatus === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryExamPlanGeneration(\'' + prep.id + '\')">🔄 Regénérer le planning</button>' : "") +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'examPrep\',null,null,null,\'' + prep.id + '\')">' + icon("trash") + ' Supprimer</button>' +
+      '</div></div>';
+    var body;
+    if (prep.planStatus === "processing") {
+      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini prépare ton planning de révision…</span></div>';
+    } else if (prep.planStatus === "error") {
+      body = '<div class="processing-box"><span>⚠️ ' + esc(prep.planError || "La génération a échoué.") + '</span>' +
+        '<div style="display:flex;gap:10px">' +
+        (prep.planErrorDetail ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.openExamPrepErrorDetail(\'' + prep.id + '\')">Détails</button>' : '') +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryExamPlanGeneration(\'' + prep.id + '\')">Réessayer</button>' +
+        '</div></div>';
+    } else {
+      var todayEntry = prep.days.find(function (d) { return d.date === today; });
+      var todaySession = prep.sessions && prep.sessions[today];
+      var cta;
+      if (daysLeft < 0) {
+        cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
+      } else if (!todayEntry) {
+        cta = '<div class="ep-today-card"><div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
+      } else if (todaySession && todaySession.status === "done") {
+        cta = '<div class="ep-today-card"><div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
+          '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button></div>';
+      } else {
+        cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
+          '<button class="btn btn-primary" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
+      }
+      var daysHtml = prep.days.map(function (d) {
+        var sess = prep.sessions && prep.sessions[d.date];
+        var done = sess && sess.status === "done";
+        var isToday = d.date === today;
+        var isPast = d.date < today;
+        var cls = "ep-day" + (isToday ? " ep-day-today" : "") + (done ? " ep-day-done" : "") + (isPast && !done ? " ep-day-missed" : "");
+        var statusLabel = done ? "✅ " + sess.correct + "/" + sess.total : (isPast ? "manqué" : d.minutes + " min");
+        return '<div class="' + cls + '">' +
+          '<div class="ep-day-date mono">' + esc(epFormatDateFr(d.date)) + '</div>' +
+          '<div class="ep-day-body"><div class="ep-day-focus">' + esc(d.focus) + '</div>' +
+          '<div class="ep-day-topics">' + (d.topics || []).map(function (t) { return '<span class="ep-day-topic">' + esc(t) + '</span>'; }).join("") + '</div></div>' +
+          '<div class="ep-day-status mono">' + statusLabel + '</div>' +
+          '</div>';
+      }).join("");
+      body = '<div class="prose" style="margin-bottom:20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+    }
+    renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
 
   function renderCoursePage(courseId, tab) {
@@ -3206,6 +3519,50 @@
           (rsChapters.length ? '<button type="button" class="btn btn-primary" onclick="App.generateRevisionSheet()">Générer</button>' : "") +
           '</div>';
       }
+    } else if (modal.type === "examPrepGen") {
+      var epSubs = userData().subjects;
+      if (!epSubs.length) {
+        inner = '<h3>Nouvelle prépa d\'examen</h3>' +
+          '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>' +
+          '<div class="modal-actions"><button type="button" class="btn btn-ghost" style="width:100%" onclick="App.closeModal()">Fermer</button></div>';
+      } else {
+        var epmSubjectOptions = epSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+        var epmSubj = findSubject(modal.subjectId) || epSubs[0];
+        var epmThemes = dpThemesWithContent(epmSubj);
+        var epmThemeOptions = epmThemes.map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.themeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
+        var epmTheme = findTheme(epmSubj, modal.themeId) || epmThemes[0];
+        var epmChapters = epmTheme ? dpChaptersWithContent(epmTheme) : [];
+        var epmChapterOptions = epmChapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.name) + '</option>'; }).join("");
+        var epmChap = (epmTheme && findChapter(epmTheme, modal.chapterId)) || epmChapters[0];
+        var epmCourses = epmChap ? dpCoursesWithContent(epmChap) : [];
+        var epmCourseOptions = epmCourses.map(function (co) { return '<option value="' + co.id + '" ' + (co.id === modal.courseId ? "selected" : "") + '>' + esc(co.title) + '</option>'; }).join("");
+        var epmLevelBtn = function (level, label) { return '<button type="button" class="btn btn-sm ' + (modal.level === level ? "btn-primary" : "btn-ghost") + '" onclick="App.changeExamPrepLevel(\'' + level + '\')">' + label + '</button>'; };
+        var epmReady = modal.level === "subject" ? !!epmThemes.length
+          : modal.level === "theme" ? !!epmChapters.length
+          : modal.level === "chapter" ? !!epmChapters.length
+          : !!epmCourses.length;
+        inner = '<h3>Nouvelle prépa d\'examen</h3>' +
+          '<div class="field"><label>Titre (optionnel)</label><input name="title" value="' + esc(modal.title || "") + '" oninput="App.setExamPrepField(\'title\',this.value)" placeholder="Ex. Contrôle de maths"></div>' +
+          '<div class="field"><label>Date de l\'examen</label><input name="examDate" type="date" value="' + esc(modal.examDate || "") + '" min="' + epTodayStr() + '" oninput="App.setExamPrepField(\'examDate\',this.value)" required></div>' +
+          '<div class="field"><label>Matière</label><select onchange="App.changeExamPrepSubject(this.value)">' + epmSubjectOptions + '</select></div>' +
+          (epmThemes.length ? (
+            '<div class="field"><label>Portée</label><div class="modal-actions" style="margin:0 0 4px;flex-wrap:wrap">' +
+            epmLevelBtn("subject", "Matière entière") + epmLevelBtn("theme", "Thème entier") + epmLevelBtn("chapter", "Chapitre entier") + epmLevelBtn("course", "Un seul cours") +
+            '</div></div>' +
+            (modal.level !== "subject" ? '<div class="field"><label>Thème</label><select onchange="App.changeExamPrepTheme(this.value)">' + epmThemeOptions + '</select></div>' : "") +
+            ((modal.level === "chapter" || modal.level === "course") && epmTheme ? (
+              epmChapters.length ? '<div class="field"><label>Chapitre</label><select onchange="App.changeExamPrepChapter(this.value)">' + epmChapterOptions + '</select></div>'
+                : '<p class="modal-warn">Ce thème n\'a aucun chapitre avec un cours généré.</p>'
+            ) : "") +
+            (modal.level === "course" && epmChap ? (
+              epmCourses.length ? '<div class="field"><label>Cours</label><select onchange="App.changeExamPrepCourse(this.value)">' + epmCourseOptions + '</select></div>'
+                : '<p class="modal-warn">Ce chapitre n\'a aucun cours généré.</p>'
+            ) : "")
+          ) : '<p class="modal-warn">Cette matière n\'a aucun cours généré pour l\'instant.</p>') +
+          '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+          (epmThemes.length && epmReady ? '<button type="button" class="btn btn-primary" onclick="App.createExamPrep()">Générer le planning</button>' : "") +
+          '</div>';
+      }
     } else if (modal.type === "moveChapter") {
       var mcSubs = userData().subjects;
       var mcSubj = findSubject(modal.destSubjectId) || mcSubs[0];
@@ -3282,6 +3639,10 @@
         var drs = userData().revisionSheets.find(function (x) { return x.id === modal.courseId; });
         name = drs ? drs.title : "";
         warn = "Cette fiche de révision sera définitivement perdue.";
+      } else if (modal.kind === "examPrep") {
+        var dep = epFind(modal.courseId);
+        name = dep ? dep.title : "";
+        warn = "Son planning et ta progression seront définitivement perdus.";
       }
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
@@ -3918,6 +4279,181 @@
       printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
     },
 
+    openExamPrepModal: function () {
+      var subs = userData().subjects;
+      var firstSubj = subs[0];
+      var firstTheme = firstSubj && dpThemesWithContent(firstSubj)[0];
+      var firstChap = firstTheme && dpChaptersWithContent(firstTheme)[0];
+      modal = { type: "examPrepGen", title: "", examDate: "", level: "chapter", subjectId: firstSubj && firstSubj.id, themeId: firstTheme && firstTheme.id, chapterId: firstChap && firstChap.id, courseId: null };
+      render();
+    },
+    setExamPrepField: function (field, value) { modal[field] = value; },
+    changeExamPrepLevel: function (level) {
+      modal.level = level;
+      var theme = findTheme(findSubject(modal.subjectId), modal.themeId);
+      var chap = findChapter(theme, modal.chapterId);
+      var courses = chap ? dpCoursesWithContent(chap) : [];
+      modal.courseId = level === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeExamPrepSubject: function (subjectId) {
+      modal.subjectId = subjectId;
+      var subj = findSubject(subjectId);
+      var firstTheme = subj && dpThemesWithContent(subj)[0];
+      modal.themeId = firstTheme ? firstTheme.id : null;
+      var firstChap = firstTheme ? dpChaptersWithContent(firstTheme)[0] : null;
+      modal.chapterId = firstChap ? firstChap.id : null;
+      var firstCourses = firstChap ? dpCoursesWithContent(firstChap) : [];
+      modal.courseId = modal.level === "course" && firstCourses[0] ? firstCourses[0].id : null;
+      render();
+    },
+    changeExamPrepTheme: function (themeId) {
+      modal.themeId = themeId;
+      var theme = findTheme(findSubject(modal.subjectId), themeId);
+      var firstChap = theme ? dpChaptersWithContent(theme)[0] : null;
+      modal.chapterId = firstChap ? firstChap.id : null;
+      var courses = firstChap ? dpCoursesWithContent(firstChap) : [];
+      modal.courseId = modal.level === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeExamPrepChapter: function (chapterId) {
+      modal.chapterId = chapterId;
+      var theme = findTheme(findSubject(modal.subjectId), modal.themeId);
+      var chap = findChapter(theme, chapterId);
+      var courses = chap ? dpCoursesWithContent(chap) : [];
+      modal.courseId = modal.level === "course" && courses[0] ? courses[0].id : null;
+      render();
+    },
+    changeExamPrepCourse: function (courseId) { modal.courseId = courseId; render(); },
+    createExamPrep: function () {
+      var m = modal;
+      if (!m.examDate) { toast("Choisis une date d'examen"); return; }
+      if (m.examDate < epTodayStr()) { toast("La date de l'examen doit être dans le futur"); return; }
+      var subj = findSubject(m.subjectId);
+      if (!subj) return;
+      var scope = { level: m.level, subjectId: subj.id, themeId: null, chapterId: null, courseId: null };
+      var label;
+      if (m.level === "subject") {
+        label = subj.name;
+      } else {
+        var theme = findTheme(subj, m.themeId);
+        if (!theme) { toast("Choisis un thème"); return; }
+        scope.themeId = theme.id;
+        if (m.level === "theme") {
+          label = subj.name + " · " + theme.name;
+        } else {
+          var chap = findChapter(theme, m.chapterId);
+          if (!chap) { toast("Choisis un chapitre"); return; }
+          scope.chapterId = chap.id;
+          if (m.level === "chapter") {
+            label = chap.name;
+          } else {
+            var co = findCourse(chap, m.courseId);
+            if (!co || !dpCourseHasContent(co)) { toast("Choisis un cours"); return; }
+            scope.courseId = co.id;
+            label = co.title;
+          }
+        }
+      }
+      if (!epScopeCourses(scope).length) { toast("Aucun cours généré dans cette sélection"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var prep = {
+        id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
+        planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
+        overview: "", days: [], weakTopics: [], sessions: {}
+      };
+      userData().examPreps.push(prep);
+      saveDB();
+      modal = null;
+      navigate("#/examprep/" + prep.id);
+      runExamPlanGeneration(prep);
+    },
+    retryExamPlanGeneration: function (prepId) {
+      var prep = epFind(prepId);
+      if (!prep) return;
+      runExamPlanGeneration(prep);
+    },
+    openExamPrepErrorDetail: function (prepId) {
+      var prep = epFind(prepId);
+      if (!prep) return;
+      modal = { type: "errorDetail", status: prep.planErrorStatus, detail: prep.planErrorDetail };
+      render();
+    },
+    startExamPrepDay: function (prepId) {
+      var prep = epFind(prepId);
+      if (!prep) return;
+      var today = epTodayStr();
+      var dayEntry = prep.days.find(function (d) { return d.date === today; });
+      if (!dayEntry) { toast("Pas de séance prévue aujourd'hui pour cette prépa"); return; }
+      var pool = epQuestionPool(epScopeCourses(prep.scope));
+      if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
+      var picked = epPickDayQuestions(pool, dayEntry, prep.weakTopics);
+      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], done: false };
+      render();
+    },
+    examPrepAnswerQcm: function (i) {
+      var s = epSession;
+      if (!s || s.revealed) return;
+      var q = s.pool[s.idx].q;
+      s.answer = i;
+      s.revealed = true;
+      var wasCorrect = i === q.correctIndex;
+      epFinishSessionAnswer(s, q, q.choices[i], q.choices[q.correctIndex], wasCorrect);
+      render();
+      dinoReact(wasCorrect);
+    },
+    examPrepSubmitOpenAnswer: function () {
+      var s = epSession;
+      if (!s) return;
+      var q = s.pool[s.idx].q;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      s.answerHtml = rteValue("ep-open-answer");
+      var answerText = rteText("ep-open-answer");
+      s.answer = answerText;
+      s.status = "grading";
+      render();
+      gradeExerciseAnswer(q.prompt, q.answer, answerText).then(function (result) {
+        s.status = "graded";
+        s.revealed = true;
+        s.aiFeedback = result.feedback || "";
+        var wasCorrect = !!result.correct;
+        epFinishSessionAnswer(s, q, answerText, q.answer, wasCorrect);
+        render();
+        dinoReact(wasCorrect);
+      }).catch(function (err) {
+        s.status = "answering";
+        toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+        render();
+      });
+    },
+    examPrepNext: function () {
+      var s = epSession;
+      if (!s) return;
+      if (s.idx === s.pool.length - 1) { App.examPrepFinish(); return; }
+      s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null;
+      render();
+    },
+    examPrepFinish: function () {
+      var s = epSession;
+      if (!s) return;
+      var prep = epFind(s.prepId);
+      if (prep) {
+        prep.weakTopics = prep.weakTopics || [];
+        s.history.forEach(function (h) {
+          var idx = prep.weakTopics.indexOf(h.prompt);
+          if (h.wasCorrect) { if (idx !== -1) prep.weakTopics.splice(idx, 1); }
+          else if (idx === -1) prep.weakTopics.push(h.prompt);
+        });
+        if (prep.weakTopics.length > 40) prep.weakTopics = prep.weakTopics.slice(-40);
+        prep.sessions = prep.sessions || {};
+        prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, completedAt: Date.now() };
+        saveDB();
+      }
+      s.done = true;
+      render();
+    },
+    examPrepExitSession: function () { epSession = null; render(); },
+
     createImportedExercise: function (e) {
       e.preventDefault();
       if (!modal.imagePreviews.length) { toast("Ajoute au moins une photo de ton exercice"); return; }
@@ -4068,6 +4604,11 @@
         var d3 = userData();
         d3.revisionSheets = d3.revisionSheets.filter(function (x) { return x.id !== m.courseId; });
         toast("Fiche supprimée");
+      } else if (m.kind === "examPrep") {
+        var d4 = userData();
+        d4.examPreps = d4.examPreps.filter(function (x) { return x.id !== m.courseId; });
+        if (epSession && epSession.prepId === m.courseId) epSession = null;
+        toast("Prépa supprimée");
       }
       saveDB();
       modal = null;
@@ -4478,6 +5019,8 @@
     if (parts[0] === "dinopark") { renderDinoParkPage(); return; }
     if (parts[0] === "dinotime") { renderDinoTimePage(); return; }
     if (parts[0] === "revision" && parts[1]) { renderRevisionSheetPage(parts[1]); return; }
+    if (parts[0] === "examprep" && parts[1]) { renderExamPrepDetailPage(parts[1]); return; }
+    if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
     renderDashboard();
   }
 
