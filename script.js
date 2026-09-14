@@ -721,7 +721,7 @@
       var pointsEarned = epSessionPointsEarned(s);
       if (pointsEarned > 0) dpData().points += pointsEarned;
       prep.sessions = prep.sessions || {};
-      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, pointsEarned: pointsEarned, completedAt: Date.now() };
+      prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, pointsEarned: pointsEarned, durationMs: s.durationMs || 0, completedAt: Date.now() };
       saveDB();
       s.readinessAfter = readinessAfter;
       s.pointsEarned = pointsEarned;
@@ -2806,7 +2806,8 @@
   function renderExamPrepSession(prep) {
     var s = epSession;
     var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.examPrepExitSession()">← Retour à la prépa</button>';
-    var head = '<div class="page-head"><div><h1 class="page-title">' + esc(prep.title) + '</h1><p class="page-sub">Entraînement du ' + esc(epFormatDateFr(s.date)) + '</p></div></div>';
+    var liveTimer = (s.status !== "reviewing" && !s.done) ? '<div class="ep-session-timer mono" id="ep-session-timer">⏱️ ' + dpFormatCountdown(Date.now() - s.startedAt) + '</div>' : "";
+    var head = '<div class="page-head"><div><h1 class="page-title">' + esc(prep.title) + '</h1><p class="page-sub">Entraînement du ' + esc(epFormatDateFr(s.date)) + '</p></div>' + liveTimer + '</div>';
     if (s.status === "reviewing") {
       renderShell(["examprep", prep.id], head + '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Studino analyse ta séance…</span></div>');
       return;
@@ -2832,6 +2833,7 @@
         ? '<div class="result-total">Niveau de préparation : ' + s.readinessBefore + '% → <strong>' + s.readinessAfter + '%</strong></div>' : "";
       renderShell(["examprep", prep.id], head +
         '<div class="result-hero"><div class="result-score mono">' + s.correct + '/' + s.pool.length + '</div><div class="result-total">bonnes réponses aujourd\'hui</div>' +
+        (s.durationMs ? '<div class="result-total">⏱️ Temps passé : ' + dpFormatCountdown(s.durationMs) + '</div>' : '') +
         (s.pointsEarned ? '<div class="result-total">🪙 +' + s.pointsEarned + ' pts Dino Park</div>' : '') +
         readinessDelta +
         (s.newFlashcardsCount ? '<div class="result-total">📇 +' + s.newFlashcardsCount + ' flashcards de lacunes créées</div>' : '') + '</div>' +
@@ -4651,7 +4653,7 @@
       var pool = epQuestionPool(epScopeCourses(prep.scope));
       if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
       var picked = epPickDayQuestions(pool, dayEntry, prep);
-      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), done: false };
+      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), startedAt: Date.now(), done: false };
       render();
     },
     examPrepAnswerQcm: function (i) {
@@ -4701,6 +4703,7 @@
       var s = epSession;
       if (!s) return;
       var prep = epFind(s.prepId);
+      s.durationMs = Date.now() - s.startedAt;
       s.status = "reviewing";
       render();
       var wrongIdx = [];
@@ -5348,5 +5351,9 @@
       if (remain <= 0) { render(); return; }
       el.textContent = "⏳ " + dpFormatCountdown(remain);
     });
+    if (epSession && epSession.startedAt && !epSession.done) {
+      var epTimerEl = document.getElementById("ep-session-timer");
+      if (epTimerEl) epTimerEl.textContent = "⏱️ " + dpFormatCountdown(Date.now() - epSession.startedAt);
+    }
   }, 1000);
 })();
