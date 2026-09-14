@@ -142,17 +142,17 @@
   .shell { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
   .sidebar {
     background: var(--surface); border-right: 3px solid var(--border);
-    display: flex; flex-direction: column; padding: 20px 14px; gap: 4px;
+    display: flex; flex-direction: column; padding: 20px 14px; gap: 8px;
   }
   .sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 20px; gap: 8px; }
   .nav-item {
-    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px;
     color: var(--text); text-decoration: none; font-size: 13px; font-weight: 700; cursor: pointer; border: none; background: none; width: 100%; text-align: left;
   }
   .nav-item:hover { background: var(--surface-2); }
   .nav-item.active { background: var(--accent-soft); color: var(--accent-strong); }
   .nav-icon { width: 17px; height: 17px; flex: none; opacity: 0.85; }
-  .nav-icon-img { width: 26px; height: 26px; flex: none; object-fit: contain; }
+  .nav-icon-img { width: 36px; height: 36px; flex: none; object-fit: contain; }
   .sidebar-bottom { border-top: 2px dashed var(--border-soft); padding-top: 12px; margin-top: auto; }
   .user-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; }
   .avatar { width: 30px; height: 30px; border-radius: 8px; background: var(--leaf); color: var(--surface); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; border: 2px solid var(--leaf-dark); }
@@ -179,7 +179,7 @@
 
   .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
   .page-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-  .page-title-logo { width: 26px; height: 26px; object-fit: contain; flex: none; }
+  .page-title-logo { width: 34px; height: 34px; object-fit: contain; flex: none; }
   .page-title { font-size: 19px; font-weight: 400; margin: 0; }
   .page-sub { color: var(--text-muted); font-size: 13px; margin: 0; }
 
