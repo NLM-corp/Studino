@@ -2038,7 +2038,7 @@
   }
 
   function renderDinoTimeSetup() {
-    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/DinoTIme.png" alt=""><h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/DinoTime.png" alt=""><h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
     var tabsHtml = '<div class="tabs">' +
       '<button class="tab-btn ' + (dtState.tab !== "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'chrono\')">⏱️ Chrono simple</button>' +
       '<button class="tab-btn ' + (dtState.tab === "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'pomodoro\')">🍅 Pomorodosaure</button>' +
@@ -2319,7 +2319,7 @@
 
   /* ---------------- Sidebar / Shell ---------------- */
   function breadcrumbTrail(parts) {
-    var trail = [{ label: "Le Nid", hash: "#/" }];
+    var trail = [{ label: "Menu", hash: "#/" }];
     if (parts[0] === "subject" && parts[1]) {
       var s = findSubject(parts[1]);
       if (s) trail.push({ label: s.name, hash: "#/subject/" + s.id });
@@ -2395,10 +2395,10 @@
       '<div class="sidebar-top"><div class="wordmark" style="font-size:13px">' + sprite("dino", 3, { style: "margin-right:4px;" }) + 'Studino<span class="dot">.</span></div>' +
       '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
       '</div>' +
-      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/LeNid.png" alt=""> Le Nid</button>' +
+      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/Menu.png" alt=""> Menu</button>' +
       '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'"><img class="nav-icon-img" src="assets/objects/ui/MesExos.png" alt=""> Mes exercices</button>' +
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
-      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTIme.png" alt=""> DinoTime</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
@@ -2548,7 +2548,7 @@
   function renderDashboard() {
     var subs = userData().subjects;
     var stats = computeStats();
-    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/LeNid.png" alt=""><h1 class="page-title">Le Nid</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Menu.png" alt=""><h1 class="page-title">Menu</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
       '<div style="display:flex;gap:10px">' +
       '<button class="btn btn-metal" style="width:auto" onclick="App.openRevisionSheetModal()">' + icon("doc") + ' Générer une fiche de révision</button>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button>' +
