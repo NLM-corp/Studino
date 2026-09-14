@@ -1055,6 +1055,9 @@
     var cls = "sprite" + (opts.bob ? " sprite-bob" : "") + (opts.className ? " " + opts.className : "");
     return '<img class="' + cls + '" src="' + spriteCache[key] + '" width="' + w + '" height="' + h + '" alt="" style="' + (opts.style || "") + '">';
   }
+  function genLogo() {
+    return '<img class="sprite sprite-bob" src="assets/objects/ui/DinoPark.png" alt="" style="width:72px;height:auto;">';
+  }
 
   /* ---------------- Dino Park : data ---------------- */
   var DP_ZONES = [
@@ -1969,7 +1972,7 @@
         return '<label class="' + cls + '"' + attrs + '><input type="radio" ' + (qz.answer === i ? "checked" : "") + ' readonly disabled><span>' + esc(c) + '</span></label>';
       }).join("");
     } else if (qz.status === "grading") {
-      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+      body += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
     } else if (qz.status !== "graded") {
       body += '<div class="field">' + richEditorHtml("dp-open-answer", "Tape ta réponse…", qz.answerHtml || "") + '</div>' +
         '<button class="btn btn-primary" style="width:auto" onclick="App.dpSubmitOpenAnswer()">Valider</button>';
@@ -1995,7 +1998,7 @@
     var ex = qz.exercise;
     var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(ex.prompt) + '</div></div>';
     if (qz.status === "grading") {
-      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+      body += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
     } else if (qz.status === "graded") {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
@@ -2392,7 +2395,7 @@
     var theme = document.documentElement.getAttribute("data-app-theme") || "light";
     var html = '<div class="shell">' +
       '<aside class="sidebar">' +
-      '<div class="sidebar-top"><div class="wordmark" style="font-size:13px">' + sprite("dino", 3, { style: "margin-right:4px;" }) + 'Studino<span class="dot">.</span></div>' +
+      '<div class="sidebar-top"><div class="wordmark" style="font-size:13px"><img src="assets/objects/ui/DinoPark.png" alt="" style="width:20px;height:20px;object-fit:contain;margin-right:4px;vertical-align:-4px;">Studino<span class="dot">.</span></div>' +
       '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
       '</div>' +
       '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/Menu.png" alt=""> Menu</button>' +
@@ -2718,7 +2721,7 @@
 
     var body;
     if (entry.status === "processing") {
-      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini analyse ton exercice…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ton exercice…</span></div>';
     } else if (entry.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(entry.error || "L'import a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -2732,7 +2735,7 @@
         var block = (multi ? '<div class="dp-exercise-label" style="margin-bottom:8px">Exercice ' + (i + 1) + ' / ' + entry.exercises.length + '</div>' : '') +
           '<div class="prose">' + mdToHtml(ex.statement) + '</div>';
         if (ex.answerStatus === "grading") {
-          block += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+          block += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
         } else if (ex.answerStatus === "graded") {
           block += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
             '<div class="rte-display" style="margin-bottom:14px">' + (ex.answerHtml || "<em>(vide)</em>") + '</div>' +
@@ -2778,7 +2781,7 @@
       '</div>';
     var body;
     if (sheet.status === "processing") {
-      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini rédige ta fiche…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + '<span>Gemini rédige ta fiche…</span></div>';
     } else if (sheet.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(sheet.error || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -2829,7 +2832,7 @@
     var liveTimer = (s.status !== "reviewing" && !s.done) ? '<div class="ep-session-timer mono" id="ep-session-timer">⏱️ ' + dpFormatCountdown(Date.now() - s.startedAt) + '</div>' : "";
     var head = '<div class="page-head"><div><h1 class="page-title">' + esc(prep.title) + '</h1><p class="page-sub">Entraînement du ' + esc(epFormatDateFr(s.date)) + '</p></div>' + liveTimer + '</div>';
     if (s.status === "reviewing") {
-      renderShell(["examprep", prep.id], head + '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Studino analyse ta séance…</span></div>');
+      renderShell(["examprep", prep.id], head + '<div class="processing-box">' + genLogo() + '<span>Studino analyse ta séance…</span></div>');
       return;
     }
     if (s.done) {
@@ -2884,7 +2887,7 @@
         return '<label class="' + cls + '"' + attrs + '><input type="radio" ' + (s.answer === i ? "checked" : "") + ' readonly disabled><span>' + esc(c) + '</span></label>';
       }).join("");
     } else if (s.status === "grading") {
-      body += '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Correction en cours…</span></div>';
+      body += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
     } else if (s.status !== "graded") {
       body += '<div class="field">' + richEditorHtml("ep-open-answer", "Écris ton raisonnement et ta réponse…", s.answerHtml || "", item.kind === "exercise") + '</div>' +
         '<button class="btn btn-primary" style="width:auto" onclick="App.examPrepSubmitOpenAnswer()">Valider</button>';
@@ -2934,7 +2937,7 @@
       '</div></div>';
     var body;
     if (prep.planStatus === "processing") {
-      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini prépare ton planning de révision…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + '<span>Gemini prépare ton planning de révision…</span></div>';
     } else if (prep.planStatus === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(prep.planError || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -3006,7 +3009,7 @@
 
     var body;
     if (course.status === "processing") {
-      body = '<div class="processing-box">' + sprite("dinoBig", 6, { bob: true }) + '<span>Gemini analyse ton cours…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ton cours…</span></div>';
     } else if (course.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(course.error || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
