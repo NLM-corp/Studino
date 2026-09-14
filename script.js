@@ -592,6 +592,18 @@
     });
     return total;
   }
+  function epNormTopic(t) { return String(t || "").trim().toLowerCase().replace(/\s+/g, " "); }
+  function epEnsureTopics(prep) {
+    // Filet de sécurité pour les prépas créées avant l'ajout du baromètre (ou dont le champ topics
+    // s'est vidé pour une raison quelconque) : reconstruit la liste canonique à partir du planning
+    // déjà généré, sans avoir besoin de relancer un appel Gemini ni de tout régénérer.
+    if (!prep.topics || !prep.topics.length) {
+      var allTopics = [];
+      (prep.days || []).forEach(function (d) { (d.topics || []).forEach(function (t) { if (allTopics.indexOf(t) === -1) allTopics.push(t); }); });
+      prep.topics = allTopics;
+    }
+    if (!prep.topicMastery) prep.topicMastery = {};
+  }
   function epTopicMastery(prep, topic) {
     var t = prep.topicMastery && prep.topicMastery[topic];
     return t ? t.score : 0;
@@ -613,6 +625,7 @@
     prep.topicMastery[topic] = t;
   }
   function epReadinessPercent(prep) {
+    epEnsureTopics(prep);
     var topics = prep.topics || [];
     if (!topics.length) return 0;
     var total = 0;
@@ -686,10 +699,17 @@
     var review = { mastered: [], unclear: [], weak: [] };
     var readinessBefore = prep ? epReadinessPercent(prep) : 0;
     if (prep) {
+      epEnsureTopics(prep);
       prep.topicMastery = prep.topicMastery || {};
+      // Comparaison normalisée (espaces/casse) : l'IA recopie presque toujours la notion telle
+      // quelle, mais une différence mineure de formatage ne doit pas faire échouer le rattachement
+      // et empêcher tout mouvement du baromètre.
+      var topicByNorm = {};
+      (prep.topics || []).forEach(function (t) { topicByNorm[epNormTopic(t)] = t; });
       var topicByHistoryIdx = {};
       (mapping || []).forEach(function (m) {
-        if (s.history[m.index] && prep.topics && prep.topics.indexOf(m.topic) !== -1) topicByHistoryIdx[m.index] = m.topic;
+        var canon = topicByNorm[epNormTopic(m.topic)];
+        if (s.history[m.index] && canon) topicByHistoryIdx[m.index] = canon;
       });
       var touchedTopics = {};
       Object.keys(topicByHistoryIdx).forEach(function (idxStr) {
@@ -4647,6 +4667,7 @@
     startExamPrepDay: function (prepId) {
       var prep = epFind(prepId);
       if (!prep) return;
+      epEnsureTopics(prep);
       var today = epTodayStr();
       var dayEntry = prep.days.find(function (d) { return d.date === today; });
       if (!dayEntry) { toast("Pas de séance prévue aujourd'hui pour cette prépa"); return; }
@@ -4703,6 +4724,7 @@
       var s = epSession;
       if (!s) return;
       var prep = epFind(s.prepId);
+      if (prep) epEnsureTopics(prep);
       s.durationMs = Date.now() - s.startedAt;
       s.status = "reviewing";
       render();
