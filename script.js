@@ -1723,7 +1723,7 @@
 
   function renderDinoParkHub() {
     var dp = dpData();
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("dino", 4) + '<h1 class="page-title">Dino Park</h1></div><p class="page-sub">Ton île principale — choisis un portail pour explorer une zone.</p></div></div>';
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/DinoPark.png" alt=""><h1 class="page-title">Dino Park</h1></div><p class="page-sub">Ton île principale — choisis un portail pour explorer une zone.</p></div></div>';
     var needy = dpAttentionList();
     var alertBanner = needy.length ? '<div class="dp-hub-alert">⚠️ ' + needy.length + ' dino' + (needy.length > 1 ? "s ont besoin" : " a besoin") + ' d\'attention (faim ou maladie)' +
       '<button class="btn btn-sm btn-primary" onclick="App.dpSelectDino(\'' + needy[0].id + '\')">Voir</button></div>' : '';
@@ -2038,7 +2038,7 @@
   }
 
   function renderDinoTimeSetup() {
-    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("clock") + '<h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/DinoTIme.png" alt=""><h1 class="page-title">DinoTime</h1></div><p class="page-sub">Chronomètre ton temps de travail — tes dinos t\'accompagnent en arrière-plan.</p></div></div>';
     var tabsHtml = '<div class="tabs">' +
       '<button class="tab-btn ' + (dtState.tab !== "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'chrono\')">⏱️ Chrono simple</button>' +
       '<button class="tab-btn ' + (dtState.tab === "pomodoro" ? "active" : "") + '" onclick="App.dtSetTab(\'pomodoro\')">🍅 Pomorodosaure</button>' +
@@ -2548,7 +2548,7 @@
   function renderDashboard() {
     var subs = userData().subjects;
     var stats = computeStats();
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Le Nid</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/LeNid.png" alt=""><h1 class="page-title">Le Nid</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
       '<div style="display:flex;gap:10px">' +
       '<button class="btn btn-metal" style="width:auto" onclick="App.openRevisionSheetModal()">' + icon("doc") + ' Générer une fiche de révision</button>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button>' +
@@ -2677,7 +2677,7 @@
   /* ---------------- Importer un exercice ---------------- */
   function renderImportedExercisesPage() {
     var list = userData().importedExercises.slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Mes exercices</h1></div><p class="page-sub">Importe tes propres exercices (n\'importe quelle matière) et fais-les corriger par l\'IA.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/MesExos.png" alt=""><h1 class="page-title">Mes exercices</h1></div><p class="page-sub">Importe tes propres exercices (n\'importe quelle matière) et fais-les corriger par l\'IA.</p></div>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'exercice\')">' + icon("camera") + ' Importer un exercice</button></div>';
     var grid;
     if (!list.length) {
@@ -2794,7 +2794,7 @@
   /* ---------------- Prépa examens (pages) ---------------- */
   function renderExamPrepListPage() {
     var list = epData().slice().sort(function (a, b) { return a.examDate < b.examDate ? -1 : (a.examDate > b.examDate ? 1 : 0); });
-    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("calendar") + '<h1 class="page-title">Mission Contrôle</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/MissionControle.png" alt=""><h1 class="page-title">Mission Contrôle</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
       '<button class="btn btn-metal" style="width:auto" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
     var grid;
     if (!list.length) {
