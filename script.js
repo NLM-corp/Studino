@@ -2299,7 +2299,7 @@
 
   /* ---------------- Sidebar / Shell ---------------- */
   function breadcrumbTrail(parts) {
-    var trail = [{ label: "Bibliothèque", hash: "#/" }];
+    var trail = [{ label: "Le Nid", hash: "#/" }];
     if (parts[0] === "subject" && parts[1]) {
       var s = findSubject(parts[1]);
       if (s) trail.push({ label: s.name, hash: "#/subject/" + s.id });
@@ -2340,7 +2340,7 @@
       var rs = userData().revisionSheets.find(function (x) { return x.id === parts[1]; });
       if (rs) trail.push({ label: rs.title });
     } else if (parts[0] === "examprep") {
-      trail.push({ label: "Prépa examens", hash: "#/examprep" });
+      trail.push({ label: "Mission Contrôle", hash: "#/examprep" });
       if (parts[1]) {
         var ep = epFind(parts[1]);
         if (ep) trail.push({ label: ep.title });
@@ -2375,11 +2375,11 @@
       '<div class="sidebar-top"><div class="wordmark" style="font-size:13px">' + sprite("dino", 3, { style: "margin-right:4px;" }) + 'Studino<span class="dot">.</span></div>' +
       '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
       '</div>' +
-      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'">' + icon("home") + ' Bibliothèque</button>' +
+      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'">' + icon("home") + ' Le Nid</button>' +
       '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'">' + icon("camera") + ' Mes exercices</button>' +
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()">' + sprite("dino", 3, { style: "margin-right:2px;" }) + ' Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()">' + icon("clock") + ' DinoTime</button>' +
-      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'">' + icon("calendar") + ' Prépa examens</button>' +
+      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'">' + icon("calendar") + ' Mission Contrôle</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -2528,7 +2528,7 @@
   function renderDashboard() {
     var subs = userData().subjects;
     var stats = computeStats();
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Bibliothèque</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Le Nid</h1></div><p class="page-sub">Toutes tes matières, rangées et prêtes à réviser.</p></div>' +
       '<div style="display:flex;gap:10px">' +
       '<button class="btn btn-metal" style="width:auto" onclick="App.openRevisionSheetModal()">' + icon("doc") + ' Générer une fiche de révision</button>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'subject\')">' + icon("plus") + ' Nouvelle matière</button>' +
@@ -2774,7 +2774,7 @@
   /* ---------------- Prépa examens (pages) ---------------- */
   function renderExamPrepListPage() {
     var list = epData().slice().sort(function (a, b) { return a.examDate < b.examDate ? -1 : (a.examDate > b.examDate ? 1 : 0); });
-    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("calendar") + '<h1 class="page-title">Prépa examens</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("calendar") + '<h1 class="page-title">Mission Contrôle</h1></div><p class="page-sub">Étale tes révisions sur plusieurs jours au lieu de tout faire la veille.</p></div>' +
       '<button class="btn btn-metal" style="width:auto" onclick="App.openExamPrepModal()">' + icon("plus") + ' Nouvelle prépa</button></div>';
     var grid;
     if (!list.length) {
