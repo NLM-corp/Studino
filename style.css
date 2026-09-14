@@ -152,6 +152,7 @@
   .nav-item:hover { background: var(--surface-2); }
   .nav-item.active { background: var(--accent-soft); color: var(--accent-strong); }
   .nav-icon { width: 17px; height: 17px; flex: none; opacity: 0.85; }
+  .nav-icon-img { width: 20px; height: 20px; flex: none; object-fit: contain; }
   .sidebar-bottom { border-top: 2px dashed var(--border-soft); padding-top: 12px; margin-top: auto; }
   .user-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; }
   .avatar { width: 30px; height: 30px; border-radius: 8px; background: var(--leaf); color: var(--surface); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; border: 2px solid var(--leaf-dark); }

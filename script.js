@@ -2375,11 +2375,11 @@
       '<div class="sidebar-top"><div class="wordmark" style="font-size:13px">' + sprite("dino", 3, { style: "margin-right:4px;" }) + 'Studino<span class="dot">.</span></div>' +
       '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
       '</div>' +
-      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'">' + icon("home") + ' Le Nid</button>' +
-      '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'">' + icon("camera") + ' Mes exercices</button>' +
-      '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()">' + sprite("dino", 3, { style: "margin-right:2px;" }) + ' Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
-      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()">' + icon("clock") + ' DinoTime</button>' +
-      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'">' + icon("calendar") + ' Mission Contrôle</button>' +
+      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/LeNid.png" alt=""> Le Nid</button>' +
+      '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'"><img class="nav-icon-img" src="assets/objects/ui/MesExos.png" alt=""> Mes exercices</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTIme.png" alt=""> DinoTime</button>' +
+      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
