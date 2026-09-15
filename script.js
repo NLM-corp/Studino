@@ -3936,7 +3936,7 @@
         '<div class="field"><label>Photos ou PDF du cours (une ou plusieurs pages)</label>' +
         '<div class="file-thumbs">' +
         modal.imagePreviews.map(fileThumbHtml).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'courseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'courseFileInput\').click()" ondragover="App.handleDragOver(event)" ondragleave="App.handleDragLeave(event)" ondrop="App.handleFileDrop(event)">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer ou glisser des images/PDF ici") + '</div></div>' +
         '</div>' +
         '<input id="courseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="field"><label>Titre du cours</label><input name="title" placeholder="Ex. Le théorème de Pythagore" required autofocus></div>' +
@@ -3953,7 +3953,7 @@
         '<div class="field"><label>Nouvelles photos ou PDF</label>' +
         '<div class="file-thumbs">' +
         modal.imagePreviews.map(fileThumbHtml).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'addDocsFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'addDocsFileInput\').click()" ondragover="App.handleDragOver(event)" ondragleave="App.handleDragLeave(event)" ondrop="App.handleFileDrop(event)">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer ou glisser des images/PDF ici") + '</div></div>' +
         '</div>' +
         '<input id="addDocsFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Ajouter et régénérer</button></div>' +
@@ -4075,7 +4075,7 @@
         '<div class="field"><label>Photos ou PDF de l\'exercice</label>' +
         '<div class="file-thumbs">' +
         modal.imagePreviews.map(fileThumbHtml).join("") +
-        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'exerciseFileInput\').click()">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer pour choisir des images ou PDF") + '</div></div>' +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'exerciseFileInput\').click()" ondragover="App.handleDragOver(event)" ondragleave="App.handleDragLeave(event)" ondrop="App.handleFileDrop(event)">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer ou glisser des images/PDF ici") + '</div></div>' +
         '</div>' +
         '<input id="exerciseFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
         '<div class="field"><label>Titre (optionnel)</label><input name="title" placeholder="Ex. Exercice de géométrie" autofocus></div>' +
@@ -4300,8 +4300,11 @@
     },
     changeModalTheme: function (themeId) { modal.themeId = themeId; modal.chapterId = null; render(); },
     handleFile: function (e) {
-      var files = Array.prototype.slice.call(e.target.files || []);
-      if (!files.length) return;
+      App.processDroppedFiles(Array.prototype.slice.call(e.target.files || []));
+      e.target.value = "";
+    },
+    processDroppedFiles: function (files) {
+      if (!files || !files.length) return;
       files.forEach(function (file) {
         processImageFile(file).then(function (dataUrl) {
           modal.imagePreviews.push(dataUrl);
@@ -4310,7 +4313,19 @@
           toast((err && err.message) || ("Impossible de lire " + file.name));
         });
       });
-      e.target.value = "";
+    },
+    handleDragOver: function (e) {
+      e.preventDefault();
+      e.currentTarget.classList.add("file-drop-over");
+    },
+    handleDragLeave: function (e) {
+      e.currentTarget.classList.remove("file-drop-over");
+    },
+    handleFileDrop: function (e) {
+      e.preventDefault();
+      e.currentTarget.classList.remove("file-drop-over");
+      var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
+      App.processDroppedFiles(files);
     },
     removeCourseImage: function (index) {
       modal.imagePreviews.splice(index, 1);
