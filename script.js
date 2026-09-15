@@ -54,6 +54,25 @@
         delete en.statement; delete en.solution; delete en.answerHtml; delete en.answerText; delete en.answerStatus; delete en.correct; delete en.feedback;
       }
     });
+    // Migration (une seule fois par cours/exercice) : avant l'extraction des schémas en entrées
+    // séparées et supprimables, une image de figure nécessaire était collée directement en base64
+    // dans le Markdown — ça gonflait le stockage sans qu'aucun bouton ne puisse la retirer. On la
+    // retire simplement ici (le texte reste lisible, seule l'image intégrée disparaît).
+    DB.data[u].subjects.forEach(function (s) {
+      s.themes.forEach(function (t) { t.chapters.forEach(function (c) { c.courses.forEach(function (co) {
+        if (!co.figuresMigrated) {
+          co.transcription = stripOldInlineFigures(co.transcription);
+          co.explanation = stripOldInlineFigures(co.explanation);
+          co.figuresMigrated = true;
+        }
+      }); }); });
+    });
+    DB.data[u].importedExercises.forEach(function (en) {
+      if (!en.figuresMigrated) {
+        (en.exercises || []).forEach(function (ex) { ex.statement = stripOldInlineFigures(ex.statement); });
+        en.figuresMigrated = true;
+      }
+    });
     return DB.data[u];
   }
 
@@ -173,6 +192,12 @@
   }
   function stripFigureMarkdown(text) {
     return String(text || "").replace(/!\[[^\]]*\]\((?:data:[^)]+|figure:[^)]+)\)/g, "");
+  }
+  function stripOldInlineFigures(text) {
+    // Migration one-shot uniquement : ne retire QUE l'ancien format (image encodée en base64
+    // directement dans le texte), jamais les références "figure:ID" du nouveau système déjà
+    // gérables individuellement — celles-là n'ont pas besoin d'être migrées.
+    return String(text || "").replace(/!\[[^\]]*\]\(data:[^)]+\)/g, "");
   }
   function decodeTiffFile(file) {
     if (typeof UTIF === "undefined") return Promise.reject(new Error("Le support TIFF n'a pas pu se charger."));
@@ -919,9 +944,8 @@
         course.status = "ready";
         // Les photos/PDF source ne sont plus utiles une fois le cours généré : la retranscription
         // sert désormais de mémoire pour "Régénérer"/"Ajouter des documents", donc plus la peine
-        // d'accumuler les images dans le stockage local (voir "Libérer l'espace", devenu automatique).
+        // d'accumuler les images dans le stockage local (c'est automatique, pas besoin de bouton).
         course.images = [];
-        course.imagesCleared = true;
         saveDB();
         toast("Cours généré · " + course.title);
         render();
@@ -3060,7 +3084,6 @@
         '<div style="display:flex;gap:10px;margin-left:auto">' +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
-        (course.status === "ready" && course.images && course.images.length ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openFreeCourseSpaceModal(\'' + course.id + '\')">' + icon("trash") + ' Libérer l\'espace</button>' : "") +
         '</div>'
       ) : "") +
       '</div>';
@@ -4017,10 +4040,6 @@
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
-    } else if (modal.type === "confirmFreeSpace") {
-      inner = '<h3>Libérer l\'espace de ce cours ?</h3>' +
-        '<p class="modal-warn">Les photos/PDF source seront définitivement supprimés. La retranscription, l\'explication, les flashcards, le contrôle et les exercices restent intacts, et « Régénérer »/« Ajouter des documents » continueront de marcher (à partir de la retranscription). <strong>Seuls les schémas/graphiques éventuellement extraits de ces photos ne pourront plus être recadrés à nouveau plus tard.</strong></p>' +
-        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.confirmFreeCourseSpace()">Libérer l\'espace</button></div>';
     } else if (modal.type === "renameItem") {
       inner = '<h3>Renommer</h3><form onsubmit="App.confirmRename(event)">' +
         '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
@@ -4531,23 +4550,6 @@
         runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, [], stripFigureMarkdown(loc.course.transcription));
       }
     },
-    openFreeCourseSpaceModal: function (courseId) {
-      var loc = locateCourse(courseId);
-      if (!loc) return;
-      modal = { type: "confirmFreeSpace", courseId: courseId };
-      render();
-    },
-    confirmFreeCourseSpace: function () {
-      var loc = locateCourse(modal.courseId);
-      if (loc) {
-        loc.course.images = [];
-        loc.course.imagesCleared = true;
-        saveDB();
-        toast("Espace libéré");
-      }
-      modal = null;
-      render();
-    },
     openAddCourseDocsModal: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
@@ -4565,7 +4567,6 @@
       // On ne garde que ce dernier lot de photos (pas la peine d'accumuler les anciennes : leur
       // contenu est déjà fusionné dans la transcription, qui sert de mémoire du cours à la place).
       loc.course.images = newImages;
-      loc.course.imagesCleared = false;
       saveDB();
       modal = null;
       navigate("#/course/" + loc.course.id);
