@@ -10,7 +10,18 @@
     } catch (e) {}
     return { users: {}, currentUser: null, data: {} };
   }
-  function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
+  function saveDB() {
+    try {
+      localStorage.setItem(DB_KEY, JSON.stringify(DB));
+    } catch (err) {
+      // Le cas le plus probable est le stockage plein (ex. un gros PDF importé tel quel, sans la
+      // compression appliquée aux photos) : sans ça, l'échec était totalement silencieux — l'action
+      // en cours (fermeture de modale, navigation...) s'arrêtait net sans aucun message.
+      console.error("Échec de la sauvegarde :", err);
+      toast("⚠️ Sauvegarde impossible (stockage plein ?). Essaie avec un PDF/des photos plus légers, ou supprime d'anciens cours pour libérer de la place.");
+      throw err;
+    }
+  }
   var DB = loadDB();
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -5323,24 +5334,32 @@
 
   /* ---------------- Root render / router ---------------- */
   function render() {
-    dtStopWalkLoop();
+    // Le nettoyage des overlays passe AVANT tout le reste (et hors du try/catch) : même si une erreur
+    // survient plus loin dans le rendu de la page, une modale ouverte ne doit jamais rester bloquée à
+    // l'écran alors que l'action a déjà eu lieu (ex. génération d'un cours démarrée en arrière-plan).
     document.querySelectorAll(".modal-overlay").forEach(function (el) { el.remove(); });
     document.querySelectorAll(".dp-merchant-overlay").forEach(function (el) { el.remove(); });
-    if (!DB.currentUser) { renderAuth(parseHash()[0] === "signup" ? "signup" : "login"); return; }
-    var parts = parseHash();
-    if (parts.length === 0) { renderDashboard(); return; }
-    if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3] && parts[4] === "chapter" && parts[5]) { renderChapterPage(parts[1], parts[3], parts[5]); return; }
-    if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3]) { renderThemePage(parts[1], parts[3]); return; }
-    if (parts[0] === "subject" && parts[1]) { renderSubjectPage(parts[1]); return; }
-    if (parts[0] === "course" && parts[1]) { renderCoursePage(parts[1], parts[2]); return; }
-    if (parts[0] === "exercices" && parts[1]) { renderImportedExercisePage(parts[1]); return; }
-    if (parts[0] === "exercices") { renderImportedExercisesPage(); return; }
-    if (parts[0] === "dinopark") { renderDinoParkPage(); return; }
-    if (parts[0] === "dinotime") { renderDinoTimePage(); return; }
-    if (parts[0] === "revision" && parts[1]) { renderRevisionSheetPage(parts[1]); return; }
-    if (parts[0] === "examprep" && parts[1]) { renderExamPrepDetailPage(parts[1]); return; }
-    if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
-    renderDashboard();
+    try {
+      dtStopWalkLoop();
+      if (!DB.currentUser) { renderAuth(parseHash()[0] === "signup" ? "signup" : "login"); return; }
+      var parts = parseHash();
+      if (parts.length === 0) { renderDashboard(); return; }
+      if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3] && parts[4] === "chapter" && parts[5]) { renderChapterPage(parts[1], parts[3], parts[5]); return; }
+      if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3]) { renderThemePage(parts[1], parts[3]); return; }
+      if (parts[0] === "subject" && parts[1]) { renderSubjectPage(parts[1]); return; }
+      if (parts[0] === "course" && parts[1]) { renderCoursePage(parts[1], parts[2]); return; }
+      if (parts[0] === "exercices" && parts[1]) { renderImportedExercisePage(parts[1]); return; }
+      if (parts[0] === "exercices") { renderImportedExercisesPage(); return; }
+      if (parts[0] === "dinopark") { renderDinoParkPage(); return; }
+      if (parts[0] === "dinotime") { renderDinoTimePage(); return; }
+      if (parts[0] === "revision" && parts[1]) { renderRevisionSheetPage(parts[1]); return; }
+      if (parts[0] === "examprep" && parts[1]) { renderExamPrepDetailPage(parts[1]); return; }
+      if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
+      renderDashboard();
+    } catch (err) {
+      console.error("Erreur de rendu :", err);
+      toast("Un problème d'affichage est survenu — réessaie ou recharge la page.");
+    }
   }
 
   (function initTheme() {
