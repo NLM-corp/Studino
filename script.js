@@ -140,17 +140,30 @@
     });
   }
   function resolveFigures(figures, images) {
+    // Chaque figure détectée est croquée depuis la photo source puis stockée à part (course.figures /
+    // entry.figures), référencée dans le texte par un simple jeton "figure:ID" plutôt que par son
+    // image encodée en base64 directement dans le Markdown — ça permet à l'utilisateur de supprimer
+    // une image plus tard (bouton "Supprimer" dédié) sans devoir toucher au texte du cours/exercice :
+    // la référence reste, elle affiche juste "schéma supprimé" une fois l'entrée retirée de la liste.
     var list = figures || [];
     return Promise.all(list.map(function (fig) {
       var src = images[fig.imageIndex];
       if (!src || isPdfDataUrl(src) || !Array.isArray(fig.box) || fig.box.length !== 4) return Promise.resolve(null);
       return cropImageRegion(src, fig.box).catch(function () { return null; });
     })).then(function (crops) {
-      return list.map(function (fig, i) {
+      var subs = [], stored = [];
+      list.forEach(function (fig, i) {
         var cropUrl = crops[i];
         var caption = String(fig.caption || "").replace(/[[\]]/g, "");
-        return { placeholder: fig.placeholder || "", replacement: cropUrl ? ("![" + caption + "](" + cropUrl + ")") : "" };
+        if (cropUrl) {
+          var fid = uid();
+          stored.push({ id: fid, image: cropUrl, caption: caption });
+          subs.push({ placeholder: fig.placeholder || "", replacement: "![" + caption + "](figure:" + fid + ")" });
+        } else {
+          subs.push({ placeholder: fig.placeholder || "", replacement: "" });
+        }
       });
+      return { subs: subs, figures: stored };
     });
   }
   function substituteFigures(text, subs) {
@@ -159,7 +172,7 @@
     return out;
   }
   function stripFigureMarkdown(text) {
-    return String(text || "").replace(/!\[[^\]]*\]\(data:[^)]+\)/g, "");
+    return String(text || "").replace(/!\[[^\]]*\]\((?:data:[^)]+|figure:[^)]+)\)/g, "");
   }
   function decodeTiffFile(file) {
     if (typeof UTIF === "undefined") return Promise.reject(new Error("Le support TIFF n'a pas pu se charger."));
@@ -857,11 +870,16 @@
     saveDB(); render();
     generateImportedExercise(entry.images).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
-      return resolveFigures(data.figures, entry.images).then(function (subs) {
+      return resolveFigures(data.figures, entry.images).then(function (resolved) {
         entry.exercises = (data.exercises || []).map(function (ex) {
-          return { statement: substituteFigures(ex.statement || "", subs), solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+          return { statement: substituteFigures(ex.statement || "", resolved.subs), solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
         });
+        entry.figures = resolved.figures;
         entry.status = "ready";
+        // Comme pour les cours : les photos/PDF source ne servent plus une fois l'exercice généré
+        // (l'énoncé les a déjà retranscrits, et les schémas nécessaires sont conservés séparément
+        // dans entry.figures, supprimables individuellement).
+        entry.images = [];
         saveDB();
         toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
         render();
@@ -883,9 +901,13 @@
     saveDB(); render();
     var images = imagesOverride || course.images;
     generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription).then(function (data) {
-      return resolveFigures(data.figures, images).then(function (subs) {
-        course.transcription = substituteFigures(data.transcription, subs);
-        course.explanation = substituteFigures(data.explanation, subs);
+      return resolveFigures(data.figures, images).then(function (resolved) {
+        course.transcription = substituteFigures(data.transcription, resolved.subs);
+        course.explanation = substituteFigures(data.explanation, resolved.subs);
+        // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
+        // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
+        // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
+        course.figures = resolved.figures;
         course.videos = (data.videoQueries || []).map(function (v) {
           return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
         });
@@ -925,6 +947,8 @@
   var quizState = {}; // per courseId: { idx, answers: [] }
   var fcState = {}; // per courseId: { idx, flipped }
   var courseEditState = null; // { courseId, field: "transcription"|"explanation" } — édition du texte source d'un cours
+  var courseFiguresOpen = {}; // per courseId: bool — panneau des schémas/images du cours déplié ou non
+  var entryFiguresOpen = {}; // per importedExercise id: idem, pour les exercices importés
   var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
   var dtState = { mode: "setup", tab: "chrono", durationMin: 25, enclosureId: null, pomoWork: 25, pomoBreak: 5, pomoCycles: 4, pomoDinoId: null }; // DinoTime sub-navigation
   var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
@@ -2755,7 +2779,7 @@
       var allGraded = entry.exercises.length && entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; });
       var col = entry.exercises.map(function (ex, i) {
         var block = (multi ? '<div class="dp-exercise-label" style="margin-bottom:8px">Exercice ' + (i + 1) + ' / ' + entry.exercises.length + '</div>' : '') +
-          '<div class="prose">' + mdToHtml(ex.statement) + '</div>';
+          '<div class="prose">' + mdToHtml(ex.statement, entry.figures) + '</div>';
         if (ex.answerStatus === "grading") {
           block += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
         } else if (ex.answerStatus === "graded") {
@@ -2773,7 +2797,8 @@
         }
         return '<div class="dp-exercise-item"' + (multi ? ' style="margin-bottom:26px;padding-bottom:22px;border-bottom:2px solid var(--border-soft)"' : '') + '>' + block + '</div>';
       }).join("") +
-        (allGraded ? '<button class="btn btn-ghost" style="width:auto" onclick="App.downloadImportedExercisePdf(\'' + entry.id + '\')">⬇️ Télécharger en PDF</button>' : "");
+        (allGraded ? '<button class="btn btn-ghost" style="width:auto" onclick="App.downloadImportedExercisePdf(\'' + entry.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
+        figuresPanelHtml(entry.figures, entryFiguresOpen, entry.id, "toggleEntryFigures", "deleteEntryFigure");
       body = '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + col + '</div>' + dinoCompanionHtml() + '</div>';
     }
     renderShell(["exercices", exId], head + body, { narrow: entry.status !== "ready" });
@@ -3009,6 +3034,19 @@
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
 
+  function figuresPanelHtml(figures, openState, entityId, toggleAction, deleteAction) {
+    if (!figures || !figures.length) return "";
+    var toggle = '<button class="ep-day-fc-toggle" style="margin:14px 0 4px;display:inline-block" onclick="App.' + toggleAction + '(\'' + entityId + '\')">🖼️ Images/schémas (' + figures.length + ')</button>';
+    if (!openState[entityId]) return toggle;
+    var grid = figures.map(function (f) {
+      return '<div class="course-figure-item">' +
+        '<img src="' + f.image + '" alt="" onclick="App.openFigureLightbox(this.src)">' +
+        (f.caption ? '<div class="course-figure-caption">' + esc(f.caption) + '</div>' : "") +
+        '<button class="btn btn-ghost btn-sm" style="width:100%" onclick="App.' + deleteAction + '(\'' + entityId + '\',\'' + f.id + '\')">' + icon("trash") + ' Supprimer</button>' +
+        '</div>';
+    }).join("");
+    return toggle + '<div class="course-figures-grid">' + grid + '</div>';
+  }
   function renderCoursePage(courseId, tab) {
     var loc = locateCourse(courseId);
     if (!loc) { navigate("#/"); return; }
@@ -3040,7 +3078,7 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryGeneration(\'' + course.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      body = renderTabBody(course, tab, loc);
+      body = renderTabBody(course, tab, loc) + figuresPanelHtml(course.figures, courseFiguresOpen, course.id, "toggleCourseFigures", "deleteCourseFigure");
     }
     renderShell(["course", courseId, null, tab], head + tabsHtml + body, { narrow: true });
   }
@@ -3070,7 +3108,7 @@
     });
     return { text: text, chips: chips };
   }
-  function mdToHtml(rawMd) {
+  function mdToHtml(rawMd, figures) {
     var extracted = mdExtractMath(rawMd);
     var md = extracted.text;
     var lines = md.split("\n");
@@ -3101,7 +3139,17 @@
       var imgLine = /^!\[([^\]]*)\]\((\S+)\)\s*$/.exec(line.trim());
       if (imgLine) {
         if (inList) { html += "</ul>"; inList = false; }
-        html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+        var figRef = /^figure:(.+)$/.exec(imgLine[2]);
+        if (figRef) {
+          var refFig = (figures || []).find(function (f) { return f.id === figRef[1]; });
+          if (refFig) {
+            html += '<figure class="prose-figure"><img src="' + refFig.image + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+          } else {
+            html += '<div class="prose-figure-removed">🚫 Schéma supprimé pour libérer de l\'espace' + (imgLine[1] ? " — " + esc(imgLine[1]) : "") + '</div>';
+          }
+        } else {
+          html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+        }
       }
       else if (/^#{2,6}\s*/.test(line.trim())) {
         if (inList) { html += "</ul>"; inList = false; }
@@ -3626,7 +3674,7 @@
         '</div>';
     }
     var fieldValue = field === "transcription" ? course.transcription : course.explanation;
-    return '<div class="prose prose-lesson">' + mdToHtml(fieldValue) + '</div>' +
+    return '<div class="prose prose-lesson">' + mdToHtml(fieldValue, course.figures) + '</div>' +
       '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>';
   }
   function renderTabBody(course, tab, loc) {
@@ -4881,7 +4929,7 @@
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
       if (!entry || !entry.exercises.length || !entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; })) return;
       var html = entry.exercises.map(function (ex, i) {
-        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement), ex.answerHtml, ex.correct, ex.feedback, mdToHtml(ex.solution));
+        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.correct, ex.feedback, mdToHtml(ex.solution));
       }).join("");
       printAndDownload(html);
     },
@@ -5324,6 +5372,24 @@
       saveDB();
       courseEditState = null;
       toast("Modifications enregistrées");
+      render();
+    },
+    toggleCourseFigures: function (courseId) { courseFiguresOpen[courseId] = !courseFiguresOpen[courseId]; render(); },
+    deleteCourseFigure: function (courseId, figureId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      loc.course.figures = (loc.course.figures || []).filter(function (f) { return f.id !== figureId; });
+      saveDB();
+      toast("Image supprimée");
+      render();
+    },
+    toggleEntryFigures: function (entryId) { entryFiguresOpen[entryId] = !entryFiguresOpen[entryId]; render(); },
+    deleteEntryFigure: function (entryId, figureId) {
+      var entry = userData().importedExercises.find(function (x) { return x.id === entryId; });
+      if (!entry) return;
+      entry.figures = (entry.figures || []).filter(function (f) { return f.id !== figureId; });
+      saveDB();
+      toast("Image supprimée");
       render();
     },
     flipCard: function (courseId) {
