@@ -72,11 +72,15 @@
     // séparées et supprimables, une image de figure nécessaire était collée directement en base64
     // dans le Markdown — ça gonflait le stockage sans qu'aucun bouton ne puisse la retirer. On la
     // retire simplement ici (le texte reste lisible, seule l'image intégrée disparaît).
+    // Cette même passe unique en profite aussi pour vider les photos/PDF source des cours déjà
+    // prêts générés avant l'auto-nettoyage : celui-ci ne s'exécutait qu'à la fin d'une (re)génération,
+    // donc un cours jamais régénéré depuis gardait sa miniature/ses images d'origine indéfiniment.
     DB.data[u].subjects.forEach(function (s) {
       s.themes.forEach(function (t) { t.chapters.forEach(function (c) { c.courses.forEach(function (co) {
         if (!co.figuresMigrated) {
           co.transcription = stripOldInlineFigures(co.transcription);
           co.explanation = stripOldInlineFigures(co.explanation);
+          if (co.status === "ready") co.images = [];
           co.figuresMigrated = true;
         }
       }); }); });
@@ -84,6 +88,7 @@
     DB.data[u].importedExercises.forEach(function (en) {
       if (!en.figuresMigrated) {
         (en.exercises || []).forEach(function (ex) { ex.statement = stripOldInlineFigures(ex.statement); });
+        if (en.status === "ready") en.images = [];
         en.figuresMigrated = true;
       }
     });
