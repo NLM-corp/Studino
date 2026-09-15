@@ -1,36 +1,98 @@
 ﻿(function () {
   "use strict";
-  var DB_KEY = "recto_v1";
+  var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
+  var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
-  /* ---------------- Storage ---------------- */
-  function loadDB() {
-    try {
-      var raw = localStorage.getItem(DB_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) {}
-    return { users: {}, currentUser: null, data: {} };
+  /* ---------------- Storage : IndexedDB (bien plus de place que les ~5-10 Mo de localStorage),
+     avec repli automatique sur localStorage si IndexedDB est indisponible ---------------- */
+  var idbInstance = null;
+  function idbOpen() {
+    if (idbInstance) return Promise.resolve(idbInstance);
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("IndexedDB indisponible")); return; }
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = function () { idbInstance = req.result; resolve(idbInstance); };
+      req.onerror = function () { reject(req.error); };
+    });
   }
+  function idbGet(key) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, "readonly");
+        var req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+  function idbSet(key, value) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  var DB = { users: {}, currentUser: null, data: {} };
+  var dbUsesLocalStorageFallback = false;
   function saveDB() {
-    try {
-      localStorage.setItem(DB_KEY, JSON.stringify(DB));
-    } catch (err) {
-      // Le cas le plus probable est le stockage plein (ex. un gros PDF importé tel quel, sans la
-      // compression appliquée aux photos) : sans ça, l'échec était totalement silencieux — l'action
-      // en cours (fermeture de modale, navigation...) s'arrêtait net sans aucun message.
-      console.error("Échec de la sauvegarde :", err);
-      toast("⚠️ Sauvegarde impossible (stockage plein ?). Essaie avec un PDF/des photos plus légers, ou supprime d'anciens cours pour libérer de la place.");
-      throw err;
+    if (dbUsesLocalStorageFallback) {
+      try {
+        localStorage.setItem(DB_KEY, JSON.stringify(DB));
+      } catch (err) {
+        console.error("Échec de la sauvegarde :", err);
+        toast("⚠️ Sauvegarde impossible (stockage plein ?). Essaie avec un PDF/des photos plus légers, ou supprime d'anciens cours pour libérer de la place.");
+      }
+      return;
     }
+    idbSet(IDB_ENTRY, DB).catch(function (err) {
+      console.error("Échec de la sauvegarde :", err);
+      toast("⚠️ Sauvegarde impossible. " + (err && err.message ? err.message : "Réessaie."));
+    });
   }
-  var DB = loadDB();
+  function initDB() {
+    return idbGet(IDB_ENTRY).then(function (stored) {
+      if (stored) { DB = stored; return; }
+      // Premier lancement avec IndexedDB : on récupère les données de l'ancien localStorage si
+      // elles existent, on les sauvegarde dans IndexedDB, puis on libère l'ancien stockage.
+      var raw = null;
+      try { raw = localStorage.getItem(DB_KEY); } catch (e) {}
+      if (raw) { try { DB = JSON.parse(raw); } catch (e) {} }
+      return idbSet(IDB_ENTRY, DB).then(function () {
+        try { localStorage.removeItem(DB_KEY); } catch (e) {}
+      });
+    }).catch(function (err) {
+      // IndexedDB indisponible (navigateur trop ancien, mode privé très restrictif...) : on retombe
+      // sur l'ancien système localStorage plutôt que de bloquer complètement l'application.
+      console.error("IndexedDB indisponible, repli sur localStorage :", err);
+      dbUsesLocalStorageFallback = true;
+      try {
+        var raw2 = localStorage.getItem(DB_KEY);
+        if (raw2) DB = JSON.parse(raw2);
+      } catch (e) {}
+    });
+  }
 
-  var STORAGE_QUOTA_BYTES = 5 * 1024 * 1024; // 5 Mo — limite typique de localStorage (varie selon le navigateur, donc affiché comme une estimation)
+  var storageEstimateCache = null;
+  function refreshStorageEstimate() {
+    if (!(navigator.storage && navigator.storage.estimate)) return;
+    navigator.storage.estimate().then(function (est) {
+      storageEstimateCache = { usedBytes: est.usage || 0, quotaBytes: est.quota || 0 };
+      if (modal && modal.type === "settings") renderModal();
+    }).catch(function () {});
+  }
   function storageUsageInfo() {
-    var raw = "";
-    try { raw = localStorage.getItem(DB_KEY) || ""; } catch (e) {}
-    var usedBytes;
-    try { usedBytes = new Blob([raw]).size; } catch (e) { usedBytes = raw.length; }
-    return { usedBytes: usedBytes, quotaBytes: STORAGE_QUOTA_BYTES, pct: Math.min(100, Math.round((usedBytes / STORAGE_QUOTA_BYTES) * 100)) };
+    if (storageEstimateCache && storageEstimateCache.quotaBytes) {
+      var used = storageEstimateCache.usedBytes, quota = storageEstimateCache.quotaBytes;
+      return { usedBytes: used, quotaBytes: quota, pct: Math.min(100, Math.round((used / quota) * 100)), estimating: false };
+    }
+    var fallbackUsed = 0;
+    try { fallbackUsed = new Blob([JSON.stringify(DB)]).size; } catch (e) {}
+    return { usedBytes: fallbackUsed, quotaBytes: 0, pct: 0, estimating: true };
   }
   function formatBytes(n) {
     if (n < 1024) return n + " o";
@@ -4073,17 +4135,21 @@
         '</form>';
     } else if (modal.type === "settings") {
       var storageInfo = storageUsageInfo();
-      var storageTier = storageInfo.pct < 60 ? "ok" : storageInfo.pct < 85 ? "warn" : "danger";
+      var storageBarHtml;
+      if (storageInfo.estimating) {
+        storageBarHtml = '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés — calcul de l\'espace disponible…</div>';
+      } else {
+        var storageTier = storageInfo.pct < 60 ? "ok" : storageInfo.pct < 85 ? "warn" : "danger";
+        storageBarHtml = '<div class="storage-bar"><div class="storage-bar-fill storage-bar-' + storageTier + '" style="width:' + storageInfo.pct + '%"></div></div>' +
+          '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés sur ' + formatBytes(storageInfo.quotaBytes) + ' disponibles (' + storageInfo.pct + '%)</div>';
+      }
       inner = '<h3>Paramètres</h3>' +
         '<div class="field"><label>Clé API Gemini</label>' +
         '<div style="display:flex;gap:8px;align-items:center">' +
         '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
         '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openApiKeyModal()">🔑 ' + (getApiKey() ? "Modifier" : "Ajouter") + '</button>' +
         '</div></div>' +
-        '<div class="field"><label>Stockage utilisé</label>' +
-        '<div class="storage-bar"><div class="storage-bar-fill storage-bar-' + storageTier + '" style="width:' + storageInfo.pct + '%"></div></div>' +
-        '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés sur ~' + formatBytes(storageInfo.quotaBytes) + ' (' + storageInfo.pct + '%) — limite estimée, variable selon le navigateur</div>' +
-        '</div>' +
+        '<div class="field"><label>Stockage utilisé</label>' + storageBarHtml + '</div>' +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
@@ -4960,7 +5026,7 @@
       printAndDownload(html);
     },
     openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
-    openSettingsModal: function () { modal = { type: "settings" }; render(); },
+    openSettingsModal: function () { modal = { type: "settings" }; refreshStorageEstimate(); render(); },
     setVolumeMusic: function (v) { localStorage.setItem(VOLUME_MUSIC_STORAGE, String(v)); },
     setVolumeSfx: function (v) { localStorage.setItem(VOLUME_SFX_STORAGE, String(v)); },
     previewSfxVolume: function () { dpPlayMerchantSound("welcome"); },
@@ -5533,36 +5599,43 @@
     document.documentElement.setAttribute("data-app-theme", theme);
   })();
 
-  window.addEventListener("hashchange", render);
-  window.addEventListener("resize", syncTopbarHeightVar);
-  render();
+  // Le chargement de la base (IndexedDB, potentiellement avec migration depuis l'ancien localStorage
+  // au tout premier lancement) est asynchrone : on affiche un écran d'attente le temps que ça charge,
+  // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
+  var appEl = document.getElementById("app");
+  if (appEl) appEl.innerHTML = '<div class="processing-box" style="min-height:100vh;justify-content:center">' + genLogo() + '<span>Chargement…</span></div>';
+  initDB().then(function () {
+    window.addEventListener("hashchange", render);
+    window.addEventListener("resize", syncTopbarHeightVar);
+    render();
 
-  setInterval(function () {
-    if (!DB.currentUser) return;
-    ["dp-shop-timer", "dp-shop-timer-mini"].forEach(function (elId) {
-      var el = document.getElementById(elId);
-      if (!el) return;
-      var zoneId = el.getAttribute("data-zone");
-      var shop = dpData().shops[zoneId];
-      if (!shop) return;
-      var remain = shop.expiresAt - Date.now();
-      if (remain <= 0) { render(); return; }
-      el.textContent = "⏳ " + dpFormatCountdown(remain);
-    });
-    document.querySelectorAll(".dp-inc-timer").forEach(function (el) {
-      var i = +el.getAttribute("data-slot");
-      var inc = dpData().incubators[i];
-      if (!inc) { render(); return; }
-      var sp = dpSpecies(inc.speciesId);
-      if (!sp) return;
-      var rarity = DP_RARITY[sp.rarity];
-      var remain = rarity.hatch * 1000 - (Date.now() - inc.startedAt);
-      if (remain <= 0) { render(); return; }
-      el.textContent = "⏳ " + dpFormatCountdown(remain);
-    });
-    if (epSession && epSession.startedAt && !epSession.done) {
-      var epTimerEl = document.getElementById("ep-session-timer");
-      if (epTimerEl) epTimerEl.textContent = "⏱️ " + dpFormatCountdown(Date.now() - epSession.startedAt);
-    }
-  }, 1000);
+    setInterval(function () {
+      if (!DB.currentUser) return;
+      ["dp-shop-timer", "dp-shop-timer-mini"].forEach(function (elId) {
+        var el = document.getElementById(elId);
+        if (!el) return;
+        var zoneId = el.getAttribute("data-zone");
+        var shop = dpData().shops[zoneId];
+        if (!shop) return;
+        var remain = shop.expiresAt - Date.now();
+        if (remain <= 0) { render(); return; }
+        el.textContent = "⏳ " + dpFormatCountdown(remain);
+      });
+      document.querySelectorAll(".dp-inc-timer").forEach(function (el) {
+        var i = +el.getAttribute("data-slot");
+        var inc = dpData().incubators[i];
+        if (!inc) { render(); return; }
+        var sp = dpSpecies(inc.speciesId);
+        if (!sp) return;
+        var rarity = DP_RARITY[sp.rarity];
+        var remain = rarity.hatch * 1000 - (Date.now() - inc.startedAt);
+        if (remain <= 0) { render(); return; }
+        el.textContent = "⏳ " + dpFormatCountdown(remain);
+      });
+      if (epSession && epSession.startedAt && !epSession.done) {
+        var epTimerEl = document.getElementById("ep-session-timer");
+        if (epTimerEl) epTimerEl.textContent = "⏱️ " + dpFormatCountdown(Date.now() - epSession.startedAt);
+      }
+    }, 1000);
+  });
 })();
