@@ -24,6 +24,20 @@
   }
   var DB = loadDB();
 
+  var STORAGE_QUOTA_BYTES = 5 * 1024 * 1024; // 5 Mo — limite typique de localStorage (varie selon le navigateur, donc affiché comme une estimation)
+  function storageUsageInfo() {
+    var raw = "";
+    try { raw = localStorage.getItem(DB_KEY) || ""; } catch (e) {}
+    var usedBytes;
+    try { usedBytes = new Blob([raw]).size; } catch (e) { usedBytes = raw.length; }
+    return { usedBytes: usedBytes, quotaBytes: STORAGE_QUOTA_BYTES, pct: Math.min(100, Math.round((usedBytes / STORAGE_QUOTA_BYTES) * 100)) };
+  }
+  function formatBytes(n) {
+    if (n < 1024) return n + " o";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " Ko";
+    return (n / (1024 * 1024)).toFixed(1) + " Mo";
+  }
+
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
   async function sha256(text) {
@@ -4053,12 +4067,18 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
         '</form>';
     } else if (modal.type === "settings") {
+      var storageInfo = storageUsageInfo();
+      var storageTier = storageInfo.pct < 60 ? "ok" : storageInfo.pct < 85 ? "warn" : "danger";
       inner = '<h3>Paramètres</h3>' +
         '<div class="field"><label>Clé API Gemini</label>' +
         '<div style="display:flex;gap:8px;align-items:center">' +
         '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
         '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openApiKeyModal()">🔑 ' + (getApiKey() ? "Modifier" : "Ajouter") + '</button>' +
         '</div></div>' +
+        '<div class="field"><label>Stockage utilisé</label>' +
+        '<div class="storage-bar"><div class="storage-bar-fill storage-bar-' + storageTier + '" style="width:' + storageInfo.pct + '%"></div></div>' +
+        '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés sur ~' + formatBytes(storageInfo.quotaBytes) + ' (' + storageInfo.pct + '%) — limite estimée, variable selon le navigateur</div>' +
+        '</div>' +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
