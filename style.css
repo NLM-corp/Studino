@@ -297,6 +297,11 @@
 
   .demo-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--leaf-dark); background: var(--accent-soft); padding: 4px 9px; border-radius: 999px; margin-bottom: 14px; border: 2px solid var(--border-soft); }
 
+  .course-field-edit { max-width: 900px; }
+  .course-field-textarea {
+    width: 100%; min-height: 420px; padding: 14px 16px; border: 2px solid var(--border); border-radius: 10px;
+    background: var(--surface); color: var(--text); font-family: 'Consolas', 'Menlo', monospace; font-size: 13px; line-height: 1.6; resize: vertical;
+  }
   .prose { max-width: 900px; font-size: 15px; line-height: 1.7; }
   .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
   .prose h3 { max-width: 66ch; margin: 24px 0 10px; font-size: 17px; font-weight: 800; }

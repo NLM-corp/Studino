@@ -895,6 +895,11 @@
         });
         course.exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution }; });
         course.status = "ready";
+        // Les photos/PDF source ne sont plus utiles une fois le cours généré : la retranscription
+        // sert désormais de mémoire pour "Régénérer"/"Ajouter des documents", donc plus la peine
+        // d'accumuler les images dans le stockage local (voir "Libérer l'espace", devenu automatique).
+        course.images = [];
+        course.imagesCleared = true;
         saveDB();
         toast("Cours généré · " + course.title);
         render();
@@ -919,6 +924,7 @@
   var dpSellSelectedDinoId = null;
   var quizState = {}; // per courseId: { idx, answers: [] }
   var fcState = {}; // per courseId: { idx, flipped }
+  var courseEditState = null; // { courseId, field: "transcription"|"explanation" } — édition du texte source d'un cours
   var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
   var dtState = { mode: "setup", tab: "chrono", durationMin: 25, enclosureId: null, pomoWork: 25, pomoBreak: 5, pomoCycles: 4, pomoDinoId: null }; // DinoTime sub-navigation
   var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
@@ -3612,12 +3618,23 @@
     setTimeout(function () { window.print(); }, 60);
   }
 
+  function courseFieldEditorHtml(course, field) {
+    if (courseEditState && courseEditState.courseId === course.id && courseEditState.field === field) {
+      return '<div class="course-field-edit">' +
+        '<textarea id="course-field-textarea" class="course-field-textarea">' + esc(course[field] || "") + '</textarea>' +
+        '<div class="modal-actions" style="margin-top:10px"><button type="button" class="btn btn-ghost" onclick="App.cancelEditCourseField()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.saveEditCourseField(\'' + course.id + '\',\'' + field + '\')">Enregistrer</button></div>' +
+        '</div>';
+    }
+    var fieldValue = field === "transcription" ? course.transcription : course.explanation;
+    return '<div class="prose prose-lesson">' + mdToHtml(fieldValue) + '</div>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>';
+  }
   function renderTabBody(course, tab, loc) {
     if (tab === "transcription") {
-      return '<div class="prose prose-lesson">' + mdToHtml(course.transcription) + '</div>';
+      return courseFieldEditorHtml(course, "transcription");
     }
     if (tab === "explication") {
-      return '<div class="prose prose-lesson">' + mdToHtml(course.explanation) + '</div>';
+      return courseFieldEditorHtml(course, "explanation");
     }
     if (tab === "videos") {
       return '<span class="demo-badge">Recherches suggérées</span><div class="video-list">' + course.videos.map(function (v) {
@@ -5291,6 +5308,24 @@
       printAndDownload(html);
     },
 
+    startEditCourseField: function (courseId, field) {
+      courseEditState = { courseId: courseId, field: field };
+      render();
+    },
+    cancelEditCourseField: function () {
+      courseEditState = null;
+      render();
+    },
+    saveEditCourseField: function (courseId, field) {
+      var loc = locateCourse(courseId);
+      if (!loc) { courseEditState = null; render(); return; }
+      var ta = document.getElementById("course-field-textarea");
+      loc.course[field] = ta ? ta.value : loc.course[field];
+      saveDB();
+      courseEditState = null;
+      toast("Modifications enregistrées");
+      render();
+    },
     flipCard: function (courseId) {
       var st = fcState[courseId] || { idx: 0, flipped: false };
       st.flipped = !st.flipped; fcState[courseId] = st; render();
