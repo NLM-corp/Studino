@@ -3007,12 +3007,14 @@
       (course.images && course.images.length ? (isPdfDataUrl(course.images[0]) ? '<div class="course-thumb file-thumb-pdf">📄<span>PDF</span></div>' : '<img class="course-thumb" src="' + course.images[0] + '">') : '') +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(course.title) + '</h1>' +
       '<p class="page-sub">' + esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) + '</p></div>' +
-      (course.status !== "processing" ? (
+      (course.status !== "processing" && !course.imagesCleared ? (
         '<div style="display:flex;gap:10px;margin-left:auto">' +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
+        (course.status === "ready" && course.images && course.images.length ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openFreeCourseSpaceModal(\'' + course.id + '\')">' + icon("trash") + ' Libérer l\'espace</button>' : "") +
         '</div>'
       ) : "") +
+      (course.imagesCleared ? '<p class="page-sub" style="margin-left:auto;flex:none">📦 Documents source supprimés pour libérer de l\'espace</p>' : "") +
       '</div>';
     var tabsHtml = '<div class="tabs">' + TABS.map(function (t) {
       return '<button class="tab-btn ' + (t.id === tab ? "active" : "") + '" onclick="location.hash=\'#/course/' + course.id + '/' + t.id + '\'">' + t.label + '</button>';
@@ -3946,6 +3948,10 @@
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
+    } else if (modal.type === "confirmFreeSpace") {
+      inner = '<h3>Libérer l\'espace de ce cours ?</h3>' +
+        '<p class="modal-warn">Les photos/PDF source seront définitivement supprimés (la retranscription, les flashcards, le contrôle et les exercices restent intacts). <strong>« Régénérer » et « Ajouter des documents » ne seront plus disponibles sur ce cours ensuite.</strong></p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.confirmFreeCourseSpace()">Libérer l\'espace</button></div>';
     } else if (modal.type === "renameItem") {
       inner = '<h3>Renommer</h3><form onsubmit="App.confirmRename(event)">' +
         '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
@@ -4449,6 +4455,23 @@
       var loc = locateCourse(courseId);
       if (!loc) return;
       runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+    },
+    openFreeCourseSpaceModal: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      modal = { type: "confirmFreeSpace", courseId: courseId };
+      render();
+    },
+    confirmFreeCourseSpace: function () {
+      var loc = locateCourse(modal.courseId);
+      if (loc) {
+        loc.course.images = [];
+        loc.course.imagesCleared = true;
+        saveDB();
+        toast("Espace libéré");
+      }
+      modal = null;
+      render();
     },
     openAddCourseDocsModal: function (courseId) {
       var loc = locateCourse(courseId);
