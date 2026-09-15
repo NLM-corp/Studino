@@ -274,9 +274,13 @@
     required: ["transcription", "explanation", "videoQueries", "flashcards", "quizQuestions", "exercises", "figures"]
   };
 
-  function buildCoursePrompt(title, subjectName, chapterName, imageCount) {
+  function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription) {
     var step1;
-    if (imageCount === 0) {
+    if (priorTranscription) {
+      step1 = imageCount > 0
+        ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Retranscris fidèlement leur contenu, puis FUSIONNE-le avec le contenu déjà connu ci-dessus pour produire UNE SEULE transcription complète, cohérente et bien organisée qui couvre tout (ancien ET nouveau), en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). C'est un enrichissement, pas un remplacement : ne perds RIEN de ce qui était déjà connu."
+        : "Ce cours a déjà été retranscrit à partir de documents précédents (aucune nouvelle photo n'est fournie cette fois). Reprends sa transcription telle quelle dans \"transcription\" (tu peux la nettoyer légèrement si besoin, mais garde tout le contenu, en Markdown structuré) :\n\n" + priorTranscription;
+    } else if (imageCount === 0) {
       step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
     } else if (imageCount === 1) {
       step1 = "Retranscris fidèlement et proprement le contenu visible sur la photo, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si la photo contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
@@ -341,12 +345,12 @@
     throw lastErr;
   }
 
-  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName) {
+  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription) {
     var images = (imageDataUrls || []).map(function (url) {
       var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
-    var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length) }]);
+    var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length, priorTranscription) }]);
     return callGemini(parts, COURSE_SCHEMA);
   }
 
@@ -873,12 +877,13 @@
     });
   }
 
-  function runCourseGeneration(course, subjectName, chapterName) {
+  function runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription) {
     course.status = "processing";
     course.error = null;
     saveDB(); render();
-    generateCourseContent(course.images, course.title, subjectName, chapterName).then(function (data) {
-      return resolveFigures(data.figures, course.images).then(function (subs) {
+    var images = imagesOverride || course.images;
+    generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription).then(function (data) {
+      return resolveFigures(data.figures, images).then(function (subs) {
         course.transcription = substituteFigures(data.transcription, subs);
         course.explanation = substituteFigures(data.explanation, subs);
         course.videos = (data.videoQueries || []).map(function (v) {
@@ -3007,14 +3012,13 @@
       (course.images && course.images.length ? (isPdfDataUrl(course.images[0]) ? '<div class="course-thumb file-thumb-pdf">📄<span>PDF</span></div>' : '<img class="course-thumb" src="' + course.images[0] + '">') : '') +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(course.title) + '</h1>' +
       '<p class="page-sub">' + esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) + '</p></div>' +
-      (course.status !== "processing" && !course.imagesCleared ? (
+      (course.status !== "processing" ? (
         '<div style="display:flex;gap:10px;margin-left:auto">' +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
         (course.status === "ready" && course.images && course.images.length ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openFreeCourseSpaceModal(\'' + course.id + '\')">' + icon("trash") + ' Libérer l\'espace</button>' : "") +
         '</div>'
       ) : "") +
-      (course.imagesCleared ? '<p class="page-sub" style="margin-left:auto;flex:none">📦 Documents source supprimés pour libérer de l\'espace</p>' : "") +
       '</div>';
     var tabsHtml = '<div class="tabs">' + TABS.map(function (t) {
       return '<button class="tab-btn ' + (t.id === tab ? "active" : "") + '" onclick="location.hash=\'#/course/' + course.id + '/' + t.id + '\'">' + t.label + '</button>';
@@ -3775,7 +3779,7 @@
         '</form>';
     } else if (modal.type === "addCourseDocs") {
       inner = '<h3>Ajouter des documents</h3>' +
-        '<p class="modal-warn" style="margin-bottom:14px">Les nouvelles photos s\'ajoutent aux ' + modal.existingCount + ' déjà importées, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Le contenu de ces nouvelles photos sera fusionné avec la retranscription déjà connue de ce cours, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
         '<form onsubmit="App.addCourseDocs(event)">' +
         '<div class="field"><label>Nouvelles photos ou PDF</label>' +
         '<div class="file-thumbs">' +
@@ -3950,7 +3954,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
     } else if (modal.type === "confirmFreeSpace") {
       inner = '<h3>Libérer l\'espace de ce cours ?</h3>' +
-        '<p class="modal-warn">Les photos/PDF source seront définitivement supprimés (la retranscription, les flashcards, le contrôle et les exercices restent intacts). <strong>« Régénérer » et « Ajouter des documents » ne seront plus disponibles sur ce cours ensuite.</strong></p>' +
+        '<p class="modal-warn">Les photos/PDF source seront définitivement supprimés. La retranscription, l\'explication, les flashcards, le contrôle et les exercices restent intacts, et « Régénérer »/« Ajouter des documents » continueront de marcher (à partir de la retranscription). <strong>Seuls les schémas/graphiques éventuellement extraits de ces photos ne pourront plus être recadrés à nouveau plus tard.</strong></p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.confirmFreeCourseSpace()">Libérer l\'espace</button></div>';
     } else if (modal.type === "renameItem") {
       inner = '<h3>Renommer</h3><form onsubmit="App.confirmRename(event)">' +
@@ -4454,7 +4458,13 @@
     retryGeneration: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
-      runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+      if (loc.course.images && loc.course.images.length) {
+        runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+      } else {
+        // Plus de photos/PDF conservés (espace libéré) : on régénère explication/flashcards/contrôle/
+        // exercices à partir de la retranscription déjà connue, plutôt que d'échouer ou de repartir de rien.
+        runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, [], stripFigureMarkdown(loc.course.transcription));
+      }
     },
     openFreeCourseSpaceModal: function (courseId) {
       var loc = locateCourse(courseId);
@@ -4476,7 +4486,7 @@
     openAddCourseDocsModal: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
-      modal = { type: "addCourseDocs", courseId: courseId, imagePreviews: [], existingCount: (loc.course.images || []).length };
+      modal = { type: "addCourseDocs", courseId: courseId, imagePreviews: [] };
       render();
     },
     addCourseDocs: function (e) {
@@ -4485,11 +4495,16 @@
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var loc = locateCourse(modal.courseId);
       if (!loc) { App.closeModal(); return; }
-      loc.course.images = (loc.course.images || []).concat(modal.imagePreviews);
+      var newImages = modal.imagePreviews.slice();
+      var priorTranscription = stripFigureMarkdown(loc.course.transcription);
+      // On ne garde que ce dernier lot de photos (pas la peine d'accumuler les anciennes : leur
+      // contenu est déjà fusionné dans la transcription, qui sert de mémoire du cours à la place).
+      loc.course.images = newImages;
+      loc.course.imagesCleared = false;
       saveDB();
       modal = null;
       navigate("#/course/" + loc.course.id);
-      runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name);
+      runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, newImages, priorTranscription);
     },
     openCourseErrorDetail: function (courseId) {
       var loc = locateCourse(courseId);
