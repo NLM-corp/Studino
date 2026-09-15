@@ -577,6 +577,19 @@
   function epFormatDateFr(dateStr) {
     return epDateFromStr(dateStr).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
   }
+  // Décalages (en jours depuis aujourd'hui) auxquels une séance doit être prévue : tant qu'il reste
+  // plus de 10 jours avant l'examen, une séance tous les 2 jours ; dans les 10 derniers jours, tous les jours.
+  function epScheduleOffsets(dayCount) {
+    var offsets = [];
+    if (dayCount <= 10) {
+      for (var o = 0; o < dayCount; o++) offsets.push(o);
+      return offsets;
+    }
+    var farCount = dayCount - 10;
+    for (var o1 = 0; o1 < farCount; o1 += 2) offsets.push(o1);
+    for (var o2 = farCount; o2 < dayCount; o2++) offsets.push(o2);
+    return offsets;
+  }
 
   var EXAM_PLAN_SCHEMA = {
     type: "object",
@@ -599,7 +612,7 @@
     },
     required: ["overview", "days"]
   };
-  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics) {
+  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) {
     var sourceBlocks = courses.map(function (co) {
       return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
@@ -608,19 +621,19 @@
       continuityBlock = "\nATTENTION, ceci est une RÉGÉNÉRATION d'un planning déjà existant (l'élève a ajouté du contenu à ses cours et redemande un planning à jour) : l'élève a déjà une progression enregistrée sur certaines notions, identifiées par leur nom EXACT ci-dessous. Pour toute notion déjà présente dans cette liste qui reste pertinente pour l'examen, réutilise EXACTEMENT le même intitulé (mot pour mot) dans \"topics\" afin de ne pas perdre sa progression. N'invente un nouvel intitulé que pour une notion réellement nouvelle ou absente de cette liste.\nNotions déjà suivies : " + priorTopics.join(" | ") + "\n";
     }
     return "Tu es un coach de révision pour un élève francophone qui prépare : « " + title + " ».\n" +
-      "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) de révision avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n" +
+      "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n" +
       continuityBlock + "\n" +
       "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
-      "Construis un planning de révision étalé sur ces " + dayCount + " jours (un élément par jour, offsetDays de 0 à " + (dayCount - 1) + ", sans en sauter aucun), en respectant impérativement ces principes :\n" +
-      "- Ne JAMAIS tout mettre le dernier jour ou concentrer l'essentiel sur 1-2 jours : répartis le travail le plus régulièrement possible sur TOUS les jours disponibles, avec des séances courtes et réalistes (typiquement 15 à 45 minutes par jour, jamais plus de 60) — c'est tout l'intérêt d'étaler la révision au lieu de tout faire la veille au soir.\n" +
+      "Certains jours parmi ces " + dayCount + " sont des jours de repos SANS séance (pour ne pas surcharger l'élève quand l'examen est encore loin). Voici la liste EXACTE des décalages en jours depuis aujourd'hui (offsetDays, 0 = aujourd'hui) pour lesquels une séance est prévue : " + offsets.join(", ") + ". Produis EXACTEMENT une entrée par offsetDays listé ici, ni plus ni moins (n'en ajoute aucun pour les jours de repos, n'en oublie aucun de la liste), en respectant ces principes :\n" +
+      "- Les séances restent courtes et réalistes (typiquement 15 à 45 minutes, jamais plus de 60).\n" +
       "- Couvre l'intégralité du contenu ci-dessus au moins une fois d'ici la fin du planning.\n" +
-      "- Plus on se rapproche de l'examen, plus les jours doivent revenir sur les notions déjà vues plus tôt (en plus des notions nouvelles du jour), façon répétition espacée, pour consolider — ce n'est pas qu'un simple découpage linéaire du programme.\n" +
-      "- Pour chaque jour, \"focus\" résume l'objectif du jour en une phrase, et \"topics\" liste 2 à 6 notions précises concernées.\n\n" +
+      "- Plus on se rapproche de l'examen, plus les jours prévus doivent revenir sur les notions déjà vues plus tôt (en plus des notions nouvelles du jour), façon répétition espacée, pour consolider — ce n'est pas qu'un simple découpage linéaire du programme.\n" +
+      "- Pour chaque jour prévu, \"focus\" résume l'objectif du jour en une phrase, et \"topics\" liste 2 à 6 notions précises concernées.\n\n" +
       "\"overview\" résume ta stratégie globale en 2-3 phrases motivantes, en français.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses, priorTopics) {
-    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics) }];
+  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) {
+    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) }];
     return callGemini(parts, EXAM_PLAN_SCHEMA);
   }
   function runExamPlanGeneration(prep) {
@@ -636,12 +649,18 @@
     }
     var today = epTodayStr();
     var dayCount = Math.max(1, epDaysBetween(today, prep.examDate));
-    var priorTopics = (prep.topics || []).slice();
-    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses, priorTopics).then(function (data) {
-      prep.overview = data.overview || "";
-      prep.days = (data.days || []).map(function (d) {
-        return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
-      }).sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var oldDays = prep.days || [];
+    // Les jours déjà passés ne sont jamais retouchés, quel que soit le résultat (fait ou manqué).
+    var pastDays = oldDays.filter(function (d) { return d.date < today; });
+    // Les jours (aujourd'hui ou futurs) dont la séance est déjà terminée sont figés aussi : on ne les redemande pas à l'IA.
+    var doneFutureDays = oldDays.filter(function (d) {
+      return d.date >= today && prep.sessions && prep.sessions[d.date] && prep.sessions[d.date].status === "done";
+    });
+    var lockedDates = {};
+    pastDays.concat(doneFutureDays).forEach(function (d) { lockedDates[d.date] = true; });
+    var scheduleOffsets = epScheduleOffsets(dayCount).filter(function (o) { return !lockedDates[epAddDays(today, o)]; });
+    var finishPlan = function (newDays) {
+      prep.days = pastDays.concat(doneFutureDays).concat(newDays).sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
       var allTopics = [];
       prep.days.forEach(function (d) { (d.topics || []).forEach(function (t) { if (allTopics.indexOf(t) === -1) allTopics.push(t); }); });
       prep.topics = allTopics;
@@ -654,6 +673,23 @@
       saveDB();
       toast("Planning de révision prêt · " + prep.title);
       render();
+    };
+    if (!scheduleOffsets.length) {
+      // Tout ce qui reste à planifier est déjà figé (passé ou déjà fait) : rien à régénérer.
+      finishPlan([]);
+      return;
+    }
+    var priorTopics = (prep.topics || []).slice();
+    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses, priorTopics, scheduleOffsets).then(function (data) {
+      prep.overview = data.overview || prep.overview || "";
+      var offsetSet = {};
+      scheduleOffsets.forEach(function (o) { offsetSet[o] = true; });
+      var newDays = (data.days || [])
+        .filter(function (d) { return offsetSet[Math.max(0, d.offsetDays || 0)]; })
+        .map(function (d) {
+          return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
+        });
+      finishPlan(newDays);
     }).catch(function (err) {
       prep.planStatus = "error";
       prep.planError = err.message || "Erreur inconnue";
@@ -3097,6 +3133,7 @@
     var head = '<div class="course-head"><div><h1 class="page-title" style="margin-bottom:6px">📅 ' + esc(prep.title) + '</h1>' +
       '<p class="page-sub">' + esc(epScopeLabel(prep.scope)) + ' · Examen le ' + esc(epFormatDateFr(prep.examDate)) + (daysLeft >= 0 ? ' (J-' + daysLeft + ')' : ' (passé)') + '</p></div>' +
       '<div style="display:flex;gap:10px;margin-left:auto">' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openExamPrepEditDate(\'' + prep.id + '\')">📅 Changer la date</button>' +
       (prep.planStatus === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryExamPlanGeneration(\'' + prep.id + '\')">🔄 Regénérer le planning</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'examPrep\',null,null,null,\'' + prep.id + '\')">' + icon("trash") + ' Supprimer</button>' +
       '</div></div>';
@@ -4050,6 +4087,13 @@
           (epmThemes.length && epmReady ? '<button type="button" class="btn btn-metal" onclick="App.createExamPrep()">Générer le planning</button>' : "") +
           '</div>';
       }
+    } else if (modal.type === "examPrepEditDate") {
+      inner = '<h3>Changer la date de l\'examen</h3>' +
+        '<div class="field"><label>Nouvelle date de l\'examen</label><input name="examDate" type="date" value="' + esc(modal.examDate || "") + '" min="' + epTodayStr() + '" oninput="App.setExamPrepField(\'examDate\',this.value)" required></div>' +
+        '<p class="modal-warn">Le planning sera régénéré à partir d\'aujourd\'hui : les jours déjà passés ou déjà faits ne sont jamais modifiés.</p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+        '<button type="button" class="btn btn-metal" onclick="App.saveExamPrepEditDate()">Enregistrer et régénérer</button>' +
+        '</div>';
     } else if (modal.type === "moveChapter") {
       var mcSubs = userData().subjects;
       var mcSubj = findSubject(modal.destSubjectId) || mcSubs[0];
@@ -4893,6 +4937,23 @@
     retryExamPlanGeneration: function (prepId) {
       var prep = epFind(prepId);
       if (!prep) return;
+      runExamPlanGeneration(prep);
+    },
+    openExamPrepEditDate: function (prepId) {
+      var prep = epFind(prepId);
+      if (!prep) return;
+      modal = { type: "examPrepEditDate", prepId: prepId, examDate: prep.examDate };
+      render();
+    },
+    saveExamPrepEditDate: function () {
+      var m = modal;
+      var prep = epFind(m.prepId);
+      if (!prep) return;
+      if (!m.examDate) { toast("Choisis une date d'examen"); return; }
+      if (m.examDate < epTodayStr()) { toast("La date de l'examen doit être dans le futur"); return; }
+      prep.examDate = m.examDate;
+      saveDB();
+      modal = null;
       runExamPlanGeneration(prep);
     },
     openExamPrepErrorDetail: function (prepId) {
