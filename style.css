@@ -714,8 +714,10 @@
   .dt-pomo-track-line { position: absolute; left: 0; right: 0; top: 50%; height: 4px; background: rgba(255,255,255,0.55); border-radius: 999px; transform: translateY(-50%); }
   .dt-pomo-checkpoint { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid rgba(0,0,0,0.25); transform: translate(-50%, -50%); box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
   .dt-pomo-runner { position: absolute; bottom: 0; transform: translateX(-50%); transition: left 1s linear; }
-  .dt-pomo-dino { display: block; height: 130px; width: auto; transform: translateY(-2px); filter: drop-shadow(0 8px 6px rgba(0,0,0,0.35)); }
-  .dt-pomo-dino-fallback { display: block; width: 80px; height: 70px; border-radius: 14px; box-shadow: 0 8px 12px rgba(0,0,0,0.3); }
+  .dt-pomo-flip { display: block; }
+  .dt-pomo-flip.reversed { transform: scaleX(-1); }
+  .dt-pomo-dino { display: block; height: 56px; width: auto; transform: translateY(-2px); filter: drop-shadow(0 8px 6px rgba(0,0,0,0.35)); }
+  .dt-pomo-dino-fallback { display: block; width: 38px; height: 33px; border-radius: 14px; box-shadow: 0 8px 12px rgba(0,0,0,0.3); }
   .dt-pomo-dino-placeholder { display: block; font-size: 60px; font-weight: 800; color: #fff; opacity: .8; text-align: center; transform: translateY(-30px); }
   .dt-pomo-runner.working .dt-pomo-dino, .dt-pomo-runner.working .dt-pomo-dino-fallback, .dt-pomo-runner.working .dt-pomo-dino-placeholder { animation: dtBob 0.5s ease-in-out infinite alternate; }
   .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino, .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino-fallback, .dt-pomo-scene.paused .dt-pomo-runner.working .dt-pomo-dino-placeholder { animation-play-state: paused; }

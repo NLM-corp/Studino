@@ -599,12 +599,17 @@
     },
     required: ["overview", "days"]
   };
-  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses) {
+  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics) {
     var sourceBlocks = courses.map(function (co) {
       return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
+    var continuityBlock = "";
+    if (priorTopics && priorTopics.length) {
+      continuityBlock = "\nATTENTION, ceci est une RÉGÉNÉRATION d'un planning déjà existant (l'élève a ajouté du contenu à ses cours et redemande un planning à jour) : l'élève a déjà une progression enregistrée sur certaines notions, identifiées par leur nom EXACT ci-dessous. Pour toute notion déjà présente dans cette liste qui reste pertinente pour l'examen, réutilise EXACTEMENT le même intitulé (mot pour mot) dans \"topics\" afin de ne pas perdre sa progression. N'invente un nouvel intitulé que pour une notion réellement nouvelle ou absente de cette liste.\nNotions déjà suivies : " + priorTopics.join(" | ") + "\n";
+    }
     return "Tu es un coach de révision pour un élève francophone qui prépare : « " + title + " ».\n" +
-      "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) de révision avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n\n" +
+      "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) de révision avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n" +
+      continuityBlock + "\n" +
       "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
       "Construis un planning de révision étalé sur ces " + dayCount + " jours (un élément par jour, offsetDays de 0 à " + (dayCount - 1) + ", sans en sauter aucun), en respectant impérativement ces principes :\n" +
       "- Ne JAMAIS tout mettre le dernier jour ou concentrer l'essentiel sur 1-2 jours : répartis le travail le plus régulièrement possible sur TOUS les jours disponibles, avec des séances courtes et réalistes (typiquement 15 à 45 minutes par jour, jamais plus de 60) — c'est tout l'intérêt d'étaler la révision au lieu de tout faire la veille au soir.\n" +
@@ -614,8 +619,8 @@
       "\"overview\" résume ta stratégie globale en 2-3 phrases motivantes, en français.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses) {
-    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses) }];
+  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses, priorTopics) {
+    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics) }];
     return callGemini(parts, EXAM_PLAN_SCHEMA);
   }
   function runExamPlanGeneration(prep) {
@@ -631,7 +636,8 @@
     }
     var today = epTodayStr();
     var dayCount = Math.max(1, epDaysBetween(today, prep.examDate));
-    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses).then(function (data) {
+    var priorTopics = (prep.topics || []).slice();
+    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses, priorTopics).then(function (data) {
       prep.overview = data.overview || "";
       prep.days = (data.days || []).map(function (d) {
         return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
@@ -639,7 +645,11 @@
       var allTopics = [];
       prep.days.forEach(function (d) { (d.topics || []).forEach(function (t) { if (allTopics.indexOf(t) === -1) allTopics.push(t); }); });
       prep.topics = allTopics;
-      prep.topicMastery = prep.topicMastery || {};
+      // On garde la progression (score/streak) des notions toujours présentes dans le nouveau planning, on jette le reste.
+      var oldMastery = prep.topicMastery || {};
+      var newMastery = {};
+      allTopics.forEach(function (t) { if (oldMastery[t]) newMastery[t] = oldMastery[t]; });
+      prep.topicMastery = newMastery;
       prep.planStatus = "ready";
       saveDB();
       toast("Planning de révision prêt · " + prep.title);
@@ -2291,7 +2301,7 @@
     t = Math.max(0, Math.min(1, t));
     return DT_DINO_MIN_SCALE + t * (DT_DINO_MAX_SCALE - DT_DINO_MIN_SCALE);
   }
-  var DT_POMO_DINO_BASE_HEIGHT = 130, DT_POMO_DINO_FALLBACK_W = 80, DT_POMO_DINO_FALLBACK_H = 70;
+  var DT_POMO_DINO_BASE_HEIGHT = 56, DT_POMO_DINO_FALLBACK_W = 38, DT_POMO_DINO_FALLBACK_H = 33;
   function dtInitDinoState(d) {
     var cycleIdx = Math.floor(Math.random() * DT_CYCLE.length);
     var sp = dpSpecies(d.speciesId);
@@ -2360,6 +2370,9 @@
     } else {
       dinoHtml = '<div class="dt-pomo-dino-placeholder">.</div>';
     }
+    // Les sprites "profil" regardent nativement vers la gauche, on les retourne pour qu'ils avancent
+    // visuellement vers la droite (sens de la piste) ; on les remet à l'endroit pour le "face" au checkpoint.
+    dinoHtml = '<span class="dt-pomo-flip' + (looking ? "" : " reversed") + '">' + dinoHtml + '</span>';
     var checkpoints = "";
     for (var i = 0; i <= p.cycles; i++) checkpoints += '<span class="dt-pomo-checkpoint" style="left:' + (i / p.cycles * 100) + '%"></span>';
     var cycleHtml = '<div class="dt-pomo-cycle mono">Cycle ' + p.cycleIndex + ' / ' + p.cycles + '</div>';
