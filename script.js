@@ -824,7 +824,10 @@
     if (wasCorrect) {
       t.streak = t.streak > 0 ? t.streak + 1 : 1;
       var room = (100 - t.score) / 100; // rendements décroissants : un sujet déjà solide progresse peu
-      t.score = Math.min(100, t.score + 10 * weight * room);
+      // Une notion n'est réellement retestée que quelques fois sur toute la durée d'une prépa (pas à
+      // l'infini) : le gain doit donc converger vite pour qu'enchaîner les bonnes réponses comme prévu
+      // amène réellement à ~100%, au lieu de plafonner bien avant même avec un sans-faute complet.
+      t.score = Math.min(100, t.score + 30 * weight * room);
     } else {
       t.streak = t.streak < 0 ? t.streak - 1 : -1;
       var confidencePenalty = 8 + (t.score / 100) * 12; // casser un score déjà haut fait plus mal (fausse confiance)
