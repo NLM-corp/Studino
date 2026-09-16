@@ -407,6 +407,7 @@
       step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
     }
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
+      "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
       "2. Rédige une explication simple, claire et concrète du contenu pour un élève qui ne comprend pas bien, en français, avec un exemple si utile.\n" +
       "3. Propose 3 requêtes de recherche YouTube pertinentes pour approfondir ce cours (un label court + la requête de recherche).\n" +
@@ -428,12 +429,15 @@
   async function callGemini(parts, schema) {
     var apiKey = getApiKey();
     if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
-    var body = JSON.stringify({
-      contents: [{ role: "user", parts: parts }],
-      generationConfig: { response_mime_type: "application/json", response_schema: schema }
-    });
     var lastErr = null;
+    // Une température basse rend le modèle plus déterministe, donc plus susceptible de reproduire du
+    // texte mémorisé mot pour mot (ce qui déclenche le filtre RECITATION) : après un blocage de ce
+    // type, on l'augmente pour le(s) modèle(s) suivant(s) afin d'obtenir une formulation plus originale.
+    var recitationRetries = 0;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      var generationConfig = { response_mime_type: "application/json", response_schema: schema };
+      if (recitationRetries > 0) generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
+      var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], generationConfig: generationConfig });
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
       var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
       if (res.ok) {
@@ -460,6 +464,7 @@
             OTHER: "Gemini a refusé de répondre pour une raison non précisée"
           };
           var reasonMsg = reason && reasonLabels[reason];
+          if (reason === "RECITATION") recitationRetries++;
           lastErr = new Error(reasonMsg ? "Génération refusée par Gemini : " + reasonMsg + "." : "Réponse vide de l'API.");
           lastErr.status = res.status;
           lastErr.detail = JSON.stringify(data, null, 2);
