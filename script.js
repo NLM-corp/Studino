@@ -439,19 +439,33 @@
       if (res.ok) {
         var data = await res.json();
         if (data.promptFeedback && data.promptFeedback.blockReason) {
-          var blockErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
-          blockErr.status = res.status;
-          blockErr.detail = JSON.stringify(data, null, 2);
-          throw blockErr;
+          lastErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
+          lastErr.status = res.status;
+          lastErr.detail = JSON.stringify(data, null, 2);
+          continue;
         }
         var cand = data.candidates && data.candidates[0];
-        if (!cand || !cand.content || !cand.content.parts || !cand.content.parts[0]) {
-          var emptyErr = new Error("Réponse vide de l'API.");
-          emptyErr.status = res.status;
-          emptyErr.detail = JSON.stringify(data, null, 2);
-          throw emptyErr;
+        var candParts = cand && cand.content && cand.content.parts;
+        if (!candParts || !candParts[0]) {
+          // HTTP 200 mais réponse vide : Gemini a quand même refusé de générer (souvent finishReason
+          // RECITATION quand le texte source colle de trop près à une œuvre déjà indexée en ligne,
+          // typique d'une analyse littéraire connue). On tente un autre modèle avant d'abandonner.
+          var reason = cand && cand.finishReason;
+          var reasonLabels = {
+            RECITATION: "le contenu généré ressemblait de trop près à une œuvre déjà publiée en ligne (fréquent pour l'analyse d'une œuvre littéraire connue) et a été bloqué automatiquement",
+            SAFETY: "le contenu a été jugé sensible par les filtres de sécurité de Gemini",
+            PROHIBITED_CONTENT: "le contenu a été jugé non autorisé par Gemini",
+            BLOCKLIST: "le contenu contient des termes bloqués par Gemini",
+            SPII: "le contenu semblait contenir des informations personnelles sensibles",
+            OTHER: "Gemini a refusé de répondre pour une raison non précisée"
+          };
+          var reasonMsg = reason && reasonLabels[reason];
+          lastErr = new Error(reasonMsg ? "Génération refusée par Gemini : " + reasonMsg + "." : "Réponse vide de l'API.");
+          lastErr.status = res.status;
+          lastErr.detail = JSON.stringify(data, null, 2);
+          continue;
         }
-        return JSON.parse(cand.content.parts[0].text);
+        return JSON.parse(candParts[0].text);
       }
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
