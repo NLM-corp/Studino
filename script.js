@@ -3385,7 +3385,9 @@
 
   /* ---------------- Rich text mini-editor ---------------- */
   var RTE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, SPAN: 1, BR: 1, DIV: 1, P: 1, TABLE: 1, TBODY: 1, TR: 1, TD: 1 };
-  var RTE_ALLOWED_STYLES = { color: 1, "background-color": 1, "text-decoration": 1, "font-weight": 1, "font-style": 1 };
+  // background-color est volontairement exclu : coller du texte qui en portait (Word, une page web,
+  // un ancien fond de citation...) laissait un bloc de couleur plein derrière la ligne collée.
+  var RTE_ALLOWED_STYLES = { color: 1, "text-decoration": 1, "font-weight": 1, "font-style": 1 };
   function sanitizeRichHtml(html) {
     var doc = new DOMParser().parseFromString(html, "text/html");
     var root = doc.body;
