@@ -1778,9 +1778,19 @@
   function dpData() {
     var u = userData();
     if (!u.dinoPark) {
-      u.dinoPark = { points: 500, unlockedZones: ["foret"], eggs: [], incubators: [null, null, null], enclosures: [], dinosaurs: [], discovered: {}, shops: {} };
+      // encBuildBugRefund à true dès la création : ce profil n'a jamais pu perdre de points dans
+      // l'ancien bug d'achat d'enclos, il ne doit donc pas recevoir le remboursement rétroactif ci-dessous.
+      u.dinoPark = { points: 500, unlockedZones: ["foret"], eggs: [], incubators: [null, null, null], enclosures: [], dinosaurs: [], discovered: {}, shops: {}, encBuildBugRefund: true };
     }
     var dp = u.dinoPark;
+    if (!dp.encBuildBugRefund) {
+      // dpBuildEnclosure débitait les points AVANT de planter sur une variable inexistante lors de la
+      // création de l'enclos : l'achat était prélevé sans jamais donner l'enclos. Remboursement unique
+      // du coût d'achat pour compenser, maintenant que le bug est corrigé.
+      dp.encBuildBugRefund = true;
+      dp.points += DP_ENCLOSURE_BUILD_COST;
+      toast("🎁 +" + DP_ENCLOSURE_BUILD_COST + " pts remboursés suite à un bug d'achat d'enclos corrigé");
+    }
     if (!dp.shops) dp.shops = {};
     if (dp.companionSpeciesId === undefined) dp.companionSpeciesId = null;
     if (!dp.inventory) dp.inventory = { herbe: 0, fruit: 0, insecte: 0, poisson: 0, viande: 0, soin: 0 };
@@ -5472,6 +5482,7 @@
     dpBuildEnclosure: function (zoneId) {
       var dp = dpData(); var cost = dpZoneEnclosureCost(zoneId);
       if (dp.points < cost) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      var count = dpEnclosuresInZone(zoneId).length;
       dp.points -= cost;
       dp.enclosures.push({ id: uid(), zone: zoneId, name: "Enclos " + (count + 1), capacity: 2, level: 1, variant: dpRandomEnclosureVariant(zoneId) });
       saveDB(); dpPlayMerchantSound("thankyou"); toast("Nouvel enclos construit"); render();
