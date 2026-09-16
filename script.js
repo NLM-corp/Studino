@@ -725,11 +725,11 @@
     var pool = [];
     courses.forEach(function (co) {
       (co.quizQuestions || []).forEach(function (q) {
-        if (q.type === "qcm") pool.push({ kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
-        else pool.push({ kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
+        if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
+        else pool.push({ id: q.id, kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
       });
       (co.exercises || []).forEach(function (ex) {
-        pool.push({ kind: "exercise", prompt: ex.prompt, solution: ex.solution, courseId: co.id, courseTitle: co.title });
+        pool.push({ id: ex.id, kind: "exercise", prompt: ex.prompt, solution: ex.solution, courseId: co.id, courseTitle: co.title });
       });
     });
     return pool;
@@ -904,6 +904,47 @@
     var parts = [{ text: buildGapFlashcardsPrompt(wrongItems) }];
     return callGemini(parts, EXAM_GAP_FLASHCARDS_SCHEMA);
   }
+  // Rejouer plusieurs fois la même prépa fait retomber sur les mêmes exercices/questions ouvertes mot
+  // pour mot (mêmes valeurs, même contexte) — lassant à force. On ne touche pas au QCM (la correction
+  // dépend d'un index fixe, trop risqué à faire varier de façon fiable), seulement aux formats à
+  // réponse tapée où la correction est déjà faite par l'IA en comparant au sens, pas au texte exact.
+  var EXAM_PREP_VARIANT_SCHEMA = {
+    type: "object",
+    properties: {
+      variants: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Reprend EXACTEMENT l'id fourni pour cet item." },
+            prompt: { type: "string", description: "Nouvel énoncé, mêmes notions et même difficulté, mais valeurs et contexte différents." },
+            answer: { type: "string", description: "Nouvelle réponse attendue, uniquement si l'item d'origine était une question ouverte courte." },
+            solution: { type: "string", description: "Nouvelle solution de référence complète, uniquement si l'item d'origine était un exercice complet." }
+          },
+          required: ["id", "prompt"]
+        }
+      }
+    },
+    required: ["variants"]
+  };
+  function buildExamPrepVariantPrompt(items) {
+    var lines = items.map(function (it) {
+      return "ID : " + it.id + "\nType : " + (it.kind === "exercise" ? "exercice complet" : "question ouverte courte") + "\nÉnoncé actuel : " + it.prompt + "\n" + (it.kind === "exercise" ? "Solution actuelle : " + it.solution : "Réponse actuelle : " + it.answer);
+    }).join("\n\n");
+    return "Un élève francophone révise pour un examen et va retomber sur les questions/exercices suivants, déjà rencontrés lors d'une séance PRÉCÉDENTE de cette même préparation. Pour éviter qu'il ne fasse que réciter par cœur une réponse déjà mémorisée, réécris CHACUN avec un énoncé DIFFÉRENT :\n" +
+      "- change les valeurs numériques ET le contexte/scénario concret (autre produit, autre situation, autres grandeurs, autres noms...) ;\n" +
+      "- garde EXACTEMENT la même notion/compétence testée et le même niveau de difficulté et la même structure (même nombre de sous-questions pour un exercice) ;\n" +
+      "- pour un exercice complet, fournis une nouvelle \"solution\" complète et détaillée (avec le résultat final), cohérente avec le nouvel énoncé ;\n" +
+      "- pour une question ouverte courte, fournis la nouvelle \"answer\" attendue, cohérente avec le nouvel énoncé.\n\n" +
+      "Items à varier :\n\n" + lines + "\n\n" +
+      "Renvoie un tableau \"variants\", une entrée par item, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
+      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ ou $$...$$ — jamais de commande de couleur LaTeX.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateExamPrepVariants(items) {
+    var parts = [{ text: buildExamPrepVariantPrompt(items) }];
+    return callGemini(parts, EXAM_PREP_VARIANT_SCHEMA);
+  }
   function epFinalizeSession(prep, s, mapping, gapFlashcardsFlat, wrongIdx) {
     var review = { mastered: [], unclear: [], weak: [] };
     var readinessBefore = prep ? epReadinessPercent(prep) : 0;
@@ -966,6 +1007,7 @@
   var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
   var epFcState = {}; // per prepId: { idx, flipped } — état du flip-card des "Flashcards des lacunes"
   var epGapFcOpen = {}; // per prepId: bool — le deck de flashcards des lacunes est replié par défaut
+  var epStartingSessionFor = null; // "prepId::date" pendant la génération des variantes d'exercices déjà vus, avant que la séance ne s'ouvre
 
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
@@ -3189,6 +3231,8 @@
       var todayEntry = prep.days.find(function (d) { return d.date === today; });
       var todaySession = prep.sessions && prep.sessions[today];
       var readinessHtml = epReadinessBarHtml(epReadinessPercent(prep), false);
+      var startingToday = epStartingSessionFor === (prep.id + "::" + today);
+      var loadingBtnHtml = '<button class="btn btn-ghost" style="width:auto" disabled>⏳ Préparation de séances variées…</button>';
       var cta;
       if (daysLeft < 0) {
         cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
@@ -3196,10 +3240,10 @@
         cta = '<div class="ep-today-card"><div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
       } else if (todaySession && todaySession.status === "done") {
         cta = '<div class="ep-today-card"><div class="ep-today-title">✅ Séance du jour terminée</div><div class="ep-today-sub">' + todaySession.correct + ' / ' + todaySession.total + ' bonnes réponses</div>' +
-          '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button></div>';
+          (startingToday ? loadingBtnHtml : '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button>') + '</div>';
       } else {
         cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
-          '<button class="btn btn-metal" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button></div>';
+          (startingToday ? loadingBtnHtml : '<button class="btn btn-metal" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button>') + '</div>';
       }
       var daysHtml = prep.days.map(function (d) {
         var sess = prep.sessions && prep.sessions[d.date];
@@ -3212,12 +3256,18 @@
         var fcKey = prep.id + "::" + d.date;
         var dayFcToggle = dayCards.length ? '<button class="ep-day-fc-toggle" onclick="event.stopPropagation();App.toggleExamPrepFlashcards(\'' + fcKey + '\')">📇 ' + dayCards.length + '</button>' : "";
         var dayFcSection = (dayCards.length && epGapFcOpen[fcKey]) ? renderExamPrepGapFlashcards(dayCards, fcKey) : "";
+        // Rattraper/rejouer un jour passé, à volonté — les jours à venir restent au jour J pour garder le rythme prévu.
+        var startingThisDay = epStartingSessionFor === (prep.id + "::" + d.date);
+        var pastActionBtn = isPast ? (startingThisDay
+          ? '<button class="ep-day-fc-toggle" disabled>⏳…</button>'
+          : '<button class="ep-day-fc-toggle" onclick="event.stopPropagation();App.startExamPrepDay(\'' + prep.id + '\',\'' + d.date + '\')">' + (done ? "↻ Refaire" : "▶ Rattraper") + '</button>') : "";
         return '<div class="ep-day-wrap">' +
           '<div class="' + cls + '">' +
           '<div class="ep-day-date mono">' + esc(epFormatDateFr(d.date)) + '</div>' +
           '<div class="ep-day-body"><div class="ep-day-focus">' + esc(d.focus) + '</div>' +
           '<div class="ep-day-topics">' + (d.topics || []).map(function (t) { return '<span class="ep-day-topic">' + esc(t) + '</span>'; }).join("") + '</div></div>' +
           '<div class="ep-day-status mono">' + statusLabel + '</div>' +
+          pastActionBtn +
           dayFcToggle +
           '</div>' +
           dayFcSection +
@@ -3762,6 +3812,19 @@
   }
 
   /* ---------------- LaTeX formula picker (MathLive) ---------------- */
+  // "#@" = ce que l'élève a sélectionné dans le champ (ou le contenu implicite juste avant le curseur
+  // s'il n'y a pas de sélection), "#?" = un nouveau trou vide à remplir. Ça garantit qu'entourer une
+  // sélection existante (exposant, parenthèses, racine...) marche pour CHAQUE opération, au lieu de
+  // dépendre du comportement par défaut (pas toujours cohérent) du clavier virtuel de MathLive.
+  var LATEX_QUICK_OPS = {
+    exp: { label: "x<sup>n</sup>", title: "Exposant (met la sélection en exposant)", tpl: "#@^{#?}" },
+    sub: { label: "x<sub>n</sub>", title: "Indice (met la sélection en indice)", tpl: "#@_{#?}" },
+    frac: { label: "a/b", title: "Fraction (met la sélection au numérateur)", tpl: "\\frac{#@}{#?}" },
+    sqrt: { label: "√", title: "Racine carrée (entoure la sélection)", tpl: "\\sqrt{#@}" },
+    nsqrt: { label: "ⁿ√", title: "Racine n-ième (entoure la sélection)", tpl: "\\sqrt[#?]{#@}" },
+    paren: { label: "( )", title: "Parenthèses (entoure la sélection)", tpl: "\\left(#@\\right)" },
+    abs: { label: "|x|", title: "Valeur absolue (entoure la sélection)", tpl: "\\left|#@\\right|" }
+  };
   function katexRenderSafe(latex) {
     try { return window.katex ? window.katex.renderToString(latex, { throwOnError: false, macros: KATEX_NO_COLOR_MACROS }) : esc("$" + latex + "$"); }
     catch (e) { return esc("$" + latex + "$"); }
@@ -4326,8 +4389,12 @@
         '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
     } else if (modal.type === "latex") {
+      var latexOpBtns = Object.keys(LATEX_QUICK_OPS).map(function (k) {
+        return '<button type="button" class="latex-quick-op-btn" title="' + esc(LATEX_QUICK_OPS[k].title) + '" onclick="App.insertLatexOp(\'' + k + '\')">' + LATEX_QUICK_OPS[k].label + '</button>';
+      }).join("");
       inner = '<h3>Insérer une formule</h3>' +
-        '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code.</p>' +
+        '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code. Sélectionne un morceau de ta formule puis appuie sur un des boutons ci-dessous pour l\'entourer (exposant, parenthèses, racine...).</p>' +
+        '<div class="latex-quick-ops">' + latexOpBtns + '</div>' +
         '<math-field id="latex-mathfield" class="latex-mathfield"></math-field>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.insertLatexFormula()">Insérer</button></div>';
     } else if (modal.type === "periodic") {
@@ -4483,6 +4550,13 @@
         mf.focus();
         if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.show();
       }
+    },
+    insertLatexOp: function (key) {
+      var op = LATEX_QUICK_OPS[key];
+      var mf = document.getElementById("latex-mathfield");
+      if (!op || !mf) return;
+      mf.insert(op.tpl);
+      mf.focus();
     },
     editLatexChip: function (chipEl) {
       var editorEl = chipEl.closest(".rte-editor");
@@ -5003,18 +5077,48 @@
       modal = { type: "errorDetail", status: prep.planErrorStatus, detail: prep.planErrorDetail };
       render();
     },
-    startExamPrepDay: function (prepId) {
+    startExamPrepDay: function (prepId, dateOverride) {
       var prep = epFind(prepId);
       if (!prep) return;
       epEnsureTopics(prep);
-      var today = epTodayStr();
-      var dayEntry = prep.days.find(function (d) { return d.date === today; });
-      if (!dayEntry) { toast("Pas de séance prévue aujourd'hui pour cette prépa"); return; }
+      var date = dateOverride || epTodayStr();
+      var dayEntry = prep.days.find(function (d) { return d.date === date; });
+      if (!dayEntry) { toast("Pas de séance prévue ce jour-là pour cette prépa"); return; }
       var pool = epQuestionPool(epScopeCourses(prep.scope));
       if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
       var picked = epPickDayQuestions(pool, dayEntry, prep);
-      epSession = { prepId: prepId, date: today, pool: picked, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), startedAt: Date.now(), done: false };
+      if (!picked.length) { toast("Aucune question disponible pour cette sélection"); return; }
+      var launch = function (finalPool) {
+        epStartingSessionFor = null;
+        epSession = { prepId: prepId, date: date, pool: finalPool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), startedAt: Date.now(), done: false };
+        render();
+      };
+      prep.itemUseCount = prep.itemUseCount || {};
+      // Un item déjà rencontré lors d'une séance précédente de cette même prépa est réécrit (valeurs et
+      // contexte différents, même notion) avant de démarrer, pour éviter de retomber mot pour mot sur le
+      // même exercice à chaque répétition.
+      var repeats = picked.filter(function (it) { return (it.kind === "exercise" || it.kind === "open") && prep.itemUseCount[it.id]; });
+      picked.forEach(function (it) { prep.itemUseCount[it.id] = (prep.itemUseCount[it.id] || 0) + 1; });
+      saveDB();
+      if (!repeats.length || !getApiKey()) { launch(picked); return; }
+      epStartingSessionFor = prepId + "::" + date;
       render();
+      generateExamPrepVariants(repeats).then(function (data) {
+        var byId = {};
+        (data.variants || []).forEach(function (v) { byId[v.id] = v; });
+        var finalPool = picked.map(function (it) {
+          var v = byId[it.id];
+          if (!v || !v.prompt) return it;
+          var updated = { id: it.id, kind: it.kind, prompt: v.prompt, courseId: it.courseId, courseTitle: it.courseTitle, choices: it.choices, correctIndex: it.correctIndex, explanation: it.explanation, answer: it.answer, solution: it.solution };
+          if (it.kind === "exercise" && v.solution) updated.solution = v.solution;
+          if (it.kind === "open" && v.answer) updated.answer = v.answer;
+          return updated;
+        });
+        launch(finalPool);
+      }).catch(function () {
+        // Pas grave si la variation échoue : on démarre quand même avec les énoncés d'origine plutôt que de bloquer l'élève.
+        launch(picked);
+      });
     },
     examPrepAnswerQcm: function (i) {
       var s = epSession;
