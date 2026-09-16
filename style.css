@@ -430,6 +430,11 @@
   .ep-readiness-fill.ep-readiness-okay { background: #d4a017; }
   .ep-readiness-fill.ep-readiness-good { background: #7cb342; }
   .ep-readiness-fill.ep-readiness-ready { background: var(--success); }
+  .ep-topic-detail { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+  .ep-topic-row { display: flex; align-items: center; gap: 10px; }
+  .ep-topic-row-name { flex: 1 1 auto; font-size: 12.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-topic-row-bar { flex: 0 0 120px; height: 7px; background: var(--surface-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border-soft); }
+  .ep-topic-row-pct { flex: 0 0 34px; text-align: right; font-size: 11px; color: var(--text-muted); }
   .ep-readiness-label.ep-readiness-low { background: rgba(210,90,90,0.15); color: var(--danger); }
   .ep-readiness-label.ep-readiness-mid { background: rgba(217,119,6,0.15); color: #d97706; }
   .ep-readiness-label.ep-readiness-okay { background: rgba(212,160,23,0.15); color: #ab7e0e; }

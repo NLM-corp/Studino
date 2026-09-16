@@ -3215,6 +3215,21 @@
       '<div class="ep-readiness-bar"><div class="ep-readiness-fill ep-readiness-' + tier + '" style="width:' + pct + '%"></div></div>' +
       '</div>';
   }
+  var epTopicDetailOpen = {}; // per prepId : détail par notion replié par défaut
+  function epTopicDetailHtml(prep) {
+    epEnsureTopics(prep);
+    var open = !!epTopicDetailOpen[prep.id];
+    var toggle = '<button class="ep-day-fc-toggle" style="margin:8px 0 4px;display:inline-block" onclick="App.toggleExamPrepTopicDetail(\'' + prep.id + '\')">' + (open ? "▾" : "▸") + ' Détail par notion (' + (prep.topics || []).length + ')</button>';
+    if (!open) return toggle;
+    var rows = (prep.topics || []).slice().sort(function (a, b) { return epTopicMastery(prep, a) - epTopicMastery(prep, b); }).map(function (t) {
+      var score = Math.round(epTopicMastery(prep, t));
+      var tier = epReadinessTier(score);
+      return '<div class="ep-topic-row"><span class="ep-topic-row-name">' + esc(t) + '</span>' +
+        '<div class="ep-topic-row-bar"><div class="ep-readiness-fill ep-readiness-' + tier + '" style="width:' + score + '%"></div></div>' +
+        '<span class="ep-topic-row-pct mono">' + score + '%</span></div>';
+    }).join("");
+    return toggle + '<div class="ep-topic-detail">' + (rows || '<p class="modal-warn">Aucune notion pour l\'instant.</p>') + '</div>';
+  }
   function renderExamPrepDetailPage(prepId) {
     var prep = epFind(prepId);
     if (!prep) { navigate("#/examprep"); return; }
@@ -3283,7 +3298,7 @@
           dayFcSection +
           '</div>';
       }).join("");
-      body = readinessHtml + '<div class="prose" style="margin:16px 0 20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      body = readinessHtml + epTopicDetailHtml(prep) + '<div class="prose" style="margin:16px 0 20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -5725,6 +5740,7 @@
     },
 
     toggleExamPrepFlashcards: function (key) { epGapFcOpen[key] = !epGapFcOpen[key]; render(); },
+    toggleExamPrepTopicDetail: function (prepId) { epTopicDetailOpen[prepId] = !epTopicDetailOpen[prepId]; render(); },
     epFlipCard: function (key) {
       var st = epFcState[key] || { idx: 0, flipped: false };
       st.flipped = !st.flipped; epFcState[key] = st; render();
