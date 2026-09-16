@@ -776,7 +776,7 @@
   .modal-overlay-top { align-items: flex-start; padding-top: 48px; }
   .latex-mathfield { width: 100%; display: block; font-size: 24px; border: 2px solid var(--border-soft); border-radius: 8px; padding: 12px; background: var(--surface-2); margin-bottom: 14px; }
   .math-chip { display: inline-block; vertical-align: middle; padding: 0 2px; border-radius: 4px; cursor: pointer; }
-  .math-chip:hover { background: var(--surface-2); outline: 1px dashed var(--border-soft); }
+  .rte-editor .math-chip:hover { outline: 1px dashed var(--border-soft); }
 
   /* ---------- Tableau périodique ---------- */
   .modal-periodic { max-width: 800px; }
