@@ -755,15 +755,25 @@
     var budget = Math.max(10, dayEntry.minutes || 20);
     var picked = [];
     var used = 0;
-    // Une séance d'au moins 15 min doit inclure un vrai exercice (pas que du QCM), s'il y en a un dispo.
-    if (budget >= 15) {
-      var exIdx = scored.findIndex(function (s) { return s.item.kind === "exercise"; });
-      if (exIdx !== -1) { picked.push(scored[exIdx].item); used += epEstimatedMinutes(scored[exIdx].item); scored.splice(exIdx, 1); }
-    }
-    for (var i = 0; i < scored.length && used < budget; i++) {
-      picked.push(scored[i].item);
-      used += epEstimatedMinutes(scored[i].item);
-    }
+    // Une vraie préparation d'examen doit être dominée par des exercices complets et des questions
+    // ouvertes (réponse tapée, sans indices) plutôt que par du QCM de simple rappel : on réserve
+    // d'abord la majorité du budget de temps aux formats exigeants, le QCM ne comble que ce qu'il reste.
+    var byKind = { exercise: [], open: [], qcm: [] };
+    scored.forEach(function (s) { byKind[s.item.kind].push(s.item); });
+    var take = function (kind, limit) {
+      while (byKind[kind].length && used < limit) {
+        var it = byKind[kind].shift();
+        picked.push(it);
+        used += epEstimatedMinutes(it);
+      }
+    };
+    take("exercise", budget * 0.65);
+    take("open", budget * 0.9);
+    take("qcm", budget);
+    // S'il reste du budget faute d'assez d'exercices/questions ouvertes disponibles, complète avec ce
+    // qu'il reste peu importe le type plutôt que de raccourcir la séance.
+    var rest = byKind.exercise.concat(byKind.open, byKind.qcm);
+    for (var i = 0; i < rest.length && used < budget; i++) { picked.push(rest[i]); used += epEstimatedMinutes(rest[i]); }
     if (!picked.length && scored.length) picked.push(scored[0].item);
     for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
