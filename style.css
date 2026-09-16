@@ -774,9 +774,6 @@
   /* ---------- LaTeX formula picker (MathLive) ---------- */
   .modal-wide { max-width: 640px; }
   .modal-overlay-top { align-items: flex-start; padding-top: 48px; }
-  .latex-quick-ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .latex-quick-op-btn { min-width: 42px; padding: 7px 10px; border-radius: 8px; border: 2px solid var(--border-soft); background: var(--surface-2); color: var(--text); font-size: 15px; font-weight: 700; cursor: pointer; }
-  .latex-quick-op-btn:hover { border-color: var(--accent); color: var(--accent-strong); }
   .latex-mathfield { width: 100%; display: block; font-size: 24px; border: 2px solid var(--border-soft); border-radius: 8px; padding: 12px; background: var(--surface-2); margin-bottom: 14px; }
   .math-chip { display: inline-block; vertical-align: middle; padding: 0 2px; border-radius: 4px; cursor: pointer; }
   .rte-editor .math-chip:hover { outline: 1px dashed var(--border-soft); }

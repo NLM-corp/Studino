@@ -3822,19 +3822,6 @@
   }
 
   /* ---------------- LaTeX formula picker (MathLive) ---------------- */
-  // "#@" = ce que l'élève a sélectionné dans le champ (ou le contenu implicite juste avant le curseur
-  // s'il n'y a pas de sélection), "#?" = un nouveau trou vide à remplir. Ça garantit qu'entourer une
-  // sélection existante (exposant, parenthèses, racine...) marche pour CHAQUE opération, au lieu de
-  // dépendre du comportement par défaut (pas toujours cohérent) du clavier virtuel de MathLive.
-  var LATEX_QUICK_OPS = {
-    exp: { label: "x<sup>n</sup>", title: "Exposant (met la sélection en exposant)", tpl: "#@^{#?}" },
-    sub: { label: "x<sub>n</sub>", title: "Indice (met la sélection en indice)", tpl: "#@_{#?}" },
-    frac: { label: "a/b", title: "Fraction (met la sélection au numérateur)", tpl: "\\frac{#@}{#?}" },
-    sqrt: { label: "√", title: "Racine carrée (entoure la sélection)", tpl: "\\sqrt{#@}" },
-    nsqrt: { label: "ⁿ√", title: "Racine n-ième (entoure la sélection)", tpl: "\\sqrt[#?]{#@}" },
-    paren: { label: "( )", title: "Parenthèses (entoure la sélection)", tpl: "\\left(#@\\right)" },
-    abs: { label: "|x|", title: "Valeur absolue (entoure la sélection)", tpl: "\\left|#@\\right|" }
-  };
   function katexRenderSafe(latex) {
     try { return window.katex ? window.katex.renderToString(latex, { throwOnError: false, macros: KATEX_NO_COLOR_MACROS }) : esc("$" + latex + "$"); }
     catch (e) { return esc("$" + latex + "$"); }
@@ -4399,12 +4386,8 @@
         '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
     } else if (modal.type === "latex") {
-      var latexOpBtns = Object.keys(LATEX_QUICK_OPS).map(function (k) {
-        return '<button type="button" class="latex-quick-op-btn" title="' + esc(LATEX_QUICK_OPS[k].title) + '" onclick="App.insertLatexOp(\'' + k + '\')">' + LATEX_QUICK_OPS[k].label + '</button>';
-      }).join("");
       inner = '<h3>Insérer une formule</h3>' +
-        '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code. Sélectionne un morceau de ta formule puis appuie sur un des boutons ci-dessous pour l\'entourer (exposant, parenthèses, racine...).</p>' +
-        '<div class="latex-quick-ops">' + latexOpBtns + '</div>' +
+        '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code.</p>' +
         '<math-field id="latex-mathfield" class="latex-mathfield"></math-field>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.insertLatexFormula()">Insérer</button></div>';
     } else if (modal.type === "periodic") {
@@ -4560,13 +4543,6 @@
         mf.focus();
         if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.show();
       }
-    },
-    insertLatexOp: function (key) {
-      var op = LATEX_QUICK_OPS[key];
-      var mf = document.getElementById("latex-mathfield");
-      if (!op || !mf) return;
-      mf.insert(op.tpl);
-      mf.focus();
     },
     editLatexChip: function (chipEl) {
       var editorEl = chipEl.closest(".rte-editor");
