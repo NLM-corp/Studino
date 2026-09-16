@@ -426,6 +426,23 @@
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
 
+  // Gemini écrit parfois une commande LaTeX (\text, \bullet, \frac, \forall...) avec un seul backslash
+  // au lieu de le doubler comme l'exige JSON. Quand la lettre qui suit est "t", "b" ou "f", ce simple
+  // backslash correspond pile à une VRAIE séquence d'échappement JSON (tabulation/retour arrière/saut de
+  // page) : JSON.parse l'interprète donc silencieusement comme ce caractère de contrôle au lieu de le
+  // garder tel quel, ce qui casse l'affichage ("\text{...}" devient une tabulation suivie de "ext{...}").
+  // Ces 3 caractères de contrôle n'ont eux-mêmes aucune raison légitime d'apparaître dans un texte
+  // généré, donc on restaure sans risque le backslash littéral partout où on les trouve après coup.
+  function repairStrayLatexEscapes(value) {
+    if (typeof value === "string") return value.replace(/[\b\t\f]/g, function (ch) { return "\\" + { "\b": "b", "\t": "t", "\f": "f" }[ch]; });
+    if (Array.isArray(value)) return value.map(repairStrayLatexEscapes);
+    if (value && typeof value === "object") {
+      var out = {};
+      Object.keys(value).forEach(function (k) { out[k] = repairStrayLatexEscapes(value[k]); });
+      return out;
+    }
+    return value;
+  }
   async function callGemini(parts, schema) {
     var apiKey = getApiKey();
     if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
@@ -470,7 +487,7 @@
           lastErr.detail = JSON.stringify(data, null, 2);
           continue;
         }
-        return JSON.parse(candParts[0].text);
+        return repairStrayLatexEscapes(JSON.parse(candParts[0].text));
       }
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
@@ -787,7 +804,7 @@
   /* --- Baromètre de préparation : un score de maîtrise 0-100 par notion, mis à jour uniquement par
      des réponses vérifiées (jamais par du simple temps passé), avec rendements décroissants près de
      100 et pénalité plus lourde en cas d'erreurs répétées ou de fausse confiance (score déjà haut). --- */
-  var EP_MASTERY_WEIGHT = { qcm: 1, open: 1.4, exercise: 2.2, flashcard: 0.4 };
+  var EP_MASTERY_WEIGHT = { qcm: 1, open: 1.4, exercise: 2.2 };
   // Points Dino Park gagnés par bonne réponse pendant une séance de prépa — un cran sous les montants
   // équivalents du quiz/exercice dédiés de Dino Park (25 / 150), puisqu'une prépa se rejoue "Refaire la
   // séance" à volonté ; ça reste une vraie récompense quotidienne sans permettre de exploser l'économie.
@@ -5761,12 +5778,10 @@
       var st = epFcState[key] || { idx: 0, flipped: false };
       var card = cards[st.idx];
       if (!card) return;
+      // Auto-évaluation non vérifiée (l'élève juge lui-même s'il "sait" la carte) : ça n'influence
+      // jamais le baromètre, sans quoi il suffirait de re-marquer "Je la sais" en boucle pour le
+      // faire grimper artificiellement sans avoir vraiment répondu à une question notée.
       card.status = status;
-      // "Je la sais" est un signal de maîtrise plus faible qu'une vraie question corrigée (auto-évaluation),
-      // mais ça compte quand même un peu — "À revoir" n'inflige aucune pénalité, ce n'est pas une erreur notée.
-      if (status === "known" && card.topic && prep.topics && prep.topics.indexOf(card.topic) !== -1) {
-        epApplyMasteryUpdate(prep, card.topic, "flashcard", true);
-      }
       saveDB();
       if (st.idx < cards.length - 1) { st.idx += 1; st.flipped = false; }
       epFcState[key] = st;
