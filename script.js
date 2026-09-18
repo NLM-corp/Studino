@@ -5125,7 +5125,18 @@
       if (!repeats.length || !getApiKey()) { launch(picked); return; }
       epStartingSessionFor = prepId + "::" + date;
       render();
+      // Timeout dédié : si Gemini traîne ou que la requête reste bloquée, on ne doit JAMAIS laisser
+      // l'élève planté indéfiniment sur le sablier — au pire on démarre avec les énoncés d'origine.
+      var settled = false;
+      var timeoutId = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        launch(picked);
+      }, 25000);
       generateExamPrepVariants(repeats).then(function (data) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
         var byId = {};
         (data.variants || []).forEach(function (v) { byId[v.id] = v; });
         var finalPool = picked.map(function (it) {
@@ -5138,6 +5149,9 @@
         });
         launch(finalPool);
       }).catch(function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
         // Pas grave si la variation échoue : on démarre quand même avec les énoncés d'origine plutôt que de bloquer l'élève.
         launch(picked);
       });
