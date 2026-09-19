@@ -1804,6 +1804,7 @@
       u.dinoPark = { points: 500, unlockedZones: ["foret"], eggs: [], incubators: [null, null, null], enclosures: [], dinosaurs: [], discovered: {}, shops: {}, encBuildBugRefund: true };
     }
     var dp = u.dinoPark;
+    dpAdvanceClock(dp);
     if (!dp.encBuildBugRefund) {
       // dpBuildEnclosure débitait les points AVANT de planter sur une variable inexistante lors de la
       // création de l'enclos : l'achat était prélevé sans jamais donner l'enclos. Remboursement unique
@@ -1832,7 +1833,7 @@
     dp.enclosures.forEach(function (e) { encIds[e.id] = true; });
     dp.dinosaurs = dp.dinosaurs.filter(function (d) { return !!dpSpecies(d.speciesId); });
     dp.dinosaurs.forEach(function (d) { if (d.enclosureId && !encIds[d.enclosureId]) d.enclosureId = null; });
-    dp.dinosaurs.forEach(dpTick);
+    dp.dinosaurs.forEach(function (d) { dpTick(d, dp.virtualNow); });
     dp.dinosaurs = dp.dinosaurs.filter(function (d) {
       if (dpHealth(d) <= 0) { toast("💀 " + d.name + " n'a pas survécu..."); return false; }
       if (!d.enclosureId && (Date.now() - d.bornAt) > DP_HATCH_PLACEMENT_LIMIT) { toast("💀 " + d.name + " n'a pas survécu, il n'a pas été mis dans un enclos à temps..."); return false; }
@@ -1865,9 +1866,23 @@
   function dpDinosaurById(id) { return dpData().dinosaurs.find(function (d) { return d.id === id; }); }
   function dpUnplacedDinosaurs() { return dpData().dinosaurs.filter(function (d) { return !d.enclosureId; }); }
 
-  function dpHunger(d) { return Math.max(0, Math.round(100 - ((Date.now() - d.lastFedAt) / 3600000) * 20)); }
-  function dpTick(d) {
-    var now = Date.now();
+  // Horloge virtuelle de la faim/vie : n'avance que par petits pas plafonnés à chaque tick, donc un
+  // écart réel énorme (appli fermée pendant des heures/jours) n'ajoute quasiment rien — la faim et la
+  // vie ne bougent QUE pendant qu'on joue réellement, jamais pendant qu'on est déconnecté.
+  var DP_CLOCK_MAX_STEP = 2 * 60 * 1000;
+  function dpAdvanceClock(dp) {
+    var real = Date.now();
+    if (!dp.clockAt || !dp.virtualNow) { dp.clockAt = real; dp.virtualNow = real; return; }
+    var deltaReal = real - dp.clockAt;
+    dp.virtualNow += Math.max(0, Math.min(deltaReal, DP_CLOCK_MAX_STEP));
+    dp.clockAt = real;
+  }
+  function dpHunger(d, now) {
+    if (now == null) now = dpData().virtualNow;
+    return Math.max(0, Math.round(100 - ((now - d.lastFedAt) / 3600000) * 20));
+  }
+  function dpTick(d, now) {
+    if (now == null) now = dpData().virtualNow;
     var last = d.healthCheckedAt || d.lastFedAt;
     // La faim met 5h à tomber à 0 (100 / 20 par heure) — on ne compte comme "heures d'affamement"
     // que le temps écoulé APRÈS ce cap, jamais tout le temps passé hors-ligne depuis le dernier repas.
@@ -5576,7 +5591,7 @@
     },
     dpCollectHatched: function (slot) {
       var dp = dpData(); var inc = dp.incubators[slot]; var sp = dpSpecies(inc.speciesId);
-      var dino = { id: uid(), speciesId: sp.id, name: sp.name, sex: Math.random() < 0.5 ? "M" : "F", bornAt: Date.now(), lastFedAt: Date.now(), health: 100, enclosureId: null };
+      var dino = { id: uid(), speciesId: sp.id, name: sp.name, sex: Math.random() < 0.5 ? "M" : "F", bornAt: Date.now(), lastFedAt: dp.virtualNow, health: 100, enclosureId: null };
       dp.dinosaurs.push(dino);
       dp.discovered[sp.id] = true;
       dp.incubators[slot] = null;
@@ -5608,11 +5623,11 @@
       var d = dpDinosaurById(dinoId); var sp = dpSpecies(d.speciesId);
       var needed = dpFoodPortionsNeeded(sp.weightKg);
       if ((dp.inventory[itemId] || 0) < needed) { toast("Pas assez de " + item.name.toLowerCase() + " en stock (" + needed + " nécessaires)"); return; }
-      dpTick(d);
+      dpTick(d, dp.virtualNow);
       dp.inventory[itemId] -= needed;
       var matches = sp.diet === "omnivore" || sp.diet === item.diet;
       if (matches) {
-        d.lastFedAt = Date.now();
+        d.lastFedAt = dp.virtualNow;
         saveDB(); toast(d.name + " a mangé : " + item.name); render();
       } else {
         d.health = Math.max(0, dpHealth(d) - 25);
@@ -5623,7 +5638,7 @@
       var dp = dpData(); var item = dpMedicineItem(itemId);
       if ((dp.inventory[itemId] || 0) < 1) { toast("Plus de " + item.name.toLowerCase() + " en stock"); return; }
       var d = dpDinosaurById(dinoId);
-      dpTick(d);
+      dpTick(d, dp.virtualNow);
       dp.inventory[itemId] -= 1;
       d.health = 100;
       saveDB(); toast(d.name + " a reçu : " + item.name); render();
