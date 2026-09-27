@@ -40,6 +40,10 @@
   var DB = { users: {}, currentUser: null, data: {} };
   var dbUsesLocalStorageFallback = false;
   function saveDB() {
+    // Horodatage de la dernière modification, par compte — c'est ce qui permet à l'import "Fusionner"
+    // (cf. plus bas) de savoir, entre deux appareils, lequel des deux a le plus avancé récemment,
+    // sans avoir à suivre précisément quel enregistrement individuel a changé.
+    if (DB.currentUser && DB.data[DB.currentUser]) DB.data[DB.currentUser].updatedAt = Date.now();
     if (dbUsesLocalStorageFallback) {
       try {
         localStorage.setItem(DB_KEY, JSON.stringify(DB));
@@ -321,12 +325,18 @@
 
   function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ""; }
   function setApiKey(k) { if (k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }
+  var apiKeyGuideShown = false; // une seule ouverture auto par chargement de page, cf. render()
 
   var VOLUME_MUSIC_STORAGE = "studino_volume_music";
   var VOLUME_SFX_STORAGE = "studino_volume_sfx";
   function getVolumeMusic() { var v = localStorage.getItem(VOLUME_MUSIC_STORAGE); return v === null ? 70 : parseInt(v, 10); }
   function getVolumeSfx() { var v = localStorage.getItem(VOLUME_SFX_STORAGE); return v === null ? 70 : parseInt(v, 10); }
 
+  // Un exercice/question qui renvoie à un support visuel (figure géométrique, graphique, spectre,
+  // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
+  // exercice importé par photo (où l'image existe déjà), rien ne garantit qu'un tel visuel existe
+  // ailleurs. L'IA doit donc le dessiner elle-même en SVG plutôt que se contenter d'en parler.
+  var FIGURE_SVG_FIELD_DESC = "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe) REPRÉSENTANT RÉELLEMENT un support visuel qui sert de DONNÉE externe au problème (ce que l'élève lirait sur un document fourni en vrai examen), JAMAIS un support qui donnerait la réponse ou la connaissance que la question est censée vérifier. Règle absolue, à appliquer AVANT toute autre considération : si la question teste une connaissance à apprendre par cœur d'après le cours (une date, un événement, une formule, une définition, un résultat, un nom, une valeur numérique à retenir), figureSvg doit rester une chaîne VIDE, même si un support visuel existerait dans l'absolu — fournir ce support reviendrait à donner la réponse à la place de l'élève (ex. jamais de frise chronologique pour une question de date d'histoire, jamais la formule elle-même en image pour une question qui demande de connaître/appliquer une formule de cours, jamais une image qui contient le mot/la définition/le résultat attendu). En dehors de ce cas, fournis un SVG uniquement quand la question donne des valeurs numériques dont l'élève ne peut PAS trouver la correspondance par le calcul ou le raisonnement, mais seulement en lisant un repère externe non mémorisable au mot près (ex. : le spectre de la lumière visible avec ses bandes de couleur et longueurs d'onde en nm quand la question donne une longueur d'onde et demande une couleur, un graphique/une courbe donnés comme données du problème à lire, une figure géométrique dont les mesures/angles sont les données de l'énoncé, une carte ou un schéma de circuit donnés comme support). Chaîne vide dans tous les autres cas (la grande majorité). Le SVG doit être lisible seul (inclure un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs numériques précises), car il s'affiche tel quel, dans n'importe quel thème clair ou sombre.";
   var COURSE_SCHEMA = {
     type: "object",
     properties: {
@@ -359,9 +369,10 @@
             choices: { type: "array", items: { type: "string" } },
             correctIndex: { type: "integer" },
             answer: { type: "string" },
-            explanation: { type: "string" }
+            explanation: { type: "string" },
+            figureSvg: { type: "string", description: FIGURE_SVG_FIELD_DESC }
           },
-          required: ["type", "category", "prompt", "choices", "correctIndex", "answer", "explanation"]
+          required: ["type", "category", "prompt", "choices", "correctIndex", "answer", "explanation", "figureSvg"]
         }
       },
       exercises: {
@@ -370,9 +381,10 @@
           type: "object",
           properties: {
             prompt: { type: "string" },
-            solution: { type: "string" }
+            solution: { type: "string" },
+            figureSvg: { type: "string", description: FIGURE_SVG_FIELD_DESC }
           },
-          required: ["prompt", "solution"]
+          required: ["prompt", "solution", "figureSvg"]
         }
       },
       figures: {
@@ -414,7 +426,8 @@
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota.\n" +
       "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Parmi ces questions, environ 70% de type \"qcm\" (4 choix, un seul indice correct de 0 à 3) et environ 30% de type \"ouverte\" (le joueur tape une réponse courte — laisse \"choices\" vide, \"correctIndex\" à 0, et renseigne \"answer\" avec la réponse attendue). Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
       "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
-      (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
+      (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. Signal à prendre TRÈS au sérieux : dès que le texte source dit \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma, c'est qu'un visuel est physiquement présent à cet endroit — cherche-le activement et capture-le, ne le laisse jamais de côté. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
+      "8. Pour CHAQUE question de révision et CHAQUE exercice (champ \"figureSvg\" de chacun) : dès qu'un support visuel est NÉCESSAIRE pour lire une DONNÉE externe du problème — même si l'énoncé ne le dit pas explicitement en mots (ex. donner des longueurs d'onde et demander une couleur suppose le spectre visible sous les yeux, même sans le mot \"spectre\" dans l'énoncé) —, tu DOIS dessiner toi-même ce support en SVG dans \"figureSvg\". ATTENTION, ne confonds jamais ça avec fournir la réponse : si la question teste une connaissance à savoir par cœur d'après le cours (une date/un événement d'histoire-géo, une formule de maths/physique à connaître, une définition, un résultat, un nom), \"figureSvg\" reste VIDE, un point c'est tout — par exemple jamais de frise chronologique pour une question de date, jamais la formule elle-même dessinée en image pour une question qui demande de connaître ou d'appliquer une formule du cours. " + FIGURE_SVG_FIELD_DESC + " Pour toutes les autres questions/exercices (la grande majorité, purement textuels ou calculatoires, ou testant une connaissance à savoir par cœur), laisse \"figureSvg\" vide.\n\n" +
       "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique (dans n'importe quel champ), utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si le contenu source (ou ton explication) comporte un tableau, reproduis-le comme un vrai tableau Markdown, avec EXACTEMENT ce format (une ligne d'en-tête, puis une ligne de séparation avec des tirets, puis une ligne par ligne du tableau, jamais de texte ou de liste à puces à la place) :\n" +
@@ -742,11 +755,11 @@
     var pool = [];
     courses.forEach(function (co) {
       (co.quizQuestions || []).forEach(function (q) {
-        if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
-        else pool.push({ id: q.id, kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, courseId: co.id, courseTitle: co.title });
+        if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        else pool.push({ id: q.id, kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
       });
       (co.exercises || []).forEach(function (ex) {
-        pool.push({ id: ex.id, kind: "exercise", prompt: ex.prompt, solution: ex.solution, courseId: co.id, courseTitle: co.title });
+        pool.push({ id: ex.id, kind: "exercise", prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "", courseId: co.id, courseTitle: co.title });
       });
     });
     return pool;
@@ -795,10 +808,12 @@
     for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
   }
-  function epFinishSessionAnswer(s, item, yourAnswerText, correctAnswerText, wasCorrect) {
+  function epFinishSessionAnswer(s, item, yourAnswerText, correctAnswerText, level, mistakes) {
+    var wasCorrect = gradeLevelIsSuccess(level);
     s.wasCorrect = wasCorrect;
+    s.level = level;
     if (wasCorrect) s.correct++; else s.wrong++;
-    s.history.push({ prompt: item.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: item.explanation || "", wasCorrect: wasCorrect });
+    s.history.push({ prompt: item.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: item.explanation || "", wasCorrect: wasCorrect, level: level, mistakes: mistakes || [], figureSvg: item.figureSvg || "" });
   }
 
   /* --- Baromètre de préparation : un score de maîtrise 0-100 par notion, mis à jour uniquement par
@@ -812,9 +827,11 @@
   function epSessionPointsEarned(s) {
     var total = 0;
     s.history.forEach(function (h, i) {
-      if (!h.wasCorrect) return;
+      var level = h.level || (h.wasCorrect ? "correct" : "wrong");
+      var factor = (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).pointsFactor;
+      if (!factor) return;
       var kind = s.pool[i] ? s.pool[i].kind : "qcm";
-      total += EP_SESSION_POINTS_PER_CORRECT[kind] || EP_SESSION_POINTS_PER_CORRECT.qcm;
+      total += Math.round((EP_SESSION_POINTS_PER_CORRECT[kind] || EP_SESSION_POINTS_PER_CORRECT.qcm) * factor);
     });
     return total;
   }
@@ -834,22 +851,26 @@
     var t = prep.topicMastery && prep.topicMastery[topic];
     return t ? t.score : 0;
   }
-  function epApplyMasteryUpdate(prep, topic, kind, wasCorrect) {
+  function epApplyMasteryUpdate(prep, topic, kind, level) {
     prep.topicMastery = prep.topicMastery || {};
     var t = prep.topicMastery[topic] || { score: 0, streak: 0 };
     var weight = EP_MASTERY_WEIGHT[kind] || 1;
-    if (wasCorrect) {
+    // factor < 1 fait "monter un peu ou pas" le baromètre selon la réussite réelle de l'exo (1 erreur
+    // isolée fait quand même progresser, 2 erreurs pèsent bien moins qu'un vrai "Faux") plutôt que de
+    // traiter toute imperfection comme un échec complet ou une réussite totale.
+    var factor = (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).masteryFactor;
+    if (gradeLevelIsSuccess(level)) {
       t.streak = t.streak > 0 ? t.streak + 1 : 1;
       var room = (100 - t.score) / 100; // rendements décroissants : un sujet déjà solide progresse peu
       // Une notion n'est réellement retestée que quelques fois sur toute la durée d'une prépa (pas à
       // l'infini) : le gain doit donc converger vite pour qu'enchaîner les bonnes réponses comme prévu
       // amène réellement à ~100%, au lieu de plafonner bien avant même avec un sans-faute complet.
-      t.score = Math.min(100, t.score + 30 * weight * room);
+      t.score = Math.min(100, t.score + 30 * weight * room * factor);
     } else {
       t.streak = t.streak < 0 ? t.streak - 1 : -1;
       var confidencePenalty = 8 + (t.score / 100) * 12; // casser un score déjà haut fait plus mal (fausse confiance)
       var repeatMultiplier = Math.min(2.2, 1 + (Math.abs(t.streak) - 1) * 0.35); // erreurs répétées = pénalité qui s'aggrave
-      t.score = Math.max(0, t.score - confidencePenalty * weight * repeatMultiplier);
+      t.score = Math.max(0, t.score - confidencePenalty * weight * repeatMultiplier * factor);
     }
     prep.topicMastery[topic] = t;
   }
@@ -914,7 +935,7 @@
   };
   function buildGapFlashcardsPrompt(wrongItems) {
     var lines = wrongItems.map(function (h, i) {
-      return (i + 1) + ". Question posée : " + h.prompt + "\nBonne réponse : " + h.correctAnswer + (h.explanation ? "\nExplication : " + h.explanation : "");
+      return (i + 1) + ". Question posée : " + h.prompt + "\nBonne réponse : " + h.correctAnswer + (h.explanation ? "\nExplication : " + h.explanation : "") + (h.mistakes && h.mistakes.length ? "\nErreur(s) précise(s) commise(s) par l'élève : " + h.mistakes.join(" ; ") : "");
     }).join("\n\n");
     return "Un élève francophone a fait les erreurs suivantes pendant une séance de révision :\n\n" + lines + "\n\n" +
       "Pour CHAQUE erreur ci-dessus, crée exactement 2 flashcards de révision (une question courte au recto dans \"q\", une réponse courte et précise au verso dans \"a\") qui aident à retravailler la notion à l'origine de CETTE erreur précise. Les 2 flashcards d'une même erreur doivent aborder la notion sous deux angles différents (pas juste reformuler la même question), pour bien l'ancrer. Il y a " + wrongItems.length + " erreur(s) : renvoie EXACTEMENT " + (wrongItems.length * 2) + " flashcards, dans l'ordre des erreurs listées (les 2 premières pour l'erreur 1, les 2 suivantes pour l'erreur 2, etc.).\n\n" +
@@ -939,7 +960,8 @@
             id: { type: "string", description: "Reprend EXACTEMENT l'id fourni pour cet item." },
             prompt: { type: "string", description: "Nouvel énoncé, mêmes notions et même difficulté, mais valeurs et contexte différents." },
             answer: { type: "string", description: "Nouvelle réponse attendue, uniquement si l'item d'origine était une question ouverte courte." },
-            solution: { type: "string", description: "Nouvelle solution de référence complète, uniquement si l'item d'origine était un exercice complet." }
+            solution: { type: "string", description: "Nouvelle solution de référence complète, uniquement si l'item d'origine était un exercice complet." },
+            figureSvg: { type: "string", description: "UNIQUEMENT si l'item d'origine avait déjà un support visuel : nouveau SVG complet de ce même support, redessiné avec les nouvelles valeurs/le nouveau contexte de cet énoncé (mêmes règles qu'à la génération initiale : autonome, fond blanc, lisible seul). Laisse vide si l'item d'origine n'avait pas de support visuel." }
           },
           required: ["id", "prompt"]
         }
@@ -949,7 +971,7 @@
   };
   function buildExamPrepVariantPrompt(items) {
     var lines = items.map(function (it) {
-      return "ID : " + it.id + "\nType : " + (it.kind === "exercise" ? "exercice complet" : "question ouverte courte") + "\nÉnoncé actuel : " + it.prompt + "\n" + (it.kind === "exercise" ? "Solution actuelle : " + it.solution : "Réponse actuelle : " + it.answer);
+      return "ID : " + it.id + "\nType : " + (it.kind === "exercise" ? "exercice complet" : "question ouverte courte") + "\nÉnoncé actuel : " + it.prompt + "\n" + (it.kind === "exercise" ? "Solution actuelle : " + it.solution : "Réponse actuelle : " + it.answer) + (it.figureSvg ? "\nSupport visuel actuel (SVG) : " + it.figureSvg : "");
     }).join("\n\n");
     return "Un élève francophone révise pour un examen et va retomber sur les questions/exercices suivants, déjà rencontrés lors d'une séance PRÉCÉDENTE de cette même préparation. Pour éviter qu'il ne fasse que réciter par cœur une réponse déjà mémorisée, réécris CHACUN avec un énoncé DIFFÉRENT — mais la façon de varier dépend ENTIÈREMENT de la nature de la question, distingue bien les deux cas :\n" +
       "- SI c'est une question de calcul ou de méthode (maths, physique, chimie...) où la compétence testée est une PROCÉDURE qui marche avec n'importe quelles données : change les valeurs numériques ET le contexte/scénario concret (autre produit, autre situation, autres grandeurs, autres noms...).\n" +
@@ -957,6 +979,7 @@
       "- Dans tous les cas, garde EXACTEMENT la même notion/compétence testée et le même niveau de difficulté et la même structure (même nombre de sous-questions pour un exercice).\n" +
       "- pour un exercice complet, fournis une nouvelle \"solution\" complète et détaillée (avec le résultat final), cohérente avec le nouvel énoncé ;\n" +
       "- pour une question ouverte courte, fournis la nouvelle \"answer\" attendue, cohérente avec le nouvel énoncé.\n\n" +
+      "- si un item a un \"Support visuel actuel (SVG)\" ci-dessous, il DOIT garder un support visuel : redessine-le dans \"figureSvg\" pour qu'il corresponde exactement au nouvel énoncé (nouvelles valeurs, nouvelles mesures, nouveau contexte) — ne le laisse jamais vide dans ce cas, et ne réutilise jamais tel quel l'ancien SVG s'il ne correspond plus aux nouvelles valeurs.\n\n" +
       "Items à varier :\n\n" + lines + "\n\n" +
       "Renvoie un tableau \"variants\", une entrée par item, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ ou $$...$$ — jamais de commande de couleur LaTeX.\n\n" +
@@ -983,18 +1006,28 @@
         if (s.history[m.index] && canon) topicByHistoryIdx[m.index] = canon;
       });
       var touchedTopics = {};
+      var mistakesByTopic = {};
       Object.keys(topicByHistoryIdx).forEach(function (idxStr) {
         var idx = +idxStr;
         var topic = topicByHistoryIdx[idx];
         var kind = s.pool[idx] ? s.pool[idx].kind : "qcm";
-        epApplyMasteryUpdate(prep, topic, kind, s.history[idx].wasCorrect);
+        var h = s.history[idx];
+        var level = h.level || (h.wasCorrect ? "correct" : "wrong");
+        epApplyMasteryUpdate(prep, topic, kind, level);
         touchedTopics[topic] = true;
+        // On garde le détail précis de chaque erreur (pas juste le nom de la notion) pour pouvoir dire
+        // ensuite exactement SUR QUOI l'élève s'est trompé dans cette notion, pas juste QUE c'est raté.
+        if (h.mistakes && h.mistakes.length) {
+          mistakesByTopic[topic] = mistakesByTopic[topic] || [];
+          h.mistakes.forEach(function (m) { if (mistakesByTopic[topic].indexOf(m) === -1) mistakesByTopic[topic].push(m); });
+        }
       });
       Object.keys(touchedTopics).forEach(function (topic) {
         var score = epTopicMastery(prep, topic);
-        if (score >= 70) review.mastered.push(topic);
-        else if (score <= 35) review.weak.push(topic);
-        else review.unclear.push(topic);
+        var entry = { topic: topic, mistakes: mistakesByTopic[topic] || [] };
+        if (score >= 70) review.mastered.push(entry);
+        else if (score <= 35) review.weak.push(entry);
+        else review.unclear.push(entry);
       });
       prep.gapFlashcards = prep.gapFlashcards || [];
       // s.date est le jour où l'entraînement a démarré (fixé au clic sur "Commencer"), jamais la date
@@ -1025,7 +1058,7 @@
     s.done = true;
     render();
   }
-  var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, correct, wrong, history, done }
+  var epSession = null; // { prepId, date, pool:[{q,courseId,courseTitle}], idx, answer, answerHtml, status, aiFeedback, revealed, wasCorrect, level, mistakes, correct, wrong, history, done }
   var epFcState = {}; // per prepId: { idx, flipped } — état du flip-card des "Flashcards des lacunes"
   var epGapFcOpen = {}; // per prepId: bool — le deck de flashcards des lacunes est replié par défaut
   var epStartingSessionFor = null; // "prepId::date" pendant la génération des variantes d'exercices déjà vus, avant que la séance ne s'ouvre
@@ -1033,17 +1066,39 @@
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
     properties: {
-      correct: { type: "boolean" },
+      level: { type: "string", enum: ["correct", "minor", "major", "wrong"], description: "correct = juste sur le fond, aucune erreur notable. minor = l'essentiel est compris et juste, une seule petite erreur ou imprécision isolée. major = plusieurs erreurs, ou une erreur importante, mais une partie du raisonnement/de la réponse reste juste et montre une vraie compréhension. wrong = faux sur le fond, hors sujet, ou vide." },
+      mistakes: { type: "array", items: { type: "string" }, description: "Liste des erreurs précises commises (tableau vide si level est \"correct\"). Chaque entrée doit nommer précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée\", \"oublie de convertir en mètres\"), jamais une formule vague comme \"erreur de calcul\"." },
       feedback: { type: "string" }
     },
-    required: ["correct", "feedback"]
+    required: ["level", "mistakes", "feedback"]
   };
+  // Baromètre + affichage à 4 niveaux plutôt qu'un simple vrai/faux : une toute petite erreur isolée
+  // (level="minor") ne doit pas être traitée comme un échec complet quand le reste est compris, et à
+  // l'inverse plusieurs erreurs (level="major") ne doit pas peser aussi lourd qu'un vrai "Faux".
+  var GRADE_LEVELS = {
+    correct: { label: "Correct", cls: "correct", masteryFactor: 1, pointsFactor: 1 },
+    minor: { label: "1 erreur", cls: "minor", masteryFactor: 0.55, pointsFactor: 0.75 },
+    major: { label: "2 erreurs", cls: "major", masteryFactor: 0.45, pointsFactor: 0.5 },
+    wrong: { label: "Faux", cls: "wrong", masteryFactor: 1, pointsFactor: 0 }
+  };
+  function normalizeGradeLevel(result) {
+    var lvl = result && result.level;
+    if (GRADE_LEVELS[lvl]) return lvl;
+    return (result && result.correct) ? "correct" : "wrong"; // filet de sécurité si l'IA ne respecte pas l'enum
+  }
+  function gradeLevelIsSuccess(level) { return level === "correct" || level === "minor"; }
+  function gradeLevelLabel(level) { return (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).label; }
+  function gradeLevelCls(level) { return (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).cls; }
+  function gradeMistakesHtml(mistakes) {
+    if (!mistakes || !mistakes.length) return "";
+    return '<ul class="grade-mistakes">' + mistakes.map(function (m) { return '<li>' + esc(m) + '</li>'; }).join("") + '</ul>';
+  }
   function buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) {
     return "Tu es un correcteur pédagogique pour un élève francophone. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
       "Exercice : " + exercisePrompt + "\n\n" +
       "Solution de référence : " + referenceSolution + "\n\n" +
       "Réponse de l'élève : " + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie)") + "\n\n" +
-      "Détermine si la réponse de l'élève est correcte : le raisonnement et/ou le résultat final doivent être justes sur le fond (une formulation différente ou incomplète mais juste sur le fond peut compter comme correcte ; une réponse vide, hors sujet ou clairement fausse doit être jugée incorrecte). Donne ensuite un feedback court, bienveillant et constructif en français expliquant pourquoi c'est juste ou faux, et ce qui manque le cas échéant.\n\n" +
+      "Évalue la réponse de l'élève avec un niveau de granularité fin plutôt qu'un simple juste/faux : \"correct\" si le raisonnement et/ou le résultat sont justes sur le fond (une formulation différente ou incomplète mais juste sur le fond compte comme correcte) ; \"minor\" si l'élève a clairement compris la notion mais fait une seule petite erreur isolée (étourderie, imprécision, faute de conversion...) qui ne remet pas en cause la compréhension globale ; \"major\" si plusieurs erreurs s'accumulent ou qu'une erreur importante subsiste, mais qu'une partie du raisonnement montre quand même une réelle compréhension ; \"wrong\" si la réponse est fausse sur le fond, hors sujet, ou vide. Liste ensuite dans \"mistakes\" chaque erreur précise commise (vide si \"correct\"), en nommant la notion exacte en cause. Donne enfin un feedback court, bienveillant et constructif en français expliquant ce qui est juste ou faux, et ce qui manque le cas échéant.\n\n" +
       "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
@@ -1095,7 +1150,7 @@
       "2. Pour chaque exercice, retranscris fidèlement son énoncé complet dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\", chacune sur sa propre ligne (une ligne \"- \" par sous-question si elles sont nombreuses, sinon une ligne par ligne du document source). N'ajoute JAMAIS de titre du type \"## Exercice N\" ou \"### Énoncé\" en tête du \"statement\" : l'application affiche déjà le numéro de l'exercice ailleurs, ce serait redondant. Utilise ** pour le gras et $...$/$$...$$ pour les formules, mais pas de ## ni ### ici. Corrige les fautes évidentes mais garde le sens exact.\n" +
       "3. Devine la matière probable de l'ensemble des exercices (un seul \"subjectGuess\" pour tout le document).\n" +
       "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n" +
-      "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou dessin VISUEL réellement NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte) et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. INTERDIT : ne crée JAMAIS de figure pour du texte, même encadré ou stylisé (citation, définition, énoncé) — ce texte doit TOUJOURS être retranscrit normalement dans \"statement\", jamais capturé comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
+      "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou dessin VISUEL réellement NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte) et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. Signal à prendre TRÈS au sérieux : dès qu'un énoncé contient les mots \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma/d'une figure, c'est qu'un visuel est physiquement présent dans la photo à cet endroit — cherche-le activement et capture-le, ne le laisse JAMAIS de côté même si le document contient beaucoup d'exercices et que tu dois rester attentif jusqu'au dernier. INTERDIT : ne crée JAMAIS de figure pour du texte, même encadré ou stylisé (citation, définition, énoncé) — ce texte doit TOUJOURS être retranscrit normalement dans \"statement\", jamais capturé comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
@@ -1108,25 +1163,105 @@
     var parts = images.concat([{ text: buildImportedExercisePrompt(images.length) }]);
     return callGemini(parts, IMPORTED_EXERCISE_SCHEMA);
   }
-  function runImportedExerciseGeneration(entry) {
+  function geminiImageParts(dataUrls) {
+    return (dataUrls || []).map(function (url) {
+      var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
+      return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
+    }).filter(Boolean);
+  }
+  // Filet de sécurité final quand même la passe de découpage-depuis-la-photo échoue deux fois : au lieu
+  // de laisser l'élève sans rien avec juste un avertissement, on redemande à l'IA de regarder la même
+  // photo et de RECONSTRUIRE elle-même le schéma en SVG (au lieu d'essayer de le découper au pixel
+  // près). C'est un mode de récupération différent du découpage, donc ça rattrape des cas où le
+  // découpage précis échoue mais où l'IA "voit" très bien de quoi il s'agit.
+  var FIGURE_RECONSTRUCTION_SCHEMA = {
+    type: "object",
+    properties: {
+      results: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Reprend EXACTEMENT l'id fourni pour cet élément." },
+            figureSvg: { type: "string", description: "SVG autonome reconstruisant fidèlement le schéma/graphique que tu observes dans la/les photo(s) pour CET élément précis — pas un dessin générique, une vraie reconstruction (mêmes proportions, mêmes valeurs/graduations visibles). Chaîne vide UNIQUEMENT si tu ne retrouves vraiment aucun schéma correspondant dans les photos fournies." }
+          },
+          required: ["id", "figureSvg"]
+        }
+      }
+    },
+    required: ["results"]
+  };
+  function buildFigureReconstructionPrompt(items) {
+    var lines = items.map(function (it) { return "ID : " + it.id + "\nTexte : " + it.text; }).join("\n\n");
+    return "Voici la ou les photos originales d'un document. Les énoncés suivants, extraits de ce document, font référence à un schéma ou un graphique (« ci-contre », « ci-dessous »...) qu'une première tentative de découpage automatique n'a pas réussi à récupérer dans la photo.\n\n" +
+      "Pour CHAQUE élément ci-dessous : regarde attentivement la ou les photos, retrouve toi-même le schéma/graphique qui correspond à cet énoncé précis, et RECONSTRUIS-le fidèlement en SVG dans \"figureSvg\" — pas une illustration générique, une vraie reconstruction de ce que tu observes réellement sur la photo (même forme de courbe, mêmes graduations/valeurs, mêmes proportions). " + FIGURE_SVG_FIELD_DESC + "\n\n" +
+      "Éléments :\n\n" + lines + "\n\n" +
+      "Renvoie un tableau \"results\", une entrée par élément, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateFigureReconstructions(imageDataUrls, items) {
+    var parts = geminiImageParts(imageDataUrls).concat([{ text: buildFigureReconstructionPrompt(items) }]);
+    return callGemini(parts, FIGURE_RECONSTRUCTION_SCHEMA);
+  }
+  // Tente de reconstruire en SVG les schémas manqués d'une liste d'éléments — mute chaque élément en
+  // place (setSvg) et renvoie une promesse résolue avec un booléen : reste-t-il au moins un élément
+  // toujours sans figure une fois la reconstruction tentée ?
+  function reconstructMissingFigures(imageDataUrls, items, getText, getSvg, setSvg) {
+    var stillMissing = function () { return items.some(function (it) { return statementMissesFigure(getText(it)) && !getSvg(it); }); };
+    var missing = [];
+    items.forEach(function (it, i) { if (statementMissesFigure(getText(it)) && !getSvg(it)) missing.push({ id: String(i), it: it }); });
+    if (!missing.length || !imageDataUrls || !imageDataUrls.length) return Promise.resolve(stillMissing());
+    return generateFigureReconstructions(imageDataUrls, missing.map(function (m) { return { id: m.id, text: getText(m.it) }; }))
+      .then(function (data) {
+        var byId = {};
+        (data.results || []).forEach(function (r) { byId[r.id] = r; });
+        missing.forEach(function (m) {
+          var r = byId[m.id];
+          if (r && r.figureSvg) setSvg(m.it, r.figureSvg);
+        });
+        return stillMissing();
+      })
+      .catch(function () { return true; });
+  }
+  function runImportedExerciseGeneration(entry, attempt) {
+    attempt = attempt || 1;
     entry.status = "processing";
     entry.error = null;
     saveDB(); render();
     generateImportedExercise(entry.images).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
       return resolveFigures(data.figures, entry.images).then(function (resolved) {
-        entry.exercises = (data.exercises || []).map(function (ex) {
-          return { statement: substituteFigures(ex.statement || "", resolved.subs), solution: ex.solution || "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+        var exercises = (data.exercises || []).map(function (ex) {
+          return { statement: substituteFigures(ex.statement || "", resolved.subs), solution: ex.solution || "", figureSvg: "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
         });
-        entry.figures = resolved.figures;
-        entry.status = "ready";
-        // Comme pour les cours : les photos/PDF source ne servent plus une fois l'exercice généré
-        // (l'énoncé les a déjà retranscrits, et les schémas nécessaires sont conservés séparément
-        // dans entry.figures, supprimables individuellement).
-        entry.images = [];
-        saveDB();
-        toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
-        render();
+        var missedFigure = exercises.some(function (ex) { return statementMissesFigure(ex.statement); });
+        // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
+        // systématique : retenter une fois EN SILENCE (tant que les photos sont là) rattrape la
+        // plupart des cas sans forcer l'élève à cliquer lui-même sur "Régénérer".
+        if (missedFigure && attempt < 2 && entry.images && entry.images.length) {
+          runImportedExerciseGeneration(entry, attempt + 1);
+          return;
+        }
+        // Si le découpage a échoué même après ce nouvel essai, dernier recours : demander à l'IA de
+        // RECONSTRUIRE elle-même le schéma en SVG à partir de la photo, plutôt que de le découper.
+        return reconstructMissingFigures(
+          entry.images, exercises,
+          function (ex) { return ex.statement; },
+          function (ex) { return ex.figureSvg; },
+          function (ex, svg) { ex.figureSvg = svg; }
+        ).then(function (stillMissing) {
+          entry.exercises = exercises;
+          entry.figures = resolved.figures;
+          entry.status = "ready";
+          // Tout ce qui a été détecté est déjà découpé/reconstruit et stocké à part : la photo complète
+          // ne sert donc plus à rien dans le cas normal, et on la jette (coûteuse en stockage, comme
+          // pour les cours). On ne la garde QUE s'il reste un énoncé sans aucune figure malgré tout ça
+          // — c'est alors le seul moyen de pouvoir corriger le tir avec "Régénérer" plus tard.
+          if (!stillMissing) entry.images = [];
+          saveDB();
+          toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
+          render();
+        });
       });
     }).catch(function (err) {
       entry.status = "error";
@@ -1139,35 +1274,70 @@
     });
   }
 
-  function runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription) {
+  function runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription, attempt) {
+    attempt = attempt || 1;
     course.status = "processing";
     course.error = null;
     saveDB(); render();
     var images = imagesOverride || course.images;
     generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription).then(function (data) {
       return resolveFigures(data.figures, images).then(function (resolved) {
-        course.transcription = substituteFigures(data.transcription, resolved.subs);
-        course.explanation = substituteFigures(data.explanation, resolved.subs);
-        // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
-        // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
-        // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
-        course.figures = resolved.figures;
-        course.videos = (data.videoQueries || []).map(function (v) {
-          return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
+        var transcription = substituteFigures(data.transcription, resolved.subs);
+        var explanation = substituteFigures(data.explanation, resolved.subs);
+        var missedFigure = [transcription, explanation].some(statementMissesFigure);
+        // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
+        // systématique : retenter une fois EN SILENCE (tant que les photos sont là) rattrape la
+        // plupart des cas sans forcer l'élève à cliquer lui-même sur "Régénérer".
+        if (missedFigure && attempt < 2 && images && images.length) {
+          runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription, attempt + 1);
+          return;
+        }
+        var quizQuestions = (data.quizQuestions || []).map(function (q) {
+          return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation, figureSvg: q.figureSvg || "" };
         });
-        course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
-        course.quizQuestions = (data.quizQuestions || []).map(function (q) {
-          return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation };
+        var exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "" }; });
+        // Transcription/explication n'ont pas de "figureSvg" dédié comme les exercices/questions : on
+        // les enveloppe dans le même format {prompt, figureSvg} pour pouvoir les passer avec eux à la
+        // même passe de reconstruction (un seul appel, plutôt que d'en refaire un par catégorie).
+        var textBlocks = [
+          { prompt: transcription, figureSvg: "" },
+          { prompt: explanation, figureSvg: "" }
+        ];
+        var allItems = textBlocks.concat(exercises, quizQuestions);
+        // Si le découpage a échoué même après ce nouvel essai, dernier recours : demander à l'IA de
+        // RECONSTRUIRE elle-même le(s) schéma(s) manquant(s) en SVG à partir de la photo, plutôt que
+        // de le(s) découper.
+        return reconstructMissingFigures(
+          images, allItems,
+          function (it) { return it.prompt; },
+          function (it) { return it.figureSvg; },
+          function (it, svg) { it.figureSvg = svg; }
+        ).then(function (stillMissing) {
+          course.transcription = transcription;
+          course.explanation = explanation;
+          course.transcriptionFigureSvg = textBlocks[0].figureSvg;
+          course.explanationFigureSvg = textBlocks[1].figureSvg;
+          // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
+          // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
+          // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
+          course.figures = resolved.figures;
+          course.videos = (data.videoQueries || []).map(function (v) {
+            return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
+          });
+          course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
+          course.quizQuestions = quizQuestions;
+          course.exercises = exercises;
+          course.status = "ready";
+          // Les photos/PDF source ne sont plus utiles une fois le cours généré : la retranscription
+          // sert désormais de mémoire pour "Régénérer"/"Ajouter des documents", donc plus la peine
+          // d'accumuler les images dans le stockage local (c'est automatique, pas besoin de bouton).
+          // Exception : s'il reste un schéma introuvable malgré la reconstruction, on garde les photos
+          // — sans elles, "Régénérer" ne pourrait plus jamais retenter, il faudrait tout réimporter.
+          if (!stillMissing) course.images = [];
+          saveDB();
+          toast("Cours généré · " + course.title);
+          render();
         });
-        course.exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution }; });
-        course.status = "ready";
-        // Les photos/PDF source ne sont plus utiles une fois le cours généré : la retranscription
-        // sert désormais de mémoire pour "Régénérer"/"Ajouter des documents", donc plus la peine
-        // d'accumuler les images dans le stockage local (c'est automatique, pas besoin de bouton).
-        course.images = [];
-        saveDB();
-        toast("Cours généré · " + course.title);
-        render();
       });
     }).catch(function (err) {
       course.status = "error";
@@ -1210,6 +1380,103 @@
   function findTheme(subj, id) { return subj && subj.themes.find(function (t) { return t.id === id; }); }
   function findChapter(theme, id) { return theme && theme.chapters.find(function (c) { return c.id === id; }); }
   function findCourse(chap, id) { return chap && chap.courses.find(function (c) { return c.id === id; }); }
+
+  /* ---------------- Fusion de sauvegardes (import "Fusionner" plutôt que "Remplacer") ----------------
+     Sans vrai serveur, deux appareils peuvent avancer chacun de leur côté depuis le dernier export.
+     Un import qui REMPLACE perd systématiquement tout ce qui n'a été fait que sur l'appareil du fichier
+     importé. La fusion évite ça : elle prend comme base le compte le plus récemment actif (data.updatedAt,
+     posé par saveDB() à chaque sauvegarde) et y RAJOUTE tout ce qui n'existe QUE dans l'autre fichier
+     (nouveaux sujets/thèmes/chapitres/cours/exercices importés/fiches/prépas, jamais vus sur l'appareil
+     "gagnant"), sans jamais rien écraser côté gagnant. Ce n'est pas une fusion champ par champ parfaite
+     (un cours modifié en parallèle des deux côtés garde la version du plus récent, pas un mélange des
+     deux), mais ça garantit qu'aucun contenu propre à un appareil ne disparaît jamais silencieusement. */
+  function mergeArraysById(winnerArr, loserArr) {
+    var result = (winnerArr || []).slice();
+    var ids = {};
+    result.forEach(function (it) { if (it && it.id) ids[it.id] = true; });
+    (loserArr || []).forEach(function (it) { if (it && it.id && !ids[it.id]) { result.push(it); ids[it.id] = true; } });
+    return result;
+  }
+  function mergeChaptersTree(winnerChapters, loserChapters) {
+    var byId = {};
+    (winnerChapters || []).forEach(function (c) { byId[c.id] = c; });
+    var result = (winnerChapters || []).slice();
+    (loserChapters || []).forEach(function (lc) {
+      var wc = byId[lc.id];
+      if (!wc) { result.push(lc); return; }
+      wc.courses = mergeArraysById(wc.courses, lc.courses);
+    });
+    return result;
+  }
+  function mergeThemesTree(winnerThemes, loserThemes) {
+    var byId = {};
+    (winnerThemes || []).forEach(function (t) { byId[t.id] = t; });
+    var result = (winnerThemes || []).slice();
+    (loserThemes || []).forEach(function (lt) {
+      var wt = byId[lt.id];
+      if (!wt) { result.push(lt); return; }
+      wt.chapters = mergeChaptersTree(wt.chapters, lt.chapters);
+    });
+    return result;
+  }
+  function mergeSubjectsTree(winnerSubjects, loserSubjects) {
+    var byId = {};
+    (winnerSubjects || []).forEach(function (s) { byId[s.id] = s; });
+    var result = (winnerSubjects || []).slice();
+    (loserSubjects || []).forEach(function (ls) {
+      var ws = byId[ls.id];
+      if (!ws) { result.push(ls); return; }
+      ws.themes = mergeThemesTree(ws.themes, ls.themes);
+    });
+    return result;
+  }
+  function mergeUserData(winner, loser) {
+    var merged = JSON.parse(JSON.stringify(winner));
+    merged.subjects = mergeSubjectsTree(merged.subjects, loser.subjects);
+    merged.importedExercises = mergeArraysById(merged.importedExercises, loser.importedExercises);
+    merged.revisionSheets = mergeArraysById(merged.revisionSheets, loser.revisionSheets);
+    merged.examPreps = mergeArraysById(merged.examPreps, loser.examPreps);
+    // Dino Park n'est pas qu'un objet à prendre en bloc d'un seul côté : dinosaures/œufs/enclos ont
+    // chacun un id stable (jamais régénéré), donc on peut — et on doit — les fusionner comme le reste,
+    // sinon un dino attrapé UNIQUEMENT sur l'appareil "perdant" serait purement et simplement perdu à
+    // la fusion. mergeArraysById ne duplique jamais rien (un id déjà présent n'est jamais rajouté), donc
+    // fusionner deux fois le même fichier, ou faire des allers-retours entre deux appareils, ne peut ni
+    // perdre ni dupliquer un dino.
+    if (loser.dinoPark && merged.dinoPark) {
+      var wdp = merged.dinoPark, ldp = loser.dinoPark;
+      wdp.points = Math.max(wdp.points || 0, ldp.points || 0);
+      wdp.discovered = Object.assign({}, ldp.discovered || {}, wdp.discovered || {});
+      wdp.dinosaurs = mergeArraysById(wdp.dinosaurs, ldp.dinosaurs);
+      wdp.eggs = mergeArraysById(wdp.eggs, ldp.eggs);
+      wdp.enclosures = mergeArraysById(wdp.enclosures, ldp.enclosures);
+      wdp.unlockedZones = Array.from(new Set((wdp.unlockedZones || []).concat(ldp.unlockedZones || [])));
+      // L'inventaire n'a pas d'id (juste un compteur par type d'objet) : le max évite qu'un aller-retour
+      // de fusions ne fasse gonfler artificiellement le stock au lieu de refléter la vraie progression.
+      var mergedInventory = Object.assign({}, ldp.inventory || {}, wdp.inventory || {});
+      Object.keys(mergedInventory).forEach(function (k) { mergedInventory[k] = Math.max((wdp.inventory || {})[k] || 0, (ldp.inventory || {})[k] || 0); });
+      wdp.inventory = mergedInventory;
+    } else if (loser.dinoPark && !merged.dinoPark) {
+      merged.dinoPark = loser.dinoPark;
+    }
+    return merged;
+  }
+  function mergeDB(localDB, importedDB) {
+    var merged = { users: Object.assign({}, importedDB.users, localDB.users), data: {}, currentUser: localDB.currentUser };
+    var allUsernames = {};
+    Object.keys(localDB.users || {}).forEach(function (u) { allUsernames[u] = true; });
+    Object.keys(importedDB.users || {}).forEach(function (u) { allUsernames[u] = true; });
+    Object.keys(allUsernames).forEach(function (username) {
+      var localUserData = (localDB.data || {})[username];
+      var importedUserData = (importedDB.data || {})[username];
+      if (localUserData && importedUserData) {
+        var localNewer = (localUserData.updatedAt || 0) >= (importedUserData.updatedAt || 0);
+        merged.data[username] = localNewer ? mergeUserData(localUserData, importedUserData) : mergeUserData(importedUserData, localUserData);
+      } else {
+        merged.data[username] = localUserData || importedUserData;
+      }
+    });
+    return merged;
+  }
 
   function locateCourse(courseId) {
     var subs = userData().subjects;
@@ -1660,10 +1927,13 @@
     daspletosaure: { folder: "Daspletosaurus", face: "Daspletosaurus_face.png", profil: "Daspletosaurus_profil.png" },
     protoceratops: { folder: "Protoceratops", face: "Protoceratops_face.png", profil: "Protoceratops_profil.png" },
     oviraptor: { folder: "Oviraptor", face: "Oviraptor_face.png", profil: "Oviraptor_profil.png" },
+    mononykus: { folder: "Mononykus", face: "Mononykus_face.png", profil: "Mononykus_profil.png" },
     shuvuuia: { folder: "Shuvuuia", face: "Shuvuuia_face.png", profil: "Shuvuuia_profil.png" },
     nemegtosaure: { folder: "Nemegtosaurus", face: "Nemegtosaurus_face.png", profil: "Nemegtosaurus_profil.png" },
+    pinacosaure: { folder: "Pinacausaure", face: "Pinacosaure_face.png", profil: "Pinacosaure_profil.png" },
     bagaceratops: { folder: "Bagaceratops", face: "Bagaceratops_face.png", profil: "Bagaceratops_profil.png" },
     archaeoceratops: { folder: "Archaeoceratops", face: "Archaeoceratops_face.png", profil: "Archaeoceratops_profil.png" },
+    psittacosaure: { folder: "Psittacosaurus", face: "Psittacosaurus_face.png", profil: "Psittacosaurus_profil.png" },
     avimimus: { folder: "Avimimus", face: "Avimimus_face.png", profil: "Avimimus_profil.png" },
     elmisaurus: { folder: "Elmisaurus", face: "Elmisaurus_face.png", profil: "Elmisaurus_profil.png" },
     carnotaurus: { folder: "Carnotaurus", face: "Carnotaurus_face.png", profil: "Carnotaurus_profil.png" },
@@ -1685,6 +1955,14 @@
     var sp = dpSpecies(speciesId);
     var zoneFolder = sp ? DP_ENCLOS_ZONE_FOLDER[sp.zone] : "";
     return "assets/dinos/" + zoneFolder + "/" + a.folder + "/" + a[kind];
+  }
+  // Prototype en ligne : une zone dont toutes les espèces n'ont pas encore leurs images ne doit pas
+  // être achetable (l'élève paierait pour un enclos qu'il ne pourrait pas vraiment peupler). Calculé à
+  // la volée plutôt que codé en dur : dès que les assets manquants d'une zone sont ajoutés, elle
+  // redevient automatiquement disponible sans toucher au code.
+  function dpZoneFullyStocked(zoneId) {
+    var species = dpSpeciesByZone(zoneId);
+    return species.length > 0 && species.every(function (s) { return !!DP_ART[s.id]; });
   }
 
   var DP_EGG_ZONE_FOLDER = { foret: "foret", plaine: "plaine", desert: "desert", arctique: "arctique", marine: "marin", volcanique: "volcanique" };
@@ -2054,12 +2332,16 @@
           '<div class="dp-zone-sign">' + esc(z.name) + '</div>' +
           '</button>';
       }
-      var canUnlock = dp.points >= z.cost;
+      var stocked = dpZoneFullyStocked(z.id);
+      var canUnlock = stocked && dp.points >= z.cost;
       return '<div class="dp-zone-card locked">' +
         '<div class="dp-zone-portal" style="background-image:url(\'' + dpPortalArtPath(z.id, true) + '\')"></div>' +
         '<div class="dp-zone-sign">' + esc(z.name) + '</div>' +
-        '<div class="dp-zone-meta mono">' + z.cost + ' pts</div>' +
-        '<button class="btn btn-sm ' + (canUnlock ? "btn-primary" : "btn-ghost") + '" ' + (canUnlock ? "" : "disabled") + ' onclick="App.dpUnlockZone(\'' + z.id + '\')">Débloquer</button>' +
+        (stocked
+          ? '<div class="dp-zone-meta mono">' + z.cost + ' pts</div>' +
+            '<button class="btn btn-sm ' + (canUnlock ? "btn-primary" : "btn-ghost") + '" ' + (canUnlock ? "" : "disabled") + ' onclick="App.dpUnlockZone(\'' + z.id + '\')">Débloquer</button>'
+          : '<div class="dp-zone-meta mono">Bientôt disponible</div>' +
+            '<button class="btn btn-sm btn-ghost" disabled title="Cette zone n\'a pas encore tous ses dinosaures">Indisponible</button>') +
         '</div>';
     }).join("") + '</div>';
     renderShell(["dinopark"], dpDecorHtml() + head + alertBanner + points + actions + zoneGrid);
@@ -2167,20 +2449,23 @@
     renderShell(["dinopark"], dpDecorHtml() + backBtn + head + grid);
   }
 
-  function dpFinishAnswer(qz, q, yourAnswerText, correctAnswerText, wasCorrect) {
+  function dpFinishAnswer(qz, q, yourAnswerText, correctAnswerText, level, mistakes) {
+    var wasCorrect = gradeLevelIsSuccess(level);
     qz.wasCorrect = wasCorrect;
+    qz.level = level;
     qz.answeredCount++;
-    if (wasCorrect) {
-      qz.correct++;
-      qz.totalEarned += DP_QUIZ_POINTS_PER_CORRECT;
+    if (wasCorrect) qz.correct++; else qz.wrong++;
+    // Les points suivent le barème gradué (pointsFactor), pas seulement "réussi ou pas" — sinon un
+    // "2 erreurs" qui rapporte pourtant des points d'après GRADE_LEVELS n'en recevrait jamais ici.
+    var earned = Math.round(DP_QUIZ_POINTS_PER_CORRECT * (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).pointsFactor);
+    if (earned > 0) {
+      qz.totalEarned += earned;
       var dp = dpData();
-      dp.points += DP_QUIZ_POINTS_PER_CORRECT;
+      dp.points += earned;
       saveDB();
-      toast("+" + DP_QUIZ_POINTS_PER_CORRECT + " pts !");
-    } else {
-      qz.wrong++;
+      toast("+" + earned + " pts !");
     }
-    qz.history.push({ prompt: q.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: q.explanation, wasCorrect: wasCorrect });
+    qz.history.push({ prompt: q.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: q.explanation, wasCorrect: wasCorrect, level: level, mistakes: mistakes || [], figureSvg: q.figureSvg || "" });
   }
 
   function renderDinoParkQuiz() {
@@ -2253,10 +2538,13 @@
 
     if (qz.done) {
       var items = qz.history.map(function (h) {
-        return '<div class="correction-item ' + (h.wasCorrect ? "correct" : "wrong") + '">' +
-          '<div class="correction-q">' + esc(h.prompt) + '</div>' +
+        var level = h.level || (h.wasCorrect ? "correct" : "wrong");
+        var cls = gradeLevelCls(level);
+        return '<div class="correction-item ' + cls + '">' +
+          '<div class="correction-q">' + esc(h.prompt) + '<span class="grade-pill grade-' + cls + '">' + gradeLevelLabel(level) + '</span></div>' + exerciseFigureHtml(h) +
           '<div class="correction-ans ' + (h.wasCorrect ? "good" : "bad") + '">Ta réponse : ' + esc(h.yourAnswer || "(vide)") + '</div>' +
-          (h.wasCorrect ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
+          gradeMistakesHtml(h.mistakes) +
+          (level === "correct" ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
           '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
           '</div>';
       }).join("");
@@ -2270,7 +2558,7 @@
     var q = qz.questions[qz.idx];
     var body = '<div class="quiz-batch-note">' + qz.totalEarned + ' pts gagnés jusqu\'ici</div>' +
       '<div class="quiz-q-num">Question ' + (qz.idx + 1) + ' / ' + qz.questions.length + '</div>' +
-      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>';
+      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>' + exerciseFigureHtml(q);
 
     if (q.type === "qcm") {
       body += q.choices.map(function (c, i) {
@@ -2297,8 +2585,11 @@
     }
 
     if (qz.revealed && qz.wasCorrect != null) {
-      body += '<div class="quiz-feedback ' + (qz.wasCorrect ? "correct" : "wrong") + '">' +
-        '<div class="quiz-feedback-title ' + (qz.wasCorrect ? "correct" : "wrong") + '">' + (qz.wasCorrect ? "✅ Bonne réponse !" : "❌ Pas tout à fait") + '</div>' +
+      var qlvl = qz.level || (qz.wasCorrect ? "correct" : "wrong");
+      var qcls = gradeLevelCls(qlvl);
+      body += '<div class="quiz-feedback ' + qcls + '">' +
+        '<div class="quiz-feedback-title ' + qcls + '">' + gradeLevelLabel(qlvl) + '</div>' +
+        gradeMistakesHtml(qz.mistakes) +
         (qz.aiFeedback ? '<div class="correction-exp">' + mdToHtml(qz.aiFeedback) + '</div>' : "") +
         '<div class="correction-exp">' + mdToHtml(q.explanation || "") + '</div>' +
         '</div>' +
@@ -2310,14 +2601,17 @@
 
   function renderDinoParkExercise(backBtn, head, qz) {
     var ex = qz.exercise;
-    var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(ex.prompt) + '</div></div>';
+    var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(ex.prompt) + '</div></div>' + exerciseFigureHtml(ex);
     if (qz.status === "grading") {
       body += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
     } else if (qz.status === "graded") {
+      var exlvl = qz.level || (qz.correct ? "correct" : "wrong");
+      var excls = gradeLevelCls(exlvl);
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<div class="quiz-feedback ' + (qz.correct ? "correct" : "wrong") + '">' +
-        '<div class="quiz-feedback-title ' + (qz.correct ? "correct" : "wrong") + '">' + (qz.correct ? "✅ Correct ! +" + DP_EXERCISE_POINTS + " pts" : "❌ Pas tout à fait") + '</div>' +
+        '<div class="quiz-feedback ' + excls + '">' +
+        '<div class="quiz-feedback-title ' + excls + '">' + gradeLevelLabel(exlvl) + (qz.pointsEarned ? " ! +" + qz.pointsEarned + " pts" : "") + '</div>' +
+        gradeMistakesHtml(qz.mistakes) +
         '<div class="correction-exp">' + mdToHtml(qz.feedback) + '</div>' +
         '</div>' +
         '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
@@ -2633,8 +2927,16 @@
       '</form>' +
       '<div class="auth-switch">' + (isLogin ? "Pas encore de compte ? " : "Déjà inscrit ? ") +
       '<button onclick="App.switchAuth(\'' + (isLogin ? "signup" : "login") + '\')">' + (isLogin ? "Créer un compte" : "Se connecter") + '</button></div>' +
+      '<div class="auth-switch" style="margin-top:6px">' +
+      '<button onclick="document.getElementById(\'import-backup-input-auth\').click()">📥 Importer une sauvegarde</button>' +
+      '<input type="file" id="import-backup-input-auth" accept="application/json" style="display:none" onchange="App.importBackupFile(event)">' +
+      '</div>' +
       '</div></div>';
     document.getElementById("app").innerHTML = html;
+    // Contrairement à renderShell (qui affiche systématiquement la modale via son propre appel),
+    // cet écran de connexion ne passe pas par renderShell — sans cette ligne, importer une sauvegarde
+    // AVANT d'avoir de compte (le cas d'usage exact de ce bouton) n'ouvrirait jamais sa confirmation.
+    if (modal) renderModal();
   }
 
   /* ---------------- Sidebar / Shell ---------------- */
@@ -3024,7 +3326,7 @@
           : gradedCount === 0
           ? '<span class="status-pill status-ready">' + (totalCount > 1 ? totalCount + " exercices prêts" : "Prêt") + '</span>'
           : gradedCount === totalCount
-          ? '<span class="status-pill status-ready">' + (totalCount > 1 ? "✅ " + gradedCount + "/" + totalCount + " corrigés" : (en.exercises[0].correct ? "✅ Corrigé" : "❌ Corrigé")) + '</span>'
+          ? '<span class="status-pill status-ready">' + (totalCount > 1 ? "✅ " + gradedCount + "/" + totalCount + " corrigés" : gradeLevelLabel(en.exercises[0].level || (en.exercises[0].correct ? "correct" : "wrong"))) + '</span>'
           : '<span class="status-pill status-ready">' + gradedCount + "/" + totalCount + ' corrigés</span>';
         return '<div class="tile" onclick="location.hash=\'#/exercices/' + en.id + '\'">' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'importedExercise\',null,null,null,\'' + en.id + '\')">' + icon("trash") + '</button>' +
@@ -3044,7 +3346,9 @@
     var head = '<div class="course-head">' +
       (entry.images && entry.images.length ? '<img class="course-thumb" src="' + entry.images[0] + '">' : '') +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(entry.title) + '</h1>' +
-      '<p class="page-sub">' + (entry.subjectGuess ? esc(entry.subjectGuess) + " · " : "") + 'Exercice importé — ne rapporte pas de points Dino Park</p></div></div>';
+      '<p class="page-sub">' + (entry.subjectGuess ? esc(entry.subjectGuess) + " · " : "") + 'Exercice importé — ne rapporte pas de points Dino Park</p></div>' +
+      (entry.status === "ready" && entry.images && entry.images.length ? '<div style="display:flex;gap:10px;margin-left:auto"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryImportedExerciseGeneration(\'' + entry.id + '\')">🔄 Régénérer</button></div>' : '') +
+      '</div>';
 
     var body;
     if (entry.status === "processing") {
@@ -3060,14 +3364,17 @@
       var allGraded = entry.exercises.length && entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; });
       var col = entry.exercises.map(function (ex, i) {
         var block = (multi ? '<div class="dp-exercise-label" style="margin-bottom:8px">Exercice ' + (i + 1) + ' / ' + entry.exercises.length + '</div>' : '') +
-          '<div class="prose">' + mdToHtml(ex.statement, entry.figures) + '</div>';
+          '<div class="prose">' + mdToHtml(ex.statement, entry.figures) + '</div>' + exerciseFigureHtml({ prompt: ex.statement, figureSvg: ex.figureSvg });
         if (ex.answerStatus === "grading") {
           block += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
         } else if (ex.answerStatus === "graded") {
+          var ielvl = ex.level || (ex.correct ? "correct" : "wrong");
+          var iecls = gradeLevelCls(ielvl);
           block += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
             '<div class="rte-display" style="margin-bottom:14px">' + (ex.answerHtml || "<em>(vide)</em>") + '</div>' +
-            '<div class="quiz-feedback ' + (ex.correct ? "correct" : "wrong") + '">' +
-            '<div class="quiz-feedback-title ' + (ex.correct ? "correct" : "wrong") + '">' + (ex.correct ? "✅ Correct !" : "❌ Pas tout à fait") + '</div>' +
+            '<div class="quiz-feedback ' + iecls + '">' +
+            '<div class="quiz-feedback-title ' + iecls + '">' + gradeLevelLabel(ielvl) + '</div>' +
+            gradeMistakesHtml(ex.mistakes) +
             '<div class="correction-exp">' + mdToHtml(ex.feedback) + '</div>' +
             '</div>' +
             '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
@@ -3117,7 +3424,7 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      body = '<div class="prose">' + mdToHtml(sheet.content) + '</div>';
+      body = '<div class="prose">' + mdToHtml(sheet.content) + '</div>' + exerciseFigureHtml({ prompt: sheet.content });
     }
     renderShell(["revision", sheetId], head + body, { narrow: true });
   }
@@ -3165,15 +3472,20 @@
     }
     if (s.done) {
       var items = s.history.map(function (h) {
-        return '<div class="correction-item ' + (h.wasCorrect ? "correct" : "wrong") + '">' +
-          '<div class="correction-q">' + esc(h.prompt) + '</div>' +
+        var level = h.level || (h.wasCorrect ? "correct" : "wrong");
+        var cls = gradeLevelCls(level);
+        return '<div class="correction-item ' + cls + '">' +
+          '<div class="correction-q">' + esc(h.prompt) + '<span class="grade-pill grade-' + cls + '">' + gradeLevelLabel(level) + '</span></div>' + exerciseFigureHtml(h) +
           '<div class="correction-ans ' + (h.wasCorrect ? "good" : "bad") + '">Ta réponse : ' + esc(h.yourAnswer || "(vide)") + '</div>' +
-          (h.wasCorrect ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
+          gradeMistakesHtml(h.mistakes) +
+          (level === "correct" ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
           '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
           '</div>';
       }).join("");
       var reviewGroup = function (list, cls, title) {
-        return (list && list.length) ? '<div class="ep-review-group ' + cls + '"><div class="ep-review-title">' + title + '</div>' + list.map(function (t) { return '<span class="ep-review-chip">' + esc(t) + '</span>'; }).join("") + '</div>' : "";
+        return (list && list.length) ? '<div class="ep-review-group ' + cls + '"><div class="ep-review-title">' + title + '</div>' + list.map(function (entry) {
+          return '<div class="ep-review-entry"><span class="ep-review-chip">' + esc(entry.topic) + '</span>' + gradeMistakesHtml(entry.mistakes) + '</div>';
+        }).join("") + '</div>' : "";
       };
       var reviewHtml = s.review ? '<div class="ep-review">' +
         reviewGroup(s.review.mastered, "ep-review-good", "✅ Maîtrisé") +
@@ -3197,9 +3509,9 @@
     var item = s.pool[s.idx];
     var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + '</div>';
     if (item.kind === "exercise") {
-      body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(item.prompt) + '</div></div>';
+      body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(item.prompt) + '</div></div>' + exerciseFigureHtml(item);
     } else {
-      body += '<div class="quiz-q-text">' + esc(item.prompt) + '</div>';
+      body += '<div class="quiz-q-text">' + esc(item.prompt) + '</div>' + exerciseFigureHtml(item);
     }
     if (item.kind === "qcm") {
       body += item.choices.map(function (c, i) {
@@ -3228,8 +3540,11 @@
         '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(item.answer) + '</strong></p>';
     }
     if (s.revealed && s.wasCorrect != null) {
-      body += '<div class="quiz-feedback ' + (s.wasCorrect ? "correct" : "wrong") + '">' +
-        '<div class="quiz-feedback-title ' + (s.wasCorrect ? "correct" : "wrong") + '">' + (s.wasCorrect ? "✅ Bonne réponse !" : "❌ Pas tout à fait") + '</div>' +
+      var slvl = s.level || (s.wasCorrect ? "correct" : "wrong");
+      var scls = gradeLevelCls(slvl);
+      body += '<div class="quiz-feedback ' + scls + '">' +
+        '<div class="quiz-feedback-title ' + scls + '">' + gradeLevelLabel(slvl) + '</div>' +
+        gradeMistakesHtml(s.mistakes) +
         (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
         (item.kind === "exercise" ? '' : '<div class="correction-exp">' + mdToHtml(item.explanation || "") + '</div>') +
         '</div>' +
@@ -3495,7 +3810,11 @@
   }
 
   /* ---------------- Rich text mini-editor ---------------- */
-  var RTE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, SPAN: 1, BR: 1, DIV: 1, P: 1, TABLE: 1, TBODY: 1, TR: 1, TD: 1 };
+  // mdToHtml() (qui affiche les énoncés) produit aussi des <ul>/<li>, <h3>/<h4> et <thead>/<th> — sans
+  // eux dans cette liste, coller un énoncé qui en contient (n'importe quelle liste à puces, très
+  // fréquent) les remplaçait par du texte brut collé bout à bout, sans le moindre espace ni saut de
+  // ligne entre les éléments (perte totale de la mise en forme, pas juste des puces).
+  var RTE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, SPAN: 1, BR: 1, DIV: 1, P: 1, H3: 1, H4: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TH: 1, TD: 1 };
   // background-color est volontairement exclu : coller du texte qui en portait (Word, une page web,
   // un ancien fond de citation...) laissait un bloc de couleur plein derrière la ligne collée.
   var RTE_ALLOWED_STYLES = { color: 1, "text-decoration": 1, "font-weight": 1, "font-style": 1 };
@@ -3881,6 +4200,136 @@
     var zeroWidthSpace = String.fromCharCode(8203);
     return '<span class="math-chip" contenteditable="false" data-latex="' + esc(latex) + '" title="Cliquer pour modifier" onclick="App.editLatexChip(this)">' + katexRenderSafe(latex) + '</span>' + zeroWidthSpace;
   }
+
+  /* ---------------- Figures dessinées par l'IA (SVG) ---------------- */
+  // Quand un exercice/question généré par l'IA fait référence à un support visuel (figure géométrique,
+  // graphique, spectre...), l'IA dessine elle-même le schéma en SVG plutôt que de simplement le décrire
+  // sans jamais le montrer. On nettoie ce SVG avant affichage (balises et attributs actifs retirés) au
+  // cas où le modèle produirait un jour un balisage inattendu.
+  function sanitizeSvg(raw) {
+    var m = /<svg[\s\S]*<\/svg>/i.exec(raw || "");
+    if (!m) return "";
+    try {
+      var doc = new DOMParser().parseFromString(m[0], "image/svg+xml");
+      var root = doc.documentElement;
+      if (!root || root.tagName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) return "";
+      var DISALLOWED = { script: 1, foreignobject: 1, iframe: 1, embed: 1, object: 1, style: 1 };
+      (function clean(node) {
+        Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+          if (child.nodeType !== 1) return;
+          var tag = child.tagName.toLowerCase();
+          if (DISALLOWED[tag]) { node.removeChild(child); return; }
+          Array.prototype.slice.call(child.attributes || []).forEach(function (attr) {
+            var name = attr.name.toLowerCase();
+            if (name.indexOf("on") === 0) child.removeAttribute(attr.name);
+            else if ((name === "href" || name === "xlink:href") && /^\s*javascript:/i.test(attr.value || "")) child.removeAttribute(attr.name);
+          });
+          clean(child);
+        });
+      })(root);
+      return new XMLSerializer().serializeToString(root);
+    } catch (e) { return ""; }
+  }
+  // Le spectre de la lumière visible (longueur d'onde ↔ couleur) est un cas très fréquent en physique-
+  // chimie, mais demander à l'IA de juger elle-même qu'il en faut un et de le dessiner s'est révélé peu
+  // fiable en pratique (elle l'oublie souvent, même avec des consignes explicites). Comme ce schéma est
+  // toujours le même (seules les longueurs d'onde marquées changent) et que ces valeurs sont de toute
+  // façon déjà écrites en toutes lettres dans l'énoncé ("530 nm"...), on le reconstruit nous-mêmes de
+  // façon déterministe dès qu'on détecte des "nm" dans le texte, sans dépendre du figureSvg de l'IA.
+  function wavelengthToRgb(nm) {
+    var r = 0, g = 0, b = 0, factor;
+    if (nm >= 380 && nm < 440) { r = -(nm - 440) / 60; b = 1; }
+    else if (nm < 490) { g = (nm - 440) / 50; b = 1; }
+    else if (nm < 510) { g = 1; b = -(nm - 510) / 20; }
+    else if (nm < 580) { r = (nm - 510) / 70; g = 1; }
+    else if (nm < 645) { r = 1; g = -(nm - 645) / 65; }
+    else if (nm <= 780) { r = 1; }
+    if (nm >= 380 && nm < 420) factor = 0.3 + 0.7 * (nm - 380) / 40;
+    else if (nm < 701) factor = 1;
+    else if (nm <= 780) factor = 0.3 + 0.7 * (780 - nm) / 80;
+    else factor = 0;
+    function ch(c) { return c <= 0 ? 0 : Math.round(255 * Math.pow(c * factor, 0.8)); }
+    return "rgb(" + ch(r) + "," + ch(g) + "," + ch(b) + ")";
+  }
+  function extractWavelengthsNm(text) {
+    if (!text) return [];
+    // Le nombre et l'unité "nm" sont presque toujours séparés par du bruit LaTeX entre les deux
+    // (fin de mode maths "$", \text{...}, \mathrm{...}, espace fine \, \; ...) — plutôt que d'essayer
+    // d'énumérer chaque notation LaTeX possible pour l'unité, on neutralise d'abord tout ce bruit pour
+    // ne garder que du texte brut, puis on cherche simplement "440 nm" dedans.
+    var cleaned = String(text)
+      .replace(/\\text\s*\{([^}]*)\}/gi, " $1 ")
+      .replace(/\\mathrm\s*\{([^}]*)\}/gi, " $1 ")
+      .replace(/\\(?:quad|qquad)/gi, " ")
+      .replace(/\\[,;:!]/g, " ")
+      .replace(/[${}\\~]/g, " ");
+    var out = [];
+    var re = /(\d{3}(?:[.,]\d+)?)\s*(?:nm\b|nanom[eè]tres?\b)/gi;
+    var m;
+    while ((m = re.exec(cleaned))) {
+      var v = parseFloat(m[1].replace(",", "."));
+      if (v >= 100 && v <= 1000 && out.indexOf(v) === -1) out.push(v);
+    }
+    return out.slice(0, 4);
+  }
+  var visibleSpectrumSvgSeq = 0;
+  function visibleSpectrumSvg(wavelengths) {
+    var gradId = "specGrad" + (visibleSpectrumSvgSeq++); // plusieurs spectres peuvent s'afficher sur la même page (liste de correction) : un id de <linearGradient> dupliqué ferait pointer le mauvais dégradé
+    var W = 640, H = 170, barX = 50, barY = 50, barW = 540, barH = 55, domainMin = 380, domainMax = 700;
+    function xFor(nm) { return barX + (Math.min(Math.max(nm, domainMin), domainMax) - domainMin) / (domainMax - domainMin) * barW; }
+    var stops = [];
+    for (var nm = domainMin; nm <= domainMax; nm += 10) {
+      stops.push('<stop offset="' + Math.round((nm - domainMin) / (domainMax - domainMin) * 100) + '%" stop-color="' + wavelengthToRgb(nm) + '"/>');
+    }
+    var ticks = [];
+    for (var t = 400; t <= 700; t += 50) {
+      var tx = xFor(t);
+      ticks.push('<line x1="' + tx + '" y1="' + (barY + barH) + '" x2="' + tx + '" y2="' + (barY + barH + 6) + '" stroke="#111" stroke-width="1.5"/>' +
+        '<text x="' + tx + '" y="' + (barY + barH + 20) + '" font-size="12" text-anchor="middle" fill="#111">' + t + '</text>');
+    }
+    var markers = (wavelengths || []).map(function (nmv) {
+      var mx = xFor(nmv);
+      return '<g><line x1="' + mx + '" y1="' + (barY - 14) + '" x2="' + mx + '" y2="' + (barY + barH) + '" stroke="#111" stroke-width="2" stroke-dasharray="3,2"/>' +
+        '<polygon points="' + (mx - 6) + ',' + (barY - 14) + ' ' + (mx + 6) + ',' + (barY - 14) + ' ' + mx + ',' + (barY - 2) + '" fill="#111"/>' +
+        '<text x="' + mx + '" y="' + (barY - 20) + '" font-size="13" font-weight="700" text-anchor="middle" fill="#111">' + nmv + ' nm</text></g>';
+    }).join("");
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
+      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="1" y2="0">' + stops.join("") + '</linearGradient></defs>' +
+      '<rect x="' + barX + '" y="' + barY + '" width="' + barW + '" height="' + barH + '" fill="url(#' + gradId + ')" stroke="#111" stroke-width="1.5"/>' +
+      ticks.join("") + markers +
+      '<text x="' + (barX + barW / 2) + '" y="' + (H - 6) + '" font-size="12" text-anchor="middle" fill="#333">Longueur d\'onde (nm) — spectre de la lumière visible</text>' +
+      '</svg>';
+  }
+  function resolveExerciseFigureSvg(item) {
+    if (!item) return "";
+    if (item.figureSvg) return item.figureSvg;
+    var wavelengths = extractWavelengthsNm(item.prompt || "");
+    return wavelengths.length ? visibleSpectrumSvg(wavelengths) : "";
+  }
+  // Un énoncé qui dit "voir le graphique ci-contre" sans qu'aucun schéma n'ait pu être récupéré (photo
+  // importée mal cadrée, détection de figure ratée par l'IA...) est tout aussi inutilisable qu'un
+  // énoncé sans figureSvg — mais ici on ne peut pas redessiner un graphique arbitraire nous-mêmes (on ne
+  // connaît pas sa forme réelle). Le minimum fiable est de détecter ce cas et de prévenir clairement
+  // l'élève plutôt que de le laisser deviner pourquoi il ne voit rien.
+  // "ci-contre"/"ci-dessous" seuls ne suffisent PAS : ça déclenchait aussi sur "le tableau ci-dessous"
+  // (un vrai tableau Markdown, qui n'a besoin d'aucune figure) ou "vu ci-dessus" à propos de texte. On
+  // exige donc un mot de visuel (graphique/schéma/figure/courbe/dessin) à proximité immédiate, jamais
+  // juste la présence isolée de "ci-contre".
+  var MISSING_FIGURE_RE = /\b(?:graphique|sch[ée]mas?|figures?|courbes?|repr[ée]sentation graphique|dessins?|diagrammes?)\b[^.!?\n]{0,50}\bci[\s-]?(?:contre|dessous|joint|apr[eè]s)\b|\bci[\s-]?(?:contre|dessous|joint|apr[eè]s)\b[^.!?\n]{0,50}\b(?:graphique|sch[ée]mas?|figures?|courbes?|repr[ée]sentation graphique|dessins?|diagrammes?)\b/i;
+  function statementMissesFigure(text) {
+    return !!text && !/\(figure:/.test(text) && MISSING_FIGURE_RE.test(text);
+  }
+  function exerciseFigureHtml(item) {
+    var text = (item && item.prompt) || "";
+    if (/\(figure:/.test(text)) return ""; // une vraie image (photo importée) est déjà intégrée au texte via mdToHtml, rien à ajouter ici
+    var clean = sanitizeSvg(resolveExerciseFigureSvg(item));
+    if (clean) return '<div class="exercise-figure">' + clean + '</div>';
+    if (statementMissesFigure(text)) {
+      return '<div class="figure-missing-warning">⚠️ Cet énoncé fait référence à un schéma ou un graphique (« ci-contre »/« ci-dessous »…) qui n\'a pas pu être récupéré. Clique sur « 🔄 Régénérer » en haut de la page pour relancer la détection (les photos source sont conservées) ; si ça persiste, réimporte une photo plus nette et mieux cadrée sur ce schéma.</div>';
+    }
+    return "";
+  }
   function rtePlainTextToHtml(text) {
     var html = "";
     var re = /\$\$([^$]+?)\$\$|\$([^$]+?)\$/g;
@@ -3937,19 +4386,26 @@
     var cd = e.clipboardData || window.clipboardData;
     var html = cd ? cd.getData("text/html") : "";
     var text = cd ? cd.getData("text/plain") : "";
+    // On préfère toujours le HTML quand il existe : sanitizeRichHtml reconstruit déjà correctement une
+    // formule KaTeX collée (elle repère l'annotation LaTeX cachée dans le HTML, cf. plus bas) tout en
+    // gardant la mise en forme (listes, titres, tableaux...) — préférer le texte brut dès qu'une formule
+    // y était détectée cassait justement cette mise en forme, puisqu'un texte brut n'a plus aucune
+    // structure à préserver. Le texte brut ne reste utilisé que quand la source ne fournit AUCUN HTML
+    // (ex. le clavier de formule LaTeX de l'appli, qui exporte son "$$...$$" uniquement en texte).
     var insertHtml = html ? sanitizeRichHtml(html) : rtePlainTextToHtml(text);
     rteInsertHtmlAtCaret(editor, insertHtml);
   });
 
   /* ---------------- PDF export (browser print) ---------------- */
-  function buildExercisePrintHtml(title, meta, statementHtml, answerHtml, correct, feedback, solutionHtml) {
+  function buildExercisePrintHtml(title, meta, statementHtml, answerHtml, level, feedback, solutionHtml, mistakes) {
     return '<div class="print-doc">' +
       '<h1>' + esc(title) + '</h1>' +
       (meta ? '<p class="print-meta">' + esc(meta) + '</p>' : '') +
       '<h2>Énoncé</h2><div class="print-block">' + statementHtml + '</div>' +
       '<h2>Ta réponse</h2><div class="print-block">' + (answerHtml || "<em>(vide)</em>") + '</div>' +
       '<h2>Correction</h2>' +
-      '<p class="print-verdict ' + (correct ? "good" : "bad") + '">' + (correct ? "✅ Correct" : "❌ Pas tout à fait") + '</p>' +
+      '<p class="print-verdict ' + (gradeLevelIsSuccess(level) ? "good" : "bad") + '">' + gradeLevelLabel(level) + '</p>' +
+      gradeMistakesHtml(mistakes) +
       (feedback ? '<div class="print-block">' + mdToHtml(feedback) + '</div>' : "") +
       '<h2>Solution de référence</h2><div class="print-block">' + solutionHtml + '</div>' +
       '</div>';
@@ -3980,7 +4436,9 @@
         '</div>';
     }
     var fieldValue = field === "transcription" ? course.transcription : course.explanation;
+    var fieldFigureSvg = field === "transcription" ? course.transcriptionFigureSvg : course.explanationFigureSvg;
     return '<div class="prose prose-lesson">' + mdToHtml(fieldValue, course.figures) + '</div>' +
+      exerciseFigureHtml({ prompt: fieldValue, figureSvg: fieldFigureSvg }) +
       '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>';
   }
   function renderTabBody(course, tab, loc) {
@@ -4072,7 +4530,7 @@
     return '<div class="exercise-layout"><div class="quiz-wrap">' +
       '<div class="quiz-progress-dots">' + dots + '</div>' +
       '<div class="quiz-q-num">Question ' + (st.idx + 1) + ' / ' + questions.length + '</div>' +
-      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>' +
+      '<div class="quiz-q-text">' + esc(q.prompt) + '</div>' + exerciseFigureHtml(q) +
       choices +
       '<div class="quiz-nav">' +
       '<button class="btn btn-ghost" ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.quizNav(\'' + course.id + '\',-1)">← Précédente</button>' +
@@ -4091,7 +4549,7 @@
     var items = questions.map(function (q, i) {
       var ok = st.answers[i] === q.correctIndex;
       return '<div class="correction-item ' + (ok ? "correct" : "wrong") + '">' +
-        '<div class="correction-q">' + esc(q.prompt) + '</div>' +
+        '<div class="correction-q">' + esc(q.prompt) + '</div>' + exerciseFigureHtml(q) +
         '<div class="correction-ans ' + (ok ? "good" : "bad") + '">Ta réponse : ' + esc(q.choices[st.answers[i]]) + '</div>' +
         (ok ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(q.choices[q.correctIndex]) + '</div>') +
         '<div class="correction-exp">' + mdToHtml(q.explanation) + '</div>' +
@@ -4108,8 +4566,15 @@
   function renderModal() {
     document.querySelectorAll(".modal-overlay").forEach(function (el) { el.remove(); });
     var LIGHT_MODAL_TYPES = { companion: 1, latex: 1, periodic: 1, table: 1 };
+    // Ces 3 outils s'ouvrent le plus souvent PENDANT qu'on répond à un exercice, juste au-dessus de
+    // l'énoncé : au centre de l'écran sans autre traitement, ils le cachent complètement. Le fond reste
+    // transparent (l'énoncé est visible tout autour) et la boîte elle-même devient semi-transparente
+    // dès que la souris n'est pas dessus (ni le focus clavier dedans), pour voir à travers sans avoir à
+    // la déplacer ou la fermer.
+    var TOOL_MODAL_TYPES = { latex: 1, periodic: 1, table: 1 };
+    var isTool = !!TOOL_MODAL_TYPES[modal.type];
     var overlay = document.createElement("div");
-    overlay.className = "modal-overlay" + (modal.type === "latex" ? " modal-overlay-top" : "");
+    overlay.className = "modal-overlay" + (isTool ? " modal-overlay-tool" : "") + (modal.type === "latex" ? " modal-overlay-top" : "");
     overlay.onclick = function (e) { if (e.target === overlay) { LIGHT_MODAL_TYPES[modal.type] ? App.closeLightModal() : App.closeModal(); } };
     var inner = "";
     if (modal.type === "subject") {
@@ -4330,6 +4795,12 @@
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeDelete()">Supprimer</button></div>';
+    } else if (modal.type === "confirmImportBackup") {
+      inner = '<h3>Importer cette sauvegarde ?</h3>' +
+        '<p class="modal-warn">Ce fichier contient ' + modal.userCount + ' compte' + (modal.userCount > 1 ? "s" : "") + '.</p>' +
+        '<p class="modal-warn"><strong>🔀 Fusionner</strong> (recommandé) : garde tout ce que tu as déjà sur cet appareil et rajoute simplement ce qui n\'existe QUE dans le fichier importé (nouveaux cours, exercices, prépas...) — rien n\'est perdu d\'un côté ni de l\'autre.</p>' +
+        '<p class="modal-warn"><strong>♻️ Remplacer</strong> : efface tout ce qui est sur cet appareil et le remplace entièrement par le contenu du fichier — <strong>définitif</strong>, à utiliser seulement si cet appareil ne contient que des tests à jeter.</p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-danger" onclick="App.executeImportBackup()">Remplacer</button><button type="button" class="btn btn-primary" onclick="App.executeMergeBackup()">Fusionner</button></div>';
     } else if (modal.type === "renameItem") {
       inner = '<h3>Renommer</h3><form onsubmit="App.confirmRename(event)">' +
         '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
@@ -4341,6 +4812,21 @@
         '<form onsubmit="App.saveApiKey(event)">' +
         '<div class="field"><label>Clé API</label><input name="apiKey" type="password" placeholder="AIzaSy..." value="' + esc(getApiKey()) + '" autocomplete="off" autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
+        '</form>';
+    } else if (modal.type === "apiKeyGuide") {
+      inner = '<h3>🔑 Bienvenue sur Studino !</h3>' +
+        '<p class="modal-warn" style="margin-bottom:16px">Pour générer tes cours, questions et exercices, Studino a besoin d\'une clé API Gemini (Google). C\'est <strong>gratuit</strong> et ça prend 2 minutes — voici comment faire :</p>' +
+        '<ol class="apikey-guide-steps">' +
+        '<li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> (Google AI Studio) et connecte-toi avec un compte Google (ou crées-en un gratuitement si tu n\'en as pas).</li>' +
+        '<li>Clique sur le bouton <strong>« Create API key »</strong> (parfois traduit « Créer une clé API »), en haut de la page.</li>' +
+        '<li>S\'il te demande de choisir un projet, sélectionne <strong>« Create API key in new project »</strong> — c\'est le plus simple, et <strong>aucune carte bancaire n\'est demandée</strong> pour la clé gratuite.</li>' +
+        '<li>Ta clé s\'affiche à l\'écran : une suite de caractères qui commence par <code>AIzaSy…</code>. Clique sur l\'icône de copie à côté pour la copier.</li>' +
+        '<li>Reviens sur cette page, colle ta clé dans le champ juste en dessous, puis clique sur <strong>Enregistrer</strong>. C\'est tout !</li>' +
+        '</ol>' +
+        '<p style="font-size:12px;color:var(--text-muted);margin:12px 0 16px">La version gratuite a une limite d\'utilisation par jour (largement suffisante pour réviser normalement). Ta clé est stockée uniquement dans ce navigateur et envoyée uniquement à l\'API Google — ne la partage jamais publiquement (capture d\'écran, message, etc.).</p>' +
+        '<form onsubmit="App.saveApiKey(event)">' +
+        '<div class="field"><label>Colle ta clé API ici</label><input name="apiKey" type="password" placeholder="AIzaSy..." autocomplete="off" autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Plus tard</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
         '</form>';
     } else if (modal.type === "settings") {
       var storageInfo = storageUsageInfo();
@@ -4359,6 +4845,14 @@
         '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openApiKeyModal()">🔑 ' + (getApiKey() ? "Modifier" : "Ajouter") + '</button>' +
         '</div></div>' +
         '<div class="field"><label>Stockage utilisé</label>' + storageBarHtml + '</div>' +
+        '<div class="field"><label>Sauvegarde de tes données</label>' +
+        '<div style="display:flex;gap:8px">' +
+        '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.exportBackup()">⬇️ Exporter</button>' +
+        '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="document.getElementById(\'import-backup-input\').click()">⬆️ Importer</button>' +
+        '<input type="file" id="import-backup-input" accept="application/json" style="display:none" onchange="App.importBackupFile(event)">' +
+        '</div>' +
+        '<p class="modal-warn" style="margin:6px 0 0">Exporte un fichier pour récupérer tes comptes et données sur une autre adresse ou un autre appareil (ex. après avoir mis le site en ligne). Importer un fichier remplace toutes les données de ce navigateur.</p>' +
+        '</div>' +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
@@ -4437,9 +4931,19 @@
         '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
     } else if (modal.type === "latex") {
+      var latexNavBtn = function (dir, label, title) {
+        return '<button type="button" class="rte-btn latex-nav-btn" title="' + title + '" onmousedown="event.preventDefault()" onclick="App.latexMove(\'' + dir + '\')">' + label + '</button>';
+      };
       inner = '<h3>Insérer une formule</h3>' +
         '<p class="modal-warn" style="margin-bottom:10px">Compose ta formule avec le clavier ci-dessous — pas besoin de connaître de code.</p>' +
         '<math-field id="latex-mathfield" class="latex-mathfield"></math-field>' +
+        '<div class="latex-nav-row">' +
+        latexNavBtn("left", "←", "Aller à gauche") +
+        latexNavBtn("up", "↑", "Monter (ex. sortir d'un exposant, aller au numérateur)") +
+        latexNavBtn("down", "↓", "Descendre (ex. aller au dénominateur)") +
+        latexNavBtn("right", "→", "Aller à droite") +
+        latexNavBtn("backspace", "⌫", "Effacer") +
+        '</div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.insertLatexFormula()">Insérer</button></div>';
     } else if (modal.type === "periodic") {
       inner = '<h3>Tableau périodique</h3>' +
@@ -4455,7 +4959,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="submit" class="btn btn-primary">Insérer</button></div>' +
         '</form>';
     }
-    overlay.innerHTML = '<div class="modal' + (modal.type === "latex" || modal.type === "periodic" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
+    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
     document.body.appendChild(overlay);
   }
 
@@ -4606,6 +5110,13 @@
         mf.focus();
         if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.show();
       }
+    },
+    latexMove: function (dir) {
+      var mf = document.getElementById("latex-mathfield");
+      if (!mf) return;
+      var cmd = { left: "moveToPreviousChar", right: "moveToNextChar", up: "moveUp", down: "moveDown", backspace: "deleteBackward" }[dir];
+      if (cmd && mf.executeCommand) mf.executeCommand(cmd);
+      mf.focus();
     },
     insertLatexFormula: function () {
       var mf = document.getElementById("latex-mathfield");
@@ -5157,9 +5668,12 @@
         var finalPool = picked.map(function (it) {
           var v = byId[it.id];
           if (!v || !v.prompt) return it;
-          var updated = { id: it.id, kind: it.kind, prompt: v.prompt, courseId: it.courseId, courseTitle: it.courseTitle, choices: it.choices, correctIndex: it.correctIndex, explanation: it.explanation, answer: it.answer, solution: it.solution };
+          var updated = { id: it.id, kind: it.kind, prompt: v.prompt, courseId: it.courseId, courseTitle: it.courseTitle, choices: it.choices, correctIndex: it.correctIndex, explanation: it.explanation, answer: it.answer, solution: it.solution, figureSvg: it.figureSvg || "" };
           if (it.kind === "exercise" && v.solution) updated.solution = v.solution;
           if (it.kind === "open" && v.answer) updated.answer = v.answer;
+          // Si l'énoncé d'origine avait un support visuel, il doit rester cohérent avec les nouvelles
+          // valeurs/le nouveau contexte : on ne garde jamais l'ancien SVG tel quel dans ce cas.
+          if (it.figureSvg) updated.figureSvg = v.figureSvg || "";
           return updated;
         });
         launch(finalPool);
@@ -5178,7 +5692,7 @@
       s.answer = i;
       s.revealed = true;
       var wasCorrect = i === item.correctIndex;
-      epFinishSessionAnswer(s, item, item.choices[i], item.choices[item.correctIndex], wasCorrect);
+      epFinishSessionAnswer(s, item, item.choices[i], item.choices[item.correctIndex], wasCorrect ? "correct" : "wrong", []);
       render();
       dinoReact(wasCorrect);
     },
@@ -5197,10 +5711,11 @@
         s.status = "graded";
         s.revealed = true;
         s.aiFeedback = result.feedback || "";
-        var wasCorrect = !!result.correct;
-        epFinishSessionAnswer(s, item, answerText, referenceAnswer, wasCorrect);
+        var level = normalizeGradeLevel(result);
+        s.mistakes = result.mistakes || [];
+        epFinishSessionAnswer(s, item, answerText, referenceAnswer, level, s.mistakes);
         render();
-        dinoReact(wasCorrect);
+        dinoReact(gradeLevelIsSuccess(level));
       }).catch(function (err) {
         s.status = "answering";
         toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
@@ -5211,7 +5726,7 @@
       var s = epSession;
       if (!s) return;
       if (s.idx === s.pool.length - 1) { App.examPrepFinish(); return; }
-      s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null;
+      s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null; s.level = null; s.mistakes = null;
       render();
     },
     examPrepFinish: function () {
@@ -5222,8 +5737,10 @@
       s.durationMs = Date.now() - s.startedAt;
       s.status = "reviewing";
       render();
+      // Flashcards de lacunes dès la moindre imperfection (level !== "correct"), pas seulement à partir
+      // de 2 erreurs : même une seule petite erreur isolée ("minor") mérite sa carte de révision.
       var wrongIdx = [];
-      s.history.forEach(function (h, i) { if (!h.wasCorrect) wrongIdx.push(i); });
+      s.history.forEach(function (h, i) { var level = h.level || (h.wasCorrect ? "correct" : "wrong"); if (level !== "correct") wrongIdx.push(i); });
       if (!getApiKey() || !prep) { epFinalizeSession(prep, s, null, null, wrongIdx); return; }
       Promise.all([
         (prep.topics && prep.topics.length) ? generateExamTopicMap(prep.topics, s.history).then(function (r) { return r.mapping || []; }).catch(function () { return []; }) : Promise.resolve([]),
@@ -5281,7 +5798,10 @@
       saveDB(); render();
       gradeExerciseAnswer(ex.statement, ex.solution, answerText).then(function (result) {
         ex.answerStatus = "graded";
-        ex.correct = !!result.correct;
+        var level = normalizeGradeLevel(result);
+        ex.level = level;
+        ex.correct = gradeLevelIsSuccess(level);
+        ex.mistakes = result.mistakes || [];
         ex.feedback = result.feedback || "";
         saveDB();
         render();
@@ -5298,7 +5818,7 @@
       var ex = entry.exercises[idx];
       if (!ex) return;
       ex.answerStatus = "unanswered";
-      ex.answerHtml = ""; ex.answerText = ""; ex.correct = null; ex.feedback = "";
+      ex.answerHtml = ""; ex.answerText = ""; ex.correct = null; ex.level = null; ex.mistakes = null; ex.feedback = "";
       saveDB();
       render();
     },
@@ -5306,7 +5826,7 @@
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
       if (!entry || !entry.exercises.length || !entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; })) return;
       var html = entry.exercises.map(function (ex, i) {
-        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.correct, ex.feedback, mdToHtml(ex.solution));
+        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.level || (ex.correct ? "correct" : "wrong"), ex.feedback, mdToHtml(ex.solution), ex.mistakes);
       }).join("");
       printAndDownload(html);
     },
@@ -5322,6 +5842,64 @@
       modal = null;
       toast(key ? "Clé API enregistrée" : "Clé API effacée");
       render();
+    },
+
+    // Toutes les données de l'appli vivent dans IndexedDB, propre à chaque adresse (domaine/protocole)
+    // — passer d'un test en local au site en ligne, ou changer de navigateur/appareil, ne transfère
+    // donc rien automatiquement. Ce fichier de sauvegarde (le DB entier : comptes + données) permet de
+    // le faire manuellement.
+    exportBackup: function () {
+      var json = JSON.stringify(DB, null, 2);
+      var blob = new Blob([json], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "studino-sauvegarde-" + new Date().toISOString().slice(0, 10) + ".json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast("Sauvegarde téléchargée");
+    },
+    importBackupFile: function (e) {
+      var file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var parsed;
+        try { parsed = JSON.parse(reader.result); } catch (err) { toast("Fichier invalide — ce n'est pas une sauvegarde Studino."); return; }
+        if (!parsed || typeof parsed !== "object" || typeof parsed.users !== "object" || typeof parsed.data !== "object") {
+          toast("Fichier invalide — ce n'est pas une sauvegarde Studino.");
+          return;
+        }
+        // Remplacer DB tout de suite écraserait les données actuelles sans confirmation si l'import
+        // échoue ou si l'élève s'est trompé de fichier : on passe par une confirmation explicite,
+        // comme pour toute autre suppression/écrasement dans l'appli.
+        modal = { type: "confirmImportBackup", data: parsed, userCount: Object.keys(parsed.users).length };
+        render();
+      };
+      reader.onerror = function () { toast("Impossible de lire ce fichier."); };
+      reader.readAsText(file);
+    },
+    executeImportBackup: function () {
+      var data = modal.data;
+      DB = data;
+      if (!DB.currentUser || !DB.users[DB.currentUser]) DB.currentUser = null;
+      modal = null;
+      saveDB();
+      toast("Sauvegarde importée !");
+      navigate("#/");
+    },
+    executeMergeBackup: function () {
+      var imported = modal.data;
+      // currentUser reste celui déjà connecté sur CET appareil (jamais celui du fichier importé) —
+      // fusionner ne doit pas déconnecter quelqu'un déjà en session ici pour le rebasculer ailleurs.
+      DB = mergeDB(DB, imported);
+      modal = null;
+      saveDB();
+      toast("Sauvegardes fusionnées !");
+      navigate("#/");
     },
 
     askDelete: function (kind, subjectId, themeId, chapterId, courseId) {
@@ -5509,6 +6087,7 @@
     dpQuizGoChapter: function (chapterId) { dpView.quizNav.level = "courses"; dpView.quizNav.chapterId = chapterId; render(); },
     dpUnlockZone: function (zoneId) {
       var dp = dpData(); var z = dpZone(zoneId);
+      if (!dpZoneFullyStocked(zoneId)) { toast("Cette zone n'est pas encore disponible"); return; }
       if (dp.points < z.cost) { toast("Pas assez de points"); return; }
       dp.points -= z.cost; dp.unlockedZones.push(zoneId);
       saveDB(); toast("Zone " + z.name + " débloquée !"); render();
@@ -5658,7 +6237,7 @@
       qz.answer = i;
       qz.revealed = true;
       var wasCorrect = i === q.correctIndex;
-      dpFinishAnswer(qz, q, q.choices[i], q.choices[q.correctIndex], wasCorrect);
+      dpFinishAnswer(qz, q, q.choices[i], q.choices[q.correctIndex], wasCorrect ? "correct" : "wrong", []);
       render();
       dinoReact(wasCorrect);
     },
@@ -5675,10 +6254,11 @@
         qz.status = "graded";
         qz.revealed = true;
         qz.aiFeedback = result.feedback || "";
-        var wasCorrect = !!result.correct;
-        dpFinishAnswer(qz, q, answerText, q.answer, wasCorrect);
+        var level = normalizeGradeLevel(result);
+        qz.mistakes = result.mistakes || [];
+        dpFinishAnswer(qz, q, answerText, q.answer, level, qz.mistakes);
         render();
-        dinoReact(wasCorrect);
+        dinoReact(gradeLevelIsSuccess(level));
       }).catch(function (err) {
         qz.status = "answering";
         toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
@@ -5691,7 +6271,7 @@
       if (isLast) {
         qz.done = true;
       } else {
-        qz.idx++; qz.answer = null; qz.answerHtml = ""; qz.status = "answering"; qz.aiFeedback = ""; qz.revealed = false; qz.wasCorrect = null;
+        qz.idx++; qz.answer = null; qz.answerHtml = ""; qz.status = "answering"; qz.aiFeedback = ""; qz.revealed = false; qz.wasCorrect = null; qz.level = null; qz.mistakes = null;
       }
       render();
     },
@@ -5699,7 +6279,7 @@
       var loc = locateCourse(courseId);
       if (!loc || !loc.course.exercises.length) return;
       var ex = loc.course.exercises[Math.floor(Math.random() * loc.course.exercises.length)];
-      dpView.quiz = { mode: "exercise", courseId: courseId, exercise: ex, answer: "", answerHtml: "", status: "answering", correct: null, feedback: "" };
+      dpView.quiz = { mode: "exercise", courseId: courseId, exercise: ex, answer: "", answerHtml: "", status: "answering", correct: null, level: null, mistakes: null, feedback: "" };
       render();
     },
     dpSubmitExerciseAnswer: function () {
@@ -5713,9 +6293,14 @@
       render();
       gradeExerciseAnswer(qz.exercise.prompt, qz.exercise.solution, qz.answer).then(function (result) {
         qz.status = "graded";
-        qz.correct = !!result.correct;
+        var level = normalizeGradeLevel(result);
+        qz.level = level;
+        qz.correct = gradeLevelIsSuccess(level);
+        qz.mistakes = result.mistakes || [];
         qz.feedback = result.feedback || "";
-        if (qz.correct) { var dp = dpData(); dp.points += DP_EXERCISE_POINTS; saveDB(); }
+        var earned = Math.round(DP_EXERCISE_POINTS * (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).pointsFactor);
+        if (earned > 0) { var dp = dpData(); dp.points += earned; saveDB(); }
+        qz.pointsEarned = earned;
         render();
         dinoReact(qz.correct);
       }).catch(function (err) {
@@ -5730,7 +6315,7 @@
       var ex = qz.exercise;
       var loc = locateCourse(qz.courseId);
       var title = loc ? loc.course.title : "Exercice";
-      var html = buildExercisePrintHtml(title, "", mdToHtml(ex.prompt), qz.answerHtml, qz.correct, qz.feedback, mdToHtml(ex.solution));
+      var html = buildExercisePrintHtml(title, "", mdToHtml(ex.prompt), qz.answerHtml, qz.level || (qz.correct ? "correct" : "wrong"), qz.feedback, mdToHtml(ex.solution), qz.mistakes);
       printAndDownload(html);
     },
 
@@ -5858,6 +6443,15 @@
     try {
       dtStopWalkLoop();
       if (!DB.currentUser) { renderAuth(parseHash()[0] === "signup" ? "signup" : "login"); return; }
+      // L'appli est un simple site statique sans clé partagée : chaque visiteur doit fournir la sienne
+      // (gratuite) pour que la génération fonctionne chez lui. Sans ce guide, quelqu'un qui découvre
+      // Studino sans savoir ce qu'est une "clé API Gemini" se retrouve juste avec des boutons qui ne
+      // font rien. Ne se déclenche qu'une fois par chargement de page (pas à chaque render), pour ne
+      // pas rouvrir la modale en boucle si l'utilisateur la ferme sans ajouter de clé.
+      if (!getApiKey() && !apiKeyGuideShown) {
+        apiKeyGuideShown = true;
+        if (!modal) modal = { type: "apiKeyGuide" };
+      }
       var parts = parseHash();
       if (parts.length === 0) { renderDashboard(); return; }
       if (parts[0] === "subject" && parts[1] && parts[2] === "theme" && parts[3] && parts[4] === "chapter" && parts[5]) { renderChapterPage(parts[1], parts[3], parts[5]); return; }
