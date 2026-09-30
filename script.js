@@ -457,15 +457,27 @@
     }
     return value;
   }
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  // Message clair à afficher quand TOUS les modèles de secours ont échoué à cause d'une limite de
+  // débit Google (429) — sans ça, l'élève ne voit que le texte brut anglais du DERNIER modèle essayé,
+  // qui donne l'impression trompeuse qu'aucun essai de secours n'a eu lieu alors qu'il y en a eu 4.
+  function rateLimitFallbackError(detail) {
+    var err = new Error("Tous les modèles Gemini disponibles sont temporairement limités par Google (quota gratuit dépassé). Réessaie dans 1 à 2 minutes.");
+    err.status = 429;
+    err.detail = detail;
+    return err;
+  }
   async function callGemini(parts, schema) {
     var apiKey = getApiKey();
     if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     var lastErr = null;
+    var hadRateLimit = false;
     // Une température basse rend le modèle plus déterministe, donc plus susceptible de reproduire du
     // texte mémorisé mot pour mot (ce qui déclenche le filtre RECITATION) : après un blocage de ce
     // type, on l'augmente pour le(s) modèle(s) suivant(s) afin d'obtenir une formulation plus originale.
     var recitationRetries = 0;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
       var generationConfig = { response_mime_type: "application/json", response_schema: schema };
       if (recitationRetries > 0) generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
       var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], generationConfig: generationConfig });
@@ -506,11 +518,13 @@
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
       var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
+      if (res.status === 429) hadRateLimit = true;
       lastErr = new Error(msg);
       lastErr.status = res.status;
       lastErr.detail = JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
+    if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
     throw lastErr;
   }
 
@@ -526,7 +540,9 @@
     var apiKey = getApiKey();
     if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     var lastErr = null;
+    var hadRateLimit = false;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
       var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], tools: [{ google_search: {} }] });
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
       var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
@@ -552,10 +568,12 @@
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
       var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
+      if (res.status === 429) hadRateLimit = true;
       lastErr = new Error(msg);
       lastErr.status = res.status; lastErr.detail = JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
+    if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
     throw lastErr;
   }
 
@@ -636,8 +654,8 @@
         type: "array", items: { type: "string", enum: METHODOLOGY_MECHANICS },
         description: "Parmi \"plan\" (plan détaillé sans rédiger), \"redaction\" (rédaction complète), \"partie\" (s'entraîner sur UNE partie précise et difficile isolément — introduction/problématique, transition, conclusion...), \"document\" (l'épreuve porte sur l'analyse d'un document/texte/source fourni), \"courte\" (réponse développée courte, sans plan formel — question de cours, question ouverte), \"traduction\" (traduire un passage) : coche TOUTES celles qui ont vraiment du sens pour ce genre d'épreuve, ne te limite pas à une seule par excès de prudence — une dissertation, une composition ou un développement construit se prêtent quasiment toujours À LA FOIS à \"plan\", \"redaction\" ET \"partie\" (ce sont 3 façons différentes et complémentaires de s'entraîner sur la même méthode, pas 3 méthodes concurrentes). Ne coche que ce qui n'a clairement aucun sens (ex. \"traduction\" pour une dissertation de philo)."
       },
-      structure: { type: "string", description: "Résumé fidèle et COMPLET, en Markdown, de la méthode elle-même : chaque étape attendue, ce que doit contenir chaque partie (introduction/problématique, développement, conclusion, ou l'équivalent propre à ce genre), les critères de réussite mentionnés. Ce résumé servira ensuite de grille de correction stricte : sois précis et exhaustif, jamais vague." },
-      transcription: { type: "string", description: "Retranscription fidèle et complète du document source, en Markdown structuré." }
+      structure: { type: "string", description: "La méthode elle-même, en Markdown, à un niveau de détail ÉGAL à celui du document source — PAS un résumé condensé. Ce champ sert directement et intégralement de grille de correction : chaque étape attendue, chaque critère, chaque nuance, chaque exemple de formulation ou de tournure attendue mentionné dans le document doit s'y retrouver, dans le même niveau de détail. Si le document source fait plusieurs pages, ce champ doit lui aussi être long et détaillé (plusieurs sections en Markdown) — une seule phrase ou un seul paragraphe pour un document de plusieurs pages est un échec de ta part, jamais un résultat acceptable." },
+      transcription: { type: "string", description: "Retranscription fidèle, complète et intégrale du document source, en Markdown structuré — même longueur d'information que l'original, rien de résumé ni d'omis." }
     },
     required: ["genre", "mechanics", "structure", "transcription"]
   };
@@ -651,7 +669,7 @@
     return "Tu es un assistant pédagogique pour un élève francophone.\n\n" +
       "1. " + step1 + " Utilise du Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras).\n" +
       "2. Identifie le \"genre\" exact de l'épreuve" + (imageCount === 0 ? " (reprends le titre donné par l'élève, reformulé proprement si besoin)" : ", en reprenant le terme utilisé dans le document lui-même") + ".\n" +
-      "3. Résume dans \"structure\" la méthode elle-même de façon complète et précise (chaque étape attendue, ce que chaque partie doit contenir, les critères de réussite) — ce résumé servira ensuite de grille de correction stricte, donc ne simplifie pas à l'excès.\n" +
+      "3. Extrais dans \"structure\" la méthode elle-même, EXHAUSTIVEMENT et SANS LA RÉSUMER : reprends chaque étape attendue, chaque exigence de chaque partie, chaque critère de réussite, chaque nuance ou exemple donné par le document, au même niveau de détail que le document source — ce champ sert TEL QUEL de grille de correction stricte pour noter les copies des élèves, donc toute exigence qui n'y figure pas sera tout simplement ignorée à la correction. Un document de plusieurs pages doit donner une \"structure\" longue et structurée en Markdown (plusieurs sections/sous-sections), jamais un paragraphe unique condensé — si tu hésites entre condenser et être exhaustif, choisis TOUJOURS l'exhaustivité.\n" +
       "4. Détermine dans \"mechanics\" tous les types d'entraînement qui ont du sens pour CETTE méthode précise (voir la description du champ).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
@@ -1697,6 +1715,7 @@
   var entryFiguresOpen = {}; // per importedExercise id: idem, pour les exercices importés
   var methodoTrainState = {}; // per methodology id: { chapterId, mechanic } — choix courant du panneau "S'entraîner"
   var methodoItemOpen = {}; // per practice item id: bool — replié par défaut une fois plusieurs sujets accumulés
+  var methodoTranscriptionOpen = {}; // per methodology id: bool — repliée par défaut, pour vérifier que rien n'a été perdu par rapport au document du prof
   var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
   var dtState = { mode: "setup", tab: "chrono", durationMin: 25, enclosureId: null, pomoWork: 25, pomoBreak: 5, pomoCycles: 4, pomoDinoId: null }; // DinoTime sub-navigation
   var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
@@ -3855,6 +3874,11 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryMethodologyGeneration(\'' + methodo.id + '\')">Réessayer</button></div>';
     } else {
       var structureBox = '<div class="dp-exercise-box"><div class="dp-exercise-label">Méthode retenue</div><div class="dp-exercise-text">' + mdToHtml(methodo.structure) + '</div></div>';
+      var transcriptionOpen = !!methodoTranscriptionOpen[methodo.id];
+      var transcriptionBox = methodo.transcription ? (
+        '<button class="ep-day-fc-toggle" style="margin:10px 0" onclick="App.toggleMethodoTranscription(\'' + methodo.id + '\')">' + (transcriptionOpen ? "▾" : "▸") + ' Document original du prof (pour vérifier que rien n\'a été perdu)</button>' +
+        (transcriptionOpen ? '<div class="dp-exercise-box" style="margin-bottom:14px"><div class="dp-exercise-text">' + mdToHtml(methodo.transcription) + '</div></div>' : '')
+      ) : '';
       var allSubs = userData().subjects;
       var st = methodoTrainState[methodo.id];
       if (!st) { st = methodoTrainState[methodo.id] = { subjectId: allSubs[0] ? allSubs[0].id : "", chapterId: "", mechanic: methodo.mechanics[0] || "redaction", customMechanic: "" }; }
@@ -3878,7 +3902,7 @@
           : '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>') +
         '</div>';
       var itemsHtml = (methodo.practiceItems || []).map(function (item, idx) { return methodologyItemHtml(methodo, item, idx === 0 || item.status !== "graded"); }).join("");
-      body = structureBox + trainPanel + (itemsHtml || '<p class="dp-empty-note">Aucun sujet généré pour l\'instant.</p>');
+      body = structureBox + transcriptionBox + trainPanel + (itemsHtml || '<p class="dp-empty-note">Aucun sujet généré pour l\'instant.</p>');
     }
     renderShell(["methodologies", id], head + '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + body + '</div>' + dinoCompanionHtml() + '</div>');
   }
@@ -5980,6 +6004,7 @@
       submitMethodologyAnswer(methodo, item, answerHtml, answerText);
     },
     toggleMethodoItem: function (itemId) { methodoItemOpen[itemId] = !methodoItemOpen[itemId]; render(); },
+    toggleMethodoTranscription: function (id) { methodoTranscriptionOpen[id] = !methodoTranscriptionOpen[id]; render(); },
     deleteMethodoItem: function (methodoId, itemId) {
       var methodo = methodoFind(methodoId);
       if (!methodo) return;
