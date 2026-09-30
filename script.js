@@ -5467,9 +5467,9 @@
       inner = '<h3>🔑 Bienvenue sur Studino !</h3>' +
         '<p class="modal-warn" style="margin-bottom:16px">Pour générer tes cours, questions et exercices, Studino a besoin d\'une clé API Gemini (Google). C\'est <strong>gratuit</strong> et ça prend 2 minutes — voici comment faire :</p>' +
         '<ol class="apikey-guide-steps">' +
-        '<li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> (Google AI Studio) et connecte-toi avec un compte Google (ou crées-en un gratuitement si tu n\'en as pas).</li>' +
-        '<li>Clique sur le bouton <strong>« Create API key »</strong> (parfois traduit « Créer une clé API »), en haut de la page.</li>' +
-        '<li>S\'il te demande de choisir un projet, sélectionne <strong>« Create API key in new project »</strong> — c\'est le plus simple, et <strong>aucune carte bancaire n\'est demandée</strong> pour la clé gratuite.</li>' +
+        '<li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> (Google AI Studio) et connecte-toi avec un compte Google (ou crées-en un gratuitement si tu n\'en as pas) — assure-toi qu\'aucun AUTRE compte Google n\'est connecté en même temps dans ce navigateur, sinon Google peut mélanger les permissions et bloquer.</li>' +
+        '<li>Clique sur le bouton <strong>« Create API key »</strong> (« Créer une clé API »), en haut de la page.</li>' +
+        '<li>Si ça te propose direct de créer la clé, choisis <strong>« Create API key in new project »</strong> — aucune carte bancaire n\'est demandée. Si à la place ça affiche une erreur du genre <em>« Failed to list imported projects »</em> (fréquent sur un compte tout neuf), pas de panique : choisis <strong>« Créer un projet »</strong>, donne-lui un nom (n\'importe lequel), puis reviens sur aistudio.google.com/apikey et relance « Create API key » — cette fois choisis <strong>« Importer un projet »</strong> et sélectionne celui que tu viens de créer.</li>' +
         '<li>Ta clé s\'affiche à l\'écran : une suite de caractères qui commence par <code>AIzaSy…</code>. Clique sur l\'icône de copie à côté pour la copier.</li>' +
         '<li>Reviens sur cette page, colle ta clé dans le champ juste en dessous, puis clique sur <strong>Enregistrer</strong>. C\'est tout !</li>' +
         '</ol>' +
