@@ -1105,6 +1105,16 @@
     s.level = level;
     if (wasCorrect) s.correct++; else s.wrong++;
     s.history.push({ prompt: item.prompt, yourAnswer: yourAnswerText, correctAnswer: correctAnswerText, explanation: item.explanation || "", wasCorrect: wasCorrect, level: level, mistakes: mistakes || [], figureSvg: item.figureSvg || "" });
+    epSaveActiveSession(s);
+  }
+  // Sauvegarde la séance en cours après CHAQUE exercice répondu (pas seulement à la fin) : un refresh,
+  // un crash ou une sortie volontaire en plein milieu ne doit jamais faire perdre les exercices déjà
+  // faits ni forcer à recommencer le pool du jour depuis zéro.
+  function epSaveActiveSession(s) {
+    var prep = epFind(s.prepId);
+    if (!prep) return;
+    prep.activeSession = s;
+    saveDB();
   }
 
   /* --- Baromètre de préparation : un score de maîtrise 0-100 par notion, mis à jour uniquement par
@@ -1337,6 +1347,7 @@
       if (pointsEarned > 0) dpData().points += pointsEarned;
       prep.sessions = prep.sessions || {};
       prep.sessions[s.date] = { status: "done", correct: s.correct, wrong: s.wrong, total: s.pool.length, history: s.history, review: review, readinessBefore: readinessBefore, readinessAfter: readinessAfter, newFlashcards: (gapFlashcardsFlat || []).length, pointsEarned: pointsEarned, durationMs: s.durationMs || 0, completedAt: Date.now() };
+      prep.activeSession = null; // la séance est allée au bout : plus rien à reprendre pour ce jour.
       saveDB();
       s.readinessAfter = readinessAfter;
       s.pointsEarned = pointsEarned;
@@ -4119,8 +4130,13 @@
       var readinessHtml = epReadinessBarHtml(epReadinessPercent(prep), false);
       var startingToday = epStartingSessionFor === (prep.id + "::" + today);
       var loadingBtnHtml = '<button class="btn btn-ghost" style="width:auto" disabled>⏳ Préparation de séances variées…</button>';
+      var resumable = prep.activeSession && !prep.activeSession.done;
       var cta;
-      if (daysLeft < 0) {
+      if (resumable) {
+        var rs = prep.activeSession;
+        cta = '<div class="ep-today-card"><div class="ep-today-title">⏸️ Séance en pause — exercice ' + (rs.idx + 1) + ' / ' + rs.pool.length + '</div><div class="ep-today-sub">' + rs.correct + ' bonne(s) réponse(s), ' + rs.wrong + ' erreur(s) jusqu\'ici, rien n\'est perdu</div>' +
+          '<button class="btn btn-metal" style="width:auto" onclick="App.resumeExamPrepSession(\'' + prep.id + '\')">▶ Reprendre où j\'en étais</button></div>';
+      } else if (daysLeft < 0) {
         cta = '<div class="ep-today-card"><div class="ep-today-title">📅 Cet examen est passé.</div></div>';
       } else if (!todayEntry) {
         cta = '<div class="ep-today-card"><div class="ep-today-title">Rien de prévu aujourd\'hui pour cette prépa.</div></div>';
@@ -6198,7 +6214,7 @@
         id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
         methodologyId: m.methodologyId || null,
         planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
-        overview: "", days: [], topicStatus: {}, sessions: {}, gapFlashcards: []
+        overview: "", days: [], topicStatus: {}, sessions: {}, gapFlashcards: [], activeSession: null
       };
       userData().examPreps.push(prep);
       saveDB();
@@ -6248,6 +6264,7 @@
       var launch = function (finalPool) {
         epStartingSessionFor = null;
         epSession = { prepId: prepId, date: date, pool: finalPool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), startedAt: Date.now(), done: false };
+        epSaveActiveSession(epSession); // capture le pool tiré dès le départ, pour ne jamais le retirer au hasard si l'élève quitte avant même la 1re réponse
         render();
       };
       // Si cette prépa a une méthodologie liée, chaque séance inclut EN PLUS un sujet à rédiger dessus
@@ -6402,6 +6419,7 @@
       if (!s) return;
       if (s.idx === s.pool.length - 1) { App.examPrepFinish(); return; }
       s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null; s.level = null; s.mistakes = null; s.score = null; s.scoreMax = null;
+      epSaveActiveSession(s);
       render();
     },
     examPrepFinish: function () {
@@ -6425,6 +6443,12 @@
       });
     },
     examPrepExitSession: function () { epSession = null; render(); },
+    resumeExamPrepSession: function (prepId) {
+      var prep = epFind(prepId);
+      if (!prep || !prep.activeSession) return;
+      epSession = prep.activeSession;
+      render();
+    },
 
     createImportedExercise: function (e) {
       e.preventDefault();
