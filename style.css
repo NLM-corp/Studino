@@ -385,6 +385,7 @@
   .correction-item { border: 2px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; background: var(--surface); }
   .correction-item.correct { border-left: 5px solid var(--success); }
   .correction-item.minor { border-left: 5px solid #d4a017; }
+  .correction-item.moderate { border-left: 5px solid #d98f1f; }
   .correction-item.major { border-left: 5px solid #d97706; }
   .correction-item.wrong { border-left: 5px solid var(--danger); }
   .correction-q { font-weight: 700; font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -402,6 +403,7 @@
   .grade-pill { flex: none; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; text-transform: none; }
   .grade-pill.grade-correct { background: rgba(80,170,110,0.15); color: var(--success); }
   .grade-pill.grade-minor { background: rgba(212,160,23,0.18); color: #ab7e0e; }
+  .grade-pill.grade-moderate { background: rgba(217,143,31,0.18); color: #b3730f; }
   .grade-pill.grade-major { background: rgba(217,119,6,0.18); color: #d97706; }
   .grade-pill.grade-wrong { background: var(--danger-soft); color: var(--danger); }
   .grade-mistakes { margin: 6px 0; padding-left: 18px; font-size: 12.5px; color: var(--text-muted); }
@@ -474,11 +476,13 @@
   .quiz-feedback { border-radius: 10px; padding: 14px 16px; margin-top: 16px; border: 2px solid var(--border); }
   .quiz-feedback.correct { border-color: var(--success); background: rgba(80,170,110,0.1); }
   .quiz-feedback.minor { border-color: #d4a017; background: rgba(212,160,23,0.1); }
+  .quiz-feedback.moderate { border-color: #d98f1f; background: rgba(217,143,31,0.1); }
   .quiz-feedback.major { border-color: #d97706; background: rgba(217,119,6,0.1); }
   .quiz-feedback.wrong { border-color: var(--danger); background: rgba(210,90,90,0.1); }
   .quiz-feedback-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
   .quiz-feedback-title.correct { color: var(--success); }
   .quiz-feedback-title.minor { color: #ab7e0e; }
+  .quiz-feedback-title.moderate { color: #b3730f; }
   .quiz-feedback-title.major { color: #d97706; }
   .quiz-feedback-title.wrong { color: var(--danger); }
   .quiz-grade-row { display: flex; gap: 10px; margin-top: 14px; }

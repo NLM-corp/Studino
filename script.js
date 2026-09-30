@@ -118,6 +118,7 @@
     if (!DB.data[u].importedExercises) DB.data[u].importedExercises = [];
     if (!DB.data[u].revisionSheets) DB.data[u].revisionSheets = [];
     if (!DB.data[u].examPreps) DB.data[u].examPreps = [];
+    if (!DB.data[u].methodologies) DB.data[u].methodologies = [];
     // Migration : ancienne hiérarchie matière -> chapitres directement, sans thème.
     // On enveloppe les chapitres existants dans un thème "Général" créé une seule fois.
     DB.data[u].subjects.forEach(function (s) {
@@ -424,8 +425,8 @@
       "2. Rédige une explication simple, claire et concrète du contenu pour un élève qui ne comprend pas bien, en français, avec un exemple si utile.\n" +
       "3. Propose 3 requêtes de recherche YouTube pertinentes pour approfondir ce cours (un label court + la requête de recherche).\n" +
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota.\n" +
-      "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Parmi ces questions, environ 70% de type \"qcm\" (4 choix, un seul indice correct de 0 à 3) et environ 30% de type \"ouverte\" (le joueur tape une réponse courte — laisse \"choices\" vide, \"correctIndex\" à 0, et renseigne \"answer\" avec la réponse attendue). Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
-      "6. Génère entre 2 et 4 exercices plus complets et plus difficiles que les questions ci-dessus (plusieurs étapes de raisonnement ou de calcul), chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
+      "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). RÈGLE STRICTE sur le type : toute question de catégorie \"definition\" ou \"formule\" — donc tout ce qui se récite mot pour mot — DOIT être de type \"ouverte\" (l'élève réécrit lui-même la définition/formule ; JAMAIS de type \"qcm\" pour ces deux catégories, reconnaître une bonne réponse parmi 4 ne prouve pas qu'on la sait par cœur). Seule la catégorie \"application\" peut être en \"qcm\", et encore minoritairement : au global sur l'ensemble des questions, le type \"ouverte\" doit rester largement majoritaire (au moins deux tiers), le \"qcm\" n'est qu'un complément. Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
+      "6. Génère un nombre d'exercices plus complets ADAPTÉ à la richesse du cours (au moins 4, et bien plus pour un cours dense qui s'y prête — pas de plafond artificiel), volontairement PLUS DIFFICILES que les questions ci-dessus : plusieurs étapes de raisonnement ou de calcul, une vraie difficulté à surmonter, quitte à être longs si besoin (un exercice qui prend 15-20 minutes de réflexion n'est pas un problème, l'objectif est que l'élève ait vraiment cherché et progressé, pas reconnu une réponse en 30 secondes). Chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
       (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. Signal à prendre TRÈS au sérieux : dès que le texte source dit \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma, c'est qu'un visuel est physiquement présent à cet endroit — cherche-le activement et capture-le, ne le laisse jamais de côté. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
       "8. Pour CHAQUE question de révision et CHAQUE exercice (champ \"figureSvg\" de chacun) : dès qu'un support visuel est NÉCESSAIRE pour lire une DONNÉE externe du problème — même si l'énoncé ne le dit pas explicitement en mots (ex. donner des longueurs d'onde et demander une couleur suppose le spectre visible sous les yeux, même sans le mot \"spectre\" dans l'énoncé) —, tu DOIS dessiner toi-même ce support en SVG dans \"figureSvg\". ATTENTION, ne confonds jamais ça avec fournir la réponse : si la question teste une connaissance à savoir par cœur d'après le cours (une date/un événement d'histoire-géo, une formule de maths/physique à connaître, une définition, un résultat, un nom), \"figureSvg\" reste VIDE, un point c'est tout — par exemple jamais de frise chronologique pour une question de date, jamais la formule elle-même dessinée en image pour une question qui demande de connaître ou d'appliquer une formule du cours. " + FIGURE_SVG_FIELD_DESC + " Pour toutes les autres questions/exercices (la grande majorité, purement textuels ou calculatoires, ou testant une connaissance à savoir par cœur), laisse \"figureSvg\" vide.\n\n" +
       "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
@@ -513,6 +514,51 @@
     throw lastErr;
   }
 
+  // Variante de callGemini qui laisse le modèle interroger le vrai Google Search ("grounding") au lieu
+  // de générer depuis sa seule mémoire — indispensable pour aller chercher un document RÉEL (source,
+  // auteur, date) plutôt que d'en halluciner un qui ressemblerait à un vrai document sans en être un.
+  // Le grounding et la sortie JSON structurée (response_schema) ne sont pas fiables ensemble sur cette
+  // API (le grounding est silencieusement ignoré si response_schema est présent) : cette fonction
+  // renvoie donc du texte libre avec ses sources, à faire ensuite passer par un second appel callGemini
+  // "normal" pour le mettre en forme dans le schéma voulu. Gratuit dans la limite d'un quota mensuel
+  // généreux (~5000 requêtes/mois sur les modèles Gemini 3.x), sans carte bancaire.
+  async function callGeminiSearch(parts) {
+    var apiKey = getApiKey();
+    if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+    var lastErr = null;
+    for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], tools: [{ google_search: {} }] });
+      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
+      var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
+      if (res.ok) {
+        var data = await res.json();
+        if (data.promptFeedback && data.promptFeedback.blockReason) {
+          lastErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
+          lastErr.status = res.status; lastErr.detail = JSON.stringify(data, null, 2);
+          continue;
+        }
+        var cand = data.candidates && data.candidates[0];
+        var candParts = cand && cand.content && cand.content.parts;
+        var text = (candParts || []).map(function (p) { return p.text || ""; }).join("\n");
+        if (!text.trim()) {
+          lastErr = new Error("Réponse vide de l'API lors de la recherche.");
+          lastErr.status = res.status; lastErr.detail = JSON.stringify(data, null, 2);
+          continue;
+        }
+        var chunks = (cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || [];
+        var sources = chunks.map(function (c) { return c.web ? { uri: c.web.uri || "", title: c.web.title || "" } : null; }).filter(Boolean);
+        return { text: text, sources: sources };
+      }
+      var errBody = await res.json().catch(function () { return {}; });
+      var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
+      var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
+      lastErr = new Error(msg);
+      lastErr.status = res.status; lastErr.detail = JSON.stringify(errBody, null, 2);
+      if (!retryable) throw lastErr;
+    }
+    throw lastErr;
+  }
+
   async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription) {
     var images = (imageDataUrls || []).map(function (url) {
       var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
@@ -568,6 +614,251 @@
       render();
     });
   }
+
+  /* ---------------- Méthodologies (dissertation, commentaire, étude de document...) ----------------
+     Contrairement à un cours "de connaissances", une méthodologie n'est pas un contenu à mémoriser
+     question par question : c'est une PROCÉDURE à appliquer sur un sujet neuf à chaque fois. On la
+     traite donc comme un contenu à part, qui génère des SUJETS D'ENTRAÎNEMENT (pas du quiz), notés
+     comme une vraie copie plutôt que "correct/faux". */
+  var METHODOLOGY_MECHANICS = ["plan", "redaction", "partie", "document", "courte", "traduction"];
+  var METHODOLOGY_MECHANIC_LABELS = {
+    plan: "Plan détaillé", redaction: "Rédaction complète", partie: "Partie ciblée (intro, transition, conclusion...)",
+    document: "Analyse de document réel", courte: "Réponse développée courte", traduction: "Traduction"
+  };
+  // Toujours proposée en plus de ce que l'IA détecte : l'élève sait parfois mieux que l'IA sur quoi il
+  // a besoin de s'entraîner précisément (une consigne inventée par son prof, une variante locale...).
+  var METHODOLOGY_MECHANIC_CUSTOM = "autre";
+  var METHODOLOGY_SCHEMA = {
+    type: "object",
+    properties: {
+      genre: { type: "string", description: "Nom de l'épreuve tel que désigné dans le document (ex. \"Dissertation\", \"Commentaire de texte\", \"Question problématisée\", \"Étude de documents\"...) — reprends le terme utilisé par le document lui-même, ne l'invente pas." },
+      mechanics: {
+        type: "array", items: { type: "string", enum: METHODOLOGY_MECHANICS },
+        description: "Parmi \"plan\" (plan détaillé sans rédiger), \"redaction\" (rédaction complète), \"partie\" (s'entraîner sur UNE partie précise et difficile isolément — introduction/problématique, transition, conclusion...), \"document\" (l'épreuve porte sur l'analyse d'un document/texte/source fourni), \"courte\" (réponse développée courte, sans plan formel — question de cours, question ouverte), \"traduction\" (traduire un passage) : coche TOUTES celles qui ont vraiment du sens pour ce genre d'épreuve, ne te limite pas à une seule par excès de prudence — une dissertation, une composition ou un développement construit se prêtent quasiment toujours À LA FOIS à \"plan\", \"redaction\" ET \"partie\" (ce sont 3 façons différentes et complémentaires de s'entraîner sur la même méthode, pas 3 méthodes concurrentes). Ne coche que ce qui n'a clairement aucun sens (ex. \"traduction\" pour une dissertation de philo)."
+      },
+      structure: { type: "string", description: "Résumé fidèle et COMPLET, en Markdown, de la méthode elle-même : chaque étape attendue, ce que doit contenir chaque partie (introduction/problématique, développement, conclusion, ou l'équivalent propre à ce genre), les critères de réussite mentionnés. Ce résumé servira ensuite de grille de correction stricte : sois précis et exhaustif, jamais vague." },
+      transcription: { type: "string", description: "Retranscription fidèle et complète du document source, en Markdown structuré." }
+    },
+    required: ["genre", "mechanics", "structure", "transcription"]
+  };
+  function buildMethodologyPrompt(title, imageCount) {
+    // Pas de matière ici volontairement : une même méthode (dissertation, question problématisée...)
+    // sert souvent pour plusieurs matières différentes (français ET histoire, par ex.) — la matière et
+    // le chapitre ne sont choisis qu'au moment de s'entraîner, jamais figés à la création.
+    var step1 = imageCount === 0
+      ? "Aucun document n'a été fourni — l'élève n'a que le titre « " + title + " ». Rédige TOI-MÊME dans \"transcription\" une méthodologie standard, rigoureuse et complète pour ce type précis d'épreuve, telle qu'elle est réellement enseignée dans le système scolaire/universitaire français (mêmes attentes qu'un vrai prof : structure de l'introduction/problématique, du développement, de la conclusion, ou l'équivalent propre à ce genre) — pas une version vague ou générique, une vraie méthode utilisable telle quelle."
+      : "Voici " + (imageCount > 1 ? imageCount + " photos d'" : "la photo d'") + "une méthodologie d'épreuve intitulée « " + title + " » fournie par le prof de l'élève — attention, ce n'est PAS un cours de connaissances, c'est un document qui explique COMMENT réussir un type d'épreuve précis (dissertation, commentaire, étude de document, etc.). Retranscris-la fidèlement dans \"transcription\" (ne la remplace jamais par une méthode générique : c'est CETTE méthode précise, celle du prof, qui doit servir de grille de correction).";
+    return "Tu es un assistant pédagogique pour un élève francophone.\n\n" +
+      "1. " + step1 + " Utilise du Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras).\n" +
+      "2. Identifie le \"genre\" exact de l'épreuve" + (imageCount === 0 ? " (reprends le titre donné par l'élève, reformulé proprement si besoin)" : ", en reprenant le terme utilisé dans le document lui-même") + ".\n" +
+      "3. Résume dans \"structure\" la méthode elle-même de façon complète et précise (chaque étape attendue, ce que chaque partie doit contenir, les critères de réussite) — ce résumé servira ensuite de grille de correction stricte, donc ne simplifie pas à l'excès.\n" +
+      "4. Détermine dans \"mechanics\" tous les types d'entraînement qui ont du sens pour CETTE méthode précise (voir la description du champ).\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateMethodologyContent(imageDataUrls, title) {
+    var images = geminiImageParts(imageDataUrls);
+    var parts = images.concat([{ text: buildMethodologyPrompt(title, images.length) }]);
+    return callGemini(parts, METHODOLOGY_SCHEMA);
+  }
+  function runMethodologyGeneration(methodo) {
+    methodo.status = "processing";
+    methodo.error = null;
+    saveDB(); render();
+    generateMethodologyContent(methodo.images, methodo.title).then(function (data) {
+      methodo.genre = data.genre || "Épreuve";
+      methodo.mechanics = (data.mechanics || []).filter(function (m) { return METHODOLOGY_MECHANICS.indexOf(m) !== -1; });
+      if (!methodo.mechanics.length) methodo.mechanics = ["redaction"];
+      methodo.structure = data.structure || "";
+      methodo.transcription = data.transcription || "";
+      methodo.status = "ready";
+      methodo.images = [];
+      saveDB();
+      toast("Méthodologie prête · " + methodo.title);
+      render();
+    }).catch(function (err) {
+      methodo.status = "error";
+      methodo.error = err.message || "Erreur inconnue";
+      methodo.errorStatus = err.status || null;
+      methodo.errorDetail = err.detail || null;
+      saveDB();
+      toast("Échec de la génération : " + methodo.error, { status: methodo.errorStatus, detail: methodo.errorDetail });
+      render();
+    });
+  }
+
+  // Sujet d'entraînement SANS document externe (plan / rédaction / réponse courte / traduction sans
+  // support) — s'appuie uniquement sur le contenu réel du chapitre choisi, jamais sur des faits inventés.
+  var METHODOLOGY_SUBJECT_SCHEMA = {
+    type: "object",
+    properties: {
+      subject: { type: "string", description: "Le sujet/la consigne exacte proposée à l'élève, formulée dans le style d'un vrai sujet d'examen pour ce genre d'épreuve — pas une simple question de cours." },
+      referencePlan: { type: "string", description: "Corrigé de référence en Markdown : un plan détaillé (parties, sous-parties, idées et exemples PRÉCIS tirés du chapitre fourni) qui répondrait parfaitement au sujet selon la méthode donnée. Sert uniquement de grille de correction, ne sera jamais montré à l'élève avant sa correction — ne le simplifie pas, il doit être complet et rigoureux." }
+    },
+    required: ["subject", "referencePlan"]
+  };
+  function buildMethodologySubjectPrompt(methodo, chapterName, chapterContent, mechanic, customInstruction) {
+    var mechanicLabel = customInstruction
+      ? "exactement ceci, demandé par l'élève lui-même : " + customInstruction
+      : ({
+        plan: "un plan détaillé uniquement (pas la rédaction complète)",
+        redaction: "une rédaction complète",
+        partie: "UNE seule partie précise et généralement difficile de la méthode (à toi de choisir laquelle — introduction/problématique, une transition clé, la conclusion...), jamais l'intégralité du devoir : indique CLAIREMENT dans le sujet quelle partie exactement est demandée",
+        courte: "une réponse développée courte, sans plan formel"
+      }[mechanic] || "une réponse complète");
+    return "Voici la méthode de l'épreuve « " + methodo.genre + " » à suivre :\n\n" + methodo.structure + "\n\n" +
+      "Voici le contenu du chapitre « " + chapterName + " » sur lequel doit porter l'épreuve (déjà étudié par l'élève) :\n\n" + stripFigureMarkdown(chapterContent).slice(0, 6000) + "\n\n" +
+      "Génère UN sujet inédit, plausible pour un vrai contrôle sur ce chapitre, dans le style exact d'un sujet de « " + methodo.genre + " » — une vraie formulation d'examen, jamais une simple question de cours. L'élève devra y répondre avec " + mechanicLabel + ", en s'appuyant EXCLUSIVEMENT sur les connaissances réelles du chapitre fourni (dates, notions, auteurs, exemples déjà étudiés) : n'invente aucun fait, aucune date, aucun événement absent de ce chapitre.\n\n" +
+      "Fournis aussi \"referencePlan\", un corrigé de référence complet et rigoureux (correspondant précisément à ce qui est demandé ci-dessus — ne corrige que la partie demandée si une seule partie est demandée) qui servira de grille de correction.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateMethodologySubject(methodo, chapterName, chapterContent, mechanic, customInstruction) {
+    var parts = [{ text: buildMethodologySubjectPrompt(methodo, chapterName, chapterContent, mechanic, customInstruction) }];
+    return callGemini(parts, METHODOLOGY_SUBJECT_SCHEMA);
+  }
+
+  // Sujet reposant sur un document RÉEL (analyse de document, commentaire, traduction) : un prof ne
+  // réutilise jamais le document déjà vu en cours pour un entraînement (effet de surprise), donc on ne
+  // pioche PAS dans les propres documents importés de l'élève, et on n'en fait SURTOUT PAS halluciner un
+  // par l'IA — on utilise la recherche Google réelle (callGeminiSearch) pour en trouver un vrai, avec sa
+  // source exacte, puis un second appel structuré pour le mettre en forme proprement.
+  var METHODOLOGY_DOCUMENT_SCHEMA = {
+    type: "object",
+    properties: {
+      excerpt: { type: "string", description: "L'extrait exact du document trouvé, reproduit fidèlement (pas de reformulation, pas de raccourci abusif)." },
+      author: { type: "string" },
+      sourceTitle: { type: "string" },
+      date: { type: "string" },
+      sourceUrl: { type: "string", description: "URL de la source la plus fiable parmi celles fournies — chaîne vide si aucune URL fiable n'est disponible plutôt que d'en inventer une." },
+      consigne: { type: "string", description: "La consigne d'analyse à donner à l'élève, formulée dans le style attendu pour ce genre d'épreuve, portant précisément sur ce document." },
+      referencePlan: { type: "string", description: "Corrigé de référence complet (analyse attendue du document, idées clés et éléments précis à relever) servant de grille de correction stricte." }
+    },
+    required: ["excerpt", "author", "sourceTitle", "date", "sourceUrl", "consigne", "referencePlan"]
+  };
+  function buildDocumentSearchPrompt(methodo, chapterName, chapterContent, subjectName) {
+    return "Tu prépares un exercice de « " + methodo.genre + " » (matière : " + subjectName + ") pour un élève qui étudie le chapitre « " + chapterName + " ».\n\n" +
+      "Contenu déjà étudié par l'élève sur ce chapitre (pour choisir un document du bon niveau, de la bonne période et de la bonne thématique) :\n\n" + stripFigureMarkdown(chapterContent).slice(0, 4000) + "\n\n" +
+      "Utilise la recherche Google pour trouver un VRAI document en lien direct avec ce chapitre, adapté à un exercice de « " + methodo.genre + " » — un texte, un extrait, une source primaire ou secondaire réellement publiée quelque part (jamais un document que tu inventes ou reconstitues de mémoire sans le vérifier par la recherche). Ce document ne doit PAS être un texte déjà présent dans le contenu du chapitre ci-dessus (l'effet de surprise fait partie de l'exercice), mais doit rester cohérent avec ce que l'élève a étudié.\n\n" +
+      "Dans ta réponse, donne clairement : le texte exact de l'extrait choisi (reproduis-le fidèlement, sans le reformuler), son auteur, son titre exact, sa date/origine précise, et l'URL de la page où tu l'as trouvé.";
+  }
+  function searchRealDocument(methodo, chapterName, chapterContent, subjectName) {
+    var parts = [{ text: buildDocumentSearchPrompt(methodo, chapterName, chapterContent, subjectName) }];
+    return callGeminiSearch(parts);
+  }
+  function buildDocumentStructurePrompt(methodo, rawSearchResult, sources) {
+    var sourcesTxt = sources.map(function (s) { return "- " + (s.title || "(sans titre)") + " : " + s.uri; }).join("\n") || "(aucune)";
+    return "Voici le résultat brut d'une recherche qui a trouvé un document réel :\n\n" + rawSearchResult + "\n\nSources consultées durant la recherche :\n" + sourcesTxt + "\n\n" +
+      "Méthode de l'épreuve « " + methodo.genre + " » à respecter pour formuler la consigne :\n\n" + methodo.structure + "\n\n" +
+      "Extrais proprement de ce résultat : l'extrait exact du document (fidèle, sans reformulation), son auteur, son titre, sa date/origine précise, et l'URL source la plus pertinente parmi celles listées (laisse \"sourceUrl\" vide si aucune n'est fiable, plutôt que d'en inventer une). Rédige ensuite \"consigne\" (la consigne d'analyse, dans le style d'un sujet de « " + methodo.genre + " ») et \"referencePlan\" (un corrigé de référence complet).\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generateMethodologyDocument(methodo, chapterName, chapterContent, subjectName) {
+    return searchRealDocument(methodo, chapterName, chapterContent, subjectName).then(function (searchResult) {
+      var parts = [{ text: buildDocumentStructurePrompt(methodo, searchResult.text, searchResult.sources) }];
+      return callGemini(parts, METHODOLOGY_DOCUMENT_SCHEMA);
+    });
+  }
+
+  // Fabrique un item d'entraînement normalisé (même forme quel que soit le mécanisme), pour que le
+  // reste du code (affichage, correction, Mission Contrôle) n'ait qu'une seule forme à gérer.
+  function generateMethodologyPracticeItem(methodo, chapterId, chapterName, chapterContent, mechanic, subjectName, customInstruction) {
+    var base = function (subject, document, referencePlan) {
+      return {
+        id: uid(), mechanic: mechanic, customMechanic: customInstruction || "", chapterId: chapterId, chapterName: chapterName,
+        subject: subject, document: document, referencePlan: referencePlan,
+        answerHtml: "", answerText: "", status: "unanswered",
+        grade20: null, verdict: "", strengths: [], weaknesses: [], detailedFeedback: "",
+        createdAt: Date.now()
+      };
+    };
+    if (mechanic === "document" || mechanic === "traduction") {
+      return generateMethodologyDocument(methodo, chapterName, chapterContent, subjectName).then(function (doc) {
+        return base(doc.consigne, { excerpt: doc.excerpt, author: doc.author, sourceTitle: doc.sourceTitle, date: doc.date, sourceUrl: doc.sourceUrl }, doc.referencePlan);
+      });
+    }
+    return generateMethodologySubject(methodo, chapterName, chapterContent, mechanic, customInstruction).then(function (data) {
+      return base(data.subject, null, data.referencePlan);
+    });
+  }
+  function runMethodologyPracticeGeneration(methodo, chapterId, chapterName, chapterContent, mechanic, subjectName, customInstruction) {
+    methodo.generatingPractice = true;
+    saveDB(); render();
+    return generateMethodologyPracticeItem(methodo, chapterId, chapterName, chapterContent, mechanic, subjectName, customInstruction).then(function (item) {
+      methodo.practiceItems = methodo.practiceItems || [];
+      methodo.practiceItems.unshift(item);
+      methodo.generatingPractice = false;
+      saveDB(); render();
+      return item;
+    }).catch(function (err) {
+      methodo.generatingPractice = false;
+      saveDB();
+      toast("Échec de la génération du sujet : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+      render();
+      throw err;
+    });
+  }
+
+  // Correction sévère : l'élève doit savoir précisément où il en est réellement, pas se rassurer. Voir
+  // la discussion produit — une IA trop indulgente qui laisse croire à 18/20 alors que la vraie copie
+  // fera 7/20 le jour J est activement nuisible, pas gentille.
+  var METHODOLOGY_GRADE_SCHEMA = {
+    type: "object",
+    properties: {
+      grade20: { type: "number", description: "Note sur 20, avec la sévérité d'un vrai correcteur d'examen — jamais gonflée pour encourager." },
+      verdict: { type: "string", description: "Verdict global en une phrase, direct et sans complaisance." },
+      strengths: { type: "array", items: { type: "string" }, description: "Points RÉELLEMENT réussis uniquement — tableau vide si rien ne mérite d'être cité, ne cherche jamais à en inventer par politesse." },
+      weaknesses: { type: "array", items: { type: "string" }, description: "Chaque problème réel, nommé précisément (pas vaguement) et sans adoucir." },
+      detailedFeedback: { type: "string", description: "Correction détaillée en Markdown, partie par partie selon la méthode attendue (ex. introduction/problématique, chaque partie du plan, conclusion)." }
+    },
+    required: ["grade20", "verdict", "strengths", "weaknesses", "detailedFeedback"]
+  };
+  function buildMethodologyGradePrompt(methodo, item, studentAnswer) {
+    var mechanicNote = item.customMechanic
+      ? "exactement ceci, demandé par l'élève lui-même : " + item.customMechanic + " — évalue UNIQUEMENT ce qui a été demandé, rien d'autre"
+      : ({
+        plan: "un PLAN DÉTAILLÉ uniquement, pas une rédaction complète — évalue-le comme un plan (structure, articulation, idées et exemples précis), n'exige pas de phrases entièrement rédigées ni de transitions rédigées",
+        redaction: "une rédaction complète et entièrement rédigée",
+        partie: "UNE seule partie précise de la méthode (précisée dans le sujet, ex. juste l'introduction/problématique) — évalue UNIQUEMENT cette partie, pas le reste du devoir qui n'a pas été demandé",
+        courte: "une réponse courte développée, sans plan formel attendu",
+        traduction: "une traduction"
+      }[item.mechanic] || "une réponse complète");
+    return "Tu es un correcteur d'examen EXTRÊMEMENT EXIGEANT, au niveau d'un vrai jury de bac/concours. Règles absolues à respecter dans TOUTE ta correction :\n" +
+      "- INTERDICTION des formulations molles (\"pas tout à fait\", \"presque\", \"tu y es presque\", \"c'est un bon début\") : dis directement \"c'est faux\", \"hors sujet\", \"incohérent\", \"contresens\", \"non justifié\" quand c'est le cas.\n" +
+      "- Ne cherche JAMAIS un point positif dans une partie fausse ou hors-sujet pour adoucir le propos — si c'est mauvais, dis-le tel quel, sans l'entourer de compliments non mérités.\n" +
+      "- Un 20/20 doit être QUASI IMPOSSIBLE à obtenir, même pour une bonne copie : une copie réellement excellente plafonne autour de 16-17/20, une bonne copie solide tourne autour de 12-14/20, une copie avec de vrais problèmes de fond doit descendre sous la moyenne sans hésiter. Ne gonfle JAMAIS la note pour encourager — un élève qui se croit à 18 alors qu'il aura 7 le jour du contrôle est desservi, pas aidé.\n" +
+      "- Vérifie que la structure respecte EXACTEMENT la méthode fournie ci-dessous ; toute étape attendue absente ou mal exécutée doit être nommée précisément et pénalisée.\n" +
+      "- Vérifie que le contenu (faits, dates, exemples, citations, analyse du document le cas échéant) est réellement exact et pertinent — toute erreur factuelle, tout hors-sujet, toute affirmation non justifiée par des exemples doit être signalée sans complaisance.\n\n" +
+      "Méthode/grille de correction à appliquer :\n\n" + methodo.structure + "\n\n" +
+      "Corrigé de référence (grille détaillée à comparer avec la copie) :\n\n" + (item.referencePlan || "") + "\n\n" +
+      (item.document ? "Document fourni à l'élève :\n\n« " + item.document.excerpt + " »\n— " + item.document.author + ", " + item.document.sourceTitle + " (" + item.document.date + ")\n\n" : "") +
+      "Sujet/consigne donné à l'élève : " + item.subject + "\n\n" +
+      "Copie de l'élève (attendu : " + mechanicNote + ") :\n\n" + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie — note 0/20, c'est un devoir non rendu)") + "\n\n" +
+      "Donne une note sur 20, un verdict direct, les points forts réels (liste vide si aucun), les points faibles précis, et une correction détaillée partie par partie.\n\n" +
+      "Pour toute formule ou notation nécessitant du LaTeX, utilise $...$ ou $$...$$.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function gradeMethodologyAnswer(methodo, item, studentAnswer) {
+    var parts = [{ text: buildMethodologyGradePrompt(methodo, item, studentAnswer) }];
+    return callGemini(parts, METHODOLOGY_GRADE_SCHEMA);
+  }
+  function submitMethodologyAnswer(methodo, item, answerHtml, answerText) {
+    item.answerHtml = answerHtml; item.answerText = answerText; item.status = "grading";
+    saveDB(); render();
+    gradeMethodologyAnswer(methodo, item, answerText).then(function (g) {
+      item.status = "graded";
+      item.grade20 = typeof g.grade20 === "number" ? Math.max(0, Math.min(20, g.grade20)) : 0;
+      item.verdict = g.verdict || "";
+      item.strengths = g.strengths || [];
+      item.weaknesses = g.weaknesses || [];
+      item.detailedFeedback = g.detailedFeedback || "";
+      saveDB(); render();
+    }).catch(function (err) {
+      item.status = "unanswered";
+      toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+      render();
+    });
+  }
+  function methodoData() { return userData().methodologies; }
+  function methodoFind(id) { return methodoData().find(function (m) { return m.id === id; }); }
 
   /* ---------------- Prépa examens ---------------- */
   function epData() { return userData().examPreps; }
@@ -651,7 +942,7 @@
           type: "object",
           properties: {
             offsetDays: { type: "integer", description: "Nombre de jours après aujourd'hui (0 = aujourd'hui)." },
-            minutes: { type: "integer", description: "Minutes de travail conseillées ce jour-là (réaliste, 15 à 45 minutes en général)." },
+            minutes: { type: "integer", description: "Minutes de travail conseillées ce jour-là, à titre indicatif seulement (typiquement 20 à 60, davantage si le jour couvre beaucoup de par cœur ou des exercices poussés) — la séance réelle peut dépasser cette estimation, ce n'est jamais un problème." },
             focus: { type: "string", description: "Objectif du jour en une phrase courte." },
             topics: { type: "array", items: { type: "string" }, description: "Notions précises à réviser ce jour-là (2 à 6)." }
           },
@@ -674,7 +965,7 @@
       continuityBlock + "\n" +
       "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
       "Certains jours parmi ces " + dayCount + " sont des jours de repos SANS séance (pour ne pas surcharger l'élève quand l'examen est encore loin). Voici la liste EXACTE des décalages en jours depuis aujourd'hui (offsetDays, 0 = aujourd'hui) pour lesquels une séance est prévue : " + offsets.join(", ") + ". Produis EXACTEMENT une entrée par offsetDays listé ici, ni plus ni moins (n'en ajoute aucun pour les jours de repos, n'en oublie aucun de la liste), en respectant ces principes :\n" +
-      "- Les séances restent courtes et réalistes (typiquement 15 à 45 minutes, jamais plus de 60).\n" +
+      "- Les séances doivent être substantielles, pas expéditives : mieux vaut une séance un peu longue et exigeante qu'une séance courte qui ne prépare à rien (typiquement 20 à 60 minutes indicatives, mais dépasser cette estimation n'est jamais un problème).\n" +
       "- Couvre l'intégralité du contenu ci-dessus au moins une fois d'ici la fin du planning.\n" +
       "- Plus on se rapproche de l'examen, plus les jours prévus doivent revenir sur les notions déjà vues plus tôt (en plus des notions nouvelles du jour), façon répétition espacée, pour consolider — ce n'est pas qu'un simple découpage linéaire du programme.\n" +
       "- Pour chaque jour prévu, \"focus\" résume l'objectif du jour en une phrase, et \"topics\" liste 2 à 6 notions précises concernées.\n\n" +
@@ -755,16 +1046,15 @@
     var pool = [];
     courses.forEach(function (co) {
       (co.quizQuestions || []).forEach(function (q) {
-        if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
-        else pool.push({ id: q.id, kind: "open", prompt: q.prompt, answer: q.answer, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", category: q.category || "", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        else pool.push({ id: q.id, kind: "open", category: q.category || "", prompt: q.prompt, answer: q.answer, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
       });
       (co.exercises || []).forEach(function (ex) {
-        pool.push({ id: ex.id, kind: "exercise", prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        pool.push({ id: ex.id, kind: "exercise", category: "", prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "", courseId: co.id, courseTitle: co.title });
       });
     });
     return pool;
   }
-  function epEstimatedMinutes(item) { return item.kind === "exercise" ? 7 : 1.5; }
   function epPickDayQuestions(pool, dayEntry, prep) {
     if (!pool.length) return [];
     var topicsLower = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
@@ -779,32 +1069,32 @@
         if (t && t.streak <= -2) score += 6; // erreurs répétées = encore plus prioritaire
       });
       topicsLower.forEach(function (t) { if (t && hay.indexOf(t) !== -1) score += 5; });
-      return { item: item, score: score };
+      var isMemo = item.category === "definition" || item.category === "formule";
+      var matchesToday = topicsLower.some(function (t) { return t && hay.indexOf(t) !== -1; });
+      return { item: item, score: score, isMemo: isMemo, matchesToday: matchesToday };
     });
     scored.sort(function (a, b) { return b.score - a.score; });
-    var budget = Math.max(10, dayEntry.minutes || 20);
     var picked = [];
-    var used = 0;
-    // Une vraie préparation d'examen doit être dominée par des exercices complets et des questions
-    // ouvertes (réponse tapée, sans indices) plutôt que par du QCM de simple rappel : on réserve
-    // d'abord la majorité du budget de temps aux formats exigeants, le QCM ne comble que ce qu'il reste.
+    var pickedIds = {};
+    var add = function (it) { if (it && !pickedIds[it.id]) { pickedIds[it.id] = true; picked.push(it); } };
+    var countKind = function (kind) { return picked.filter(function (p) { return p.kind === kind; }).length; };
+    // 1. Couverture du "par cœur" : toute définition/formule à savoir par cœur liée aux notions du
+    // jour est posée SANS exception, et forcément en rédaction (jamais en QCM — voir buildCoursePrompt
+    // qui force déjà ces catégories en type "ouverte") : l'élève doit la réécrire, pas la reconnaître.
+    scored.forEach(function (s) { if (s.isMemo && s.matchesToday) add(s.item); });
+    // 2. Un vrai volume d'exercices exigeants et de questions rédigées, dimensionné sur ce que le cours
+    // propose réellement plutôt que bridé par un budget minutes strict — mieux vaut une séance plus
+    // longue que prévu qu'une séance trop courte pour vraiment préparer à l'examen. Le QCM reste
+    // minoritaire, jamais le pilier de la séance.
     var byKind = { exercise: [], open: [], qcm: [] };
     scored.forEach(function (s) { byKind[s.item.kind].push(s.item); });
-    var take = function (kind, limit) {
-      while (byKind[kind].length && used < limit) {
-        var it = byKind[kind].shift();
-        picked.push(it);
-        used += epEstimatedMinutes(it);
-      }
-    };
-    take("exercise", budget * 0.65);
-    take("open", budget * 0.9);
-    take("qcm", budget);
-    // S'il reste du budget faute d'assez d'exercices/questions ouvertes disponibles, complète avec ce
-    // qu'il reste peu importe le type plutôt que de raccourcir la séance.
-    var rest = byKind.exercise.concat(byKind.open, byKind.qcm);
-    for (var i = 0; i < rest.length && used < budget; i++) { picked.push(rest[i]); used += epEstimatedMinutes(rest[i]); }
-    if (!picked.length && scored.length) picked.push(scored[0].item);
+    var targetExercise = Math.min(byKind.exercise.length, 4);
+    var targetOpen = Math.min(byKind.open.length, 8);
+    var targetQcm = Math.min(byKind.qcm.length, 3);
+    byKind.exercise.forEach(function (it) { if (countKind("exercise") < targetExercise) add(it); });
+    byKind.open.forEach(function (it) { if (countKind("open") < targetOpen) add(it); });
+    byKind.qcm.forEach(function (it) { if (countKind("qcm") < targetQcm) add(it); });
+    if (!picked.length && scored.length) add(scored[0].item);
     for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
   }
@@ -1066,25 +1356,44 @@
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
     properties: {
-      level: { type: "string", enum: ["correct", "minor", "major", "wrong"], description: "correct = juste sur le fond, aucune erreur notable. minor = l'essentiel est compris et juste, une seule petite erreur ou imprécision isolée. major = plusieurs erreurs, ou une erreur importante, mais une partie du raisonnement/de la réponse reste juste et montre une vraie compréhension. wrong = faux sur le fond, hors sujet, ou vide." },
-      mistakes: { type: "array", items: { type: "string" }, description: "Liste des erreurs précises commises (tableau vide si level est \"correct\"). Chaque entrée doit nommer précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée\", \"oublie de convertir en mètres\"), jamais une formule vague comme \"erreur de calcul\"." },
+      mistakes: { type: "array", items: { type: "string" }, description: "UNE entrée par erreur RÉELLEMENT commise (tableau vide seulement si la réponse est irréprochable sur le fond). Chaque entrée nomme précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée\", \"oublie de convertir en mètres\"), jamais une formule vague comme \"erreur de calcul\". Ne fusionne jamais deux erreurs distinctes en une seule entrée, et ne minimise rien : toute imprécision, approximation ou maladresse compte comme une erreur à part entière. N'invente en revanche aucune erreur qui n'existe pas : une formulation différente mais juste sur le fond n'est pas une erreur." },
+      scoreMax: { type: "integer", description: "Barème choisi pour CET exercice précis selon son ampleur et ses points clés (ex. 5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes)." },
+      score: { type: "number", description: "Note obtenue sur scoreMax, décimale autorisée (ex. 3.5), qui doit refléter fidèlement le nombre et la gravité des erreurs listées dans mistakes. Jamais gonflée pour rassurer l'élève : une réponse avec des erreurs de fond reste loin du score maximal." },
       feedback: { type: "string" }
     },
-    required: ["level", "mistakes", "feedback"]
+    required: ["mistakes", "scoreMax", "score", "feedback"]
   };
-  // Baromètre + affichage à 4 niveaux plutôt qu'un simple vrai/faux : une toute petite erreur isolée
-  // (level="minor") ne doit pas être traitée comme un échec complet quand le reste est compris, et à
-  // l'inverse plusieurs erreurs (level="major") ne doit pas peser aussi lourd qu'un vrai "Faux".
+  // Baromètre + affichage à 5 niveaux (pas juste vrai/faux) : le niveau réel est déduit du NOMBRE
+  // d'erreurs listées par l'IA (voir gradeLevelFromMistakeCount), jamais choisi librement par elle —
+  // ça évite qu'un prompt de correction sévère ne fasse basculer trop vite sur "Faux" dès la moindre
+  // imperfection, en étalant la sanction sur plusieurs paliers intermédiaires.
   var GRADE_LEVELS = {
     correct: { label: "Correct", cls: "correct", masteryFactor: 1, pointsFactor: 1 },
-    minor: { label: "1 erreur", cls: "minor", masteryFactor: 0.55, pointsFactor: 0.75 },
-    major: { label: "2 erreurs", cls: "major", masteryFactor: 0.45, pointsFactor: 0.5 },
+    minor: { label: "1 erreur", cls: "minor", masteryFactor: 0.6, pointsFactor: 0.8 },
+    moderate: { label: "Partiellement maîtrisé", cls: "moderate", masteryFactor: 0.45, pointsFactor: 0.45 },
+    major: { label: "Insuffisamment maîtrisé", cls: "major", masteryFactor: 0.6, pointsFactor: 0.15 },
     wrong: { label: "Faux", cls: "wrong", masteryFactor: 1, pointsFactor: 0 }
   };
+  function gradeLevelFromMistakeCount(n) {
+    n = n || 0;
+    if (n <= 0) return "correct";
+    if (n === 1) return "minor";
+    if (n <= 3) return "moderate";
+    if (n <= 5) return "major";
+    return "wrong";
+  }
+  function gradeLevelFromGrade20(g) {
+    g = typeof g === "number" ? g : 0;
+    if (g >= 16) return "correct";
+    if (g >= 13) return "minor";
+    if (g >= 9) return "moderate";
+    if (g >= 5) return "major";
+    return "wrong";
+  }
   function normalizeGradeLevel(result) {
     var lvl = result && result.level;
     if (GRADE_LEVELS[lvl]) return lvl;
-    return (result && result.correct) ? "correct" : "wrong"; // filet de sécurité si l'IA ne respecte pas l'enum
+    return (result && result.correct) ? "correct" : "wrong"; // filet de sécurité si le niveau n'a pas pu être calculé
   }
   function gradeLevelIsSuccess(level) { return level === "correct" || level === "minor"; }
   function gradeLevelLabel(level) { return (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).label; }
@@ -1093,18 +1402,29 @@
     if (!mistakes || !mistakes.length) return "";
     return '<ul class="grade-mistakes">' + mistakes.map(function (m) { return '<li>' + esc(m) + '</li>'; }).join("") + '</ul>';
   }
+  function gradeScoreBadge(score, scoreMax) {
+    if (score == null || !scoreMax) return "";
+    var display = (Math.round(score * 10) / 10).toString().replace(".", ",");
+    return '<span class="mono" style="font-size:16px;flex:none">' + display + '/' + scoreMax + '</span>';
+  }
   function buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) {
-    return "Tu es un correcteur pédagogique pour un élève francophone. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
+    return "Tu es un correcteur d'examen EXTRÊMEMENT EXIGEANT pour un élève francophone. Ta mission n'est pas de rassurer l'élève : c'est de lui dire précisément où il en est réellement, même si c'est désagréable à entendre. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
       "Exercice : " + exercisePrompt + "\n\n" +
       "Solution de référence : " + referenceSolution + "\n\n" +
       "Réponse de l'élève : " + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie)") + "\n\n" +
-      "Évalue la réponse de l'élève avec un niveau de granularité fin plutôt qu'un simple juste/faux : \"correct\" si le raisonnement et/ou le résultat sont justes sur le fond (une formulation différente ou incomplète mais juste sur le fond compte comme correcte) ; \"minor\" si l'élève a clairement compris la notion mais fait une seule petite erreur isolée (étourderie, imprécision, faute de conversion...) qui ne remet pas en cause la compréhension globale ; \"major\" si plusieurs erreurs s'accumulent ou qu'une erreur importante subsiste, mais qu'une partie du raisonnement montre quand même une réelle compréhension ; \"wrong\" si la réponse est fausse sur le fond, hors sujet, ou vide. Liste ensuite dans \"mistakes\" chaque erreur précise commise (vide si \"correct\"), en nommant la notion exacte en cause. Donne enfin un feedback court, bienveillant et constructif en français expliquant ce qui est juste ou faux, et ce qui manque le cas échéant.\n\n" +
+      "Règles de correction :\n" +
+      "- Liste dans \"mistakes\" CHAQUE erreur, imprécision, approximation ou maladresse réellement présente par rapport à la solution de référence, une entrée par erreur distincte. Ne limite pas leur nombre et ne les minimise pas : si la réponse est mauvaise, dis-le clairement et liste tout ce qui ne va pas. À l'inverse, n'invente aucune erreur qui n'existe pas juste pour paraître sévère : une réponse formulée différemment mais juste sur le fond ne compte pour aucune erreur.\n" +
+      "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées. N'arrondis jamais à la hausse par gentillesse : une réponse avec des erreurs de fond ne doit jamais approcher le score maximal.\n" +
+      "- Le \"feedback\" doit être factuel et sans complaisance : dis explicitement ce qui est faux, incomplet ou hors sujet, sans formules vagues type \"pas tout à fait\" ou \"presque\" qui adoucissent le constat. Explique aussi ce qui est juste, le cas échéant, mais sans laisser croire que la réponse est meilleure qu'elle ne l'est.\n\n" +
       "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
     var parts = [{ text: buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), studentAnswer) }];
-    return callGemini(parts, EXERCISE_GRADE_SCHEMA);
+    var result = await callGemini(parts, EXERCISE_GRADE_SCHEMA);
+    result.mistakes = result.mistakes || [];
+    result.level = gradeLevelFromMistakeCount(result.mistakes.length);
+    return result;
   }
 
   var IMPORTED_EXERCISE_SCHEMA = {
@@ -1362,6 +1682,8 @@
   var courseEditState = null; // { courseId, field: "transcription"|"explanation" } — édition du texte source d'un cours
   var courseFiguresOpen = {}; // per courseId: bool — panneau des schémas/images du cours déplié ou non
   var entryFiguresOpen = {}; // per importedExercise id: idem, pour les exercices importés
+  var methodoTrainState = {}; // per methodology id: { chapterId, mechanic } — choix courant du panneau "S'entraîner"
+  var methodoItemOpen = {}; // per practice item id: bool — replié par défaut une fois plusieurs sujets accumulés
   var dpView = { mode: "hub" }; // Dino Park in-memory sub-navigation
   var dtState = { mode: "setup", tab: "chrono", durationMin: 25, enclosureId: null, pomoWork: 25, pomoBreak: 5, pomoCycles: 4, pomoDinoId: null }; // DinoTime sub-navigation
   var dtRunning = null; // { enclosureId, remainingSec, endsAt, dinos: [...], paused }
@@ -2588,7 +2910,7 @@
       var qlvl = qz.level || (qz.wasCorrect ? "correct" : "wrong");
       var qcls = gradeLevelCls(qlvl);
       body += '<div class="quiz-feedback ' + qcls + '">' +
-        '<div class="quiz-feedback-title ' + qcls + '">' + gradeLevelLabel(qlvl) + '</div>' +
+        '<div class="quiz-feedback-title ' + qcls + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span>' + gradeLevelLabel(qlvl) + '</span>' + gradeScoreBadge(qz.score, qz.scoreMax) + '</div>' +
         gradeMistakesHtml(qz.mistakes) +
         (qz.aiFeedback ? '<div class="correction-exp">' + mdToHtml(qz.aiFeedback) + '</div>' : "") +
         '<div class="correction-exp">' + mdToHtml(q.explanation || "") + '</div>' +
@@ -2610,7 +2932,7 @@
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
         '<div class="quiz-feedback ' + excls + '">' +
-        '<div class="quiz-feedback-title ' + excls + '">' + gradeLevelLabel(exlvl) + (qz.pointsEarned ? " ! +" + qz.pointsEarned + " pts" : "") + '</div>' +
+        '<div class="quiz-feedback-title ' + excls + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span>' + gradeLevelLabel(exlvl) + (qz.pointsEarned ? " ! +" + qz.pointsEarned + " pts" : "") + '</span>' + gradeScoreBadge(qz.score, qz.scoreMax) + '</div>' +
         gradeMistakesHtml(qz.mistakes) +
         '<div class="correction-exp">' + mdToHtml(qz.feedback) + '</div>' +
         '</div>' +
@@ -2987,6 +3309,12 @@
         var ep = epFind(parts[1]);
         if (ep) trail.push({ label: ep.title });
       }
+    } else if (parts[0] === "methodologies") {
+      trail.push({ label: "Méthodologie", hash: "#/methodologies" });
+      if (parts[1]) {
+        var meth = methodoFind(parts[1]);
+        if (meth) trail.push({ label: meth.title });
+      }
     }
     return trail;
   }
@@ -3022,6 +3350,7 @@
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
+      '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="location.hash=\'#/methodologies\'">' + icon("book") + ' Méthodologie</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -3373,7 +3702,7 @@
           block += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
             '<div class="rte-display" style="margin-bottom:14px">' + (ex.answerHtml || "<em>(vide)</em>") + '</div>' +
             '<div class="quiz-feedback ' + iecls + '">' +
-            '<div class="quiz-feedback-title ' + iecls + '">' + gradeLevelLabel(ielvl) + '</div>' +
+            '<div class="quiz-feedback-title ' + iecls + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span>' + gradeLevelLabel(ielvl) + '</span>' + gradeScoreBadge(ex.score, ex.scoreMax) + '</div>' +
             gradeMistakesHtml(ex.mistakes) +
             '<div class="correction-exp">' + mdToHtml(ex.feedback) + '</div>' +
             '</div>' +
@@ -3390,6 +3719,155 @@
       body = '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + col + '</div>' + dinoCompanionHtml() + '</div>';
     }
     renderShell(["exercices", exId], head + body, { narrow: entry.status !== "ready" });
+  }
+
+  /* ---------------- Méthodologies (pages) ---------------- */
+  function subjectChaptersWithContent(subj) {
+    var out = [];
+    (subj.themes || []).forEach(function (t) {
+      (t.chapters || []).forEach(function (c) {
+        if ((c.courses || []).some(dpCourseHasContent)) out.push({ id: c.id, name: c.name, themeId: t.id, themeName: t.name });
+      });
+    });
+    return out;
+  }
+  function findChapterAnywhere(subj, chapterId) {
+    var found = null;
+    (subj.themes || []).some(function (t) { return (t.chapters || []).some(function (c) { if (c.id === chapterId) { found = c; return true; } return false; }); });
+    return found;
+  }
+  function chapterContentText(subj, chapterId) {
+    var chap = findChapterAnywhere(subj, chapterId);
+    if (!chap) return "";
+    return (chap.courses || []).filter(dpCourseHasContent).map(function (co) {
+      return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
+    }).join("\n\n");
+  }
+  function renderMethodologyListPage() {
+    var list = methodoData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
+    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("book") + '<h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
+    var grid;
+    if (!list.length) {
+      grid = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucune méthodologie</h3><p>Importe la méthode donnée par ton prof pour un type d\'épreuve (dissertation, commentaire, étude de document...).</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
+    } else {
+      grid = '<div class="card-grid">' + list.map(function (m) {
+        var statusHtml = m.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…</span>'
+          : m.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
+          : '<span class="status-pill status-ready">' + (m.practiceItems || []).length + ' sujet' + ((m.practiceItems || []).length > 1 ? "s" : "") + '</span>';
+        return '<div class="tile" onclick="location.hash=\'#/methodologies/' + m.id + '\'">' +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'methodology\',null,null,null,\'' + m.id + '\')">' + icon("trash") + '</button>' +
+          '<div class="tile-icon">' + icon("book") + '</div>' +
+          '<div class="tile-title">' + esc(m.title) + '</div>' +
+          (m.genre ? '<span class="demo-badge">' + esc(m.genre) + '</span>' : '') +
+          statusHtml +
+          '</div>';
+      }).join("") + '<button class="add-tile" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
+    }
+    renderShell(["methodologies"], head + grid);
+  }
+  function methodologyItemHtml(methodo, item, defaultOpen) {
+    var mechLabel = item.customMechanic || METHODOLOGY_MECHANIC_LABELS[item.mechanic] || item.mechanic;
+    var isOpen = methodoItemOpen.hasOwnProperty(item.id) ? methodoItemOpen[item.id] : !!defaultOpen;
+    var dateLabel = item.createdAt ? new Date(item.createdAt).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) : "";
+    var statusBadge;
+    if (item.status === "graded") {
+      var badgeTier = "grade-" + gradeLevelFromGrade20(item.grade20);
+      statusBadge = '<span class="grade-pill ' + badgeTier + '">' + item.grade20 + '/20</span>';
+    } else if (item.status === "grading") {
+      statusBadge = '<span class="status-pill status-processing"><span class="dotpulse"></span>Correction…</span>';
+    } else {
+      statusBadge = '<span class="status-pill status-ready">À rédiger</span>';
+    }
+    var deleteBtn = '<button class="btn btn-ghost btn-sm" style="width:auto" title="Supprimer ce sujet" onclick="event.stopPropagation();App.deleteMethodoItem(\'' + methodo.id + '\',\'' + item.id + '\')">' + icon("trash") + '</button>';
+    if (!isOpen) {
+      var subjectPreview = (item.subject || "").replace(/[#*_`]/g, "").trim();
+      if (subjectPreview.length > 110) subjectPreview = subjectPreview.slice(0, 110) + "…";
+      return '<div class="dp-exercise-item" style="margin-bottom:14px;padding:14px 16px;cursor:pointer" onclick="App.toggleMethodoItem(\'' + item.id + '\')">' +
+        '<div style="display:flex;align-items:center;gap:10px">' +
+        '<div style="flex:1;min-width:0">' +
+        '<div class="quiz-q-num" style="margin-bottom:4px">' + esc(mechLabel) + (item.chapterName ? " · " + esc(item.chapterName) : "") + (dateLabel ? " · " + dateLabel : "") + '</div>' +
+        '<div style="font-size:13px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(subjectPreview) + '</div>' +
+        '</div>' + statusBadge + deleteBtn +
+        '</div></div>';
+    }
+    var docHtml = item.document ? (
+      '<div class="dp-exercise-box" style="margin-bottom:14px">' +
+      '<div class="dp-exercise-label">Document — ' + esc(item.document.author || "?") + (item.document.sourceTitle ? ", " + esc(item.document.sourceTitle) : "") + (item.document.date ? " (" + esc(item.document.date) + ")" : "") + '</div>' +
+      '<div class="dp-exercise-text">' + mdToHtml(item.document.excerpt || "") + '</div>' +
+      (item.document.sourceUrl ? '<a href="' + esc(item.document.sourceUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:var(--text-muted);display:inline-block;margin-top:8px">🔗 Source</a>' : '') +
+      '</div>'
+    ) : "";
+    var subjectHtml = '<div class="quiz-q-num">' + esc(mechLabel) + (item.chapterName ? " · " + esc(item.chapterName) : "") + '</div>' +
+      '<div class="quiz-q-text">' + mdToHtml(item.subject) + '</div>';
+    var answerArea;
+    if (item.status === "grading") {
+      answerArea = '<div class="processing-box">' + genLogo() + '<span>Correction en cours… (la sévérité prend un peu plus de temps qu\'un simple correct/faux)</span></div>';
+    } else if (item.status === "graded") {
+      var tier = gradeLevelFromGrade20(item.grade20);
+      answerArea = '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+        '<div class="rte-display" style="margin-bottom:14px">' + (item.answerHtml || "<em>(vide)</em>") + '</div>' +
+        '<div class="quiz-feedback ' + tier + '">' +
+        '<div class="quiz-feedback-title ' + tier + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+        '<span>' + esc(item.verdict) + '</span><span class="mono" style="font-size:18px;flex:none">' + item.grade20 + '/20</span></div>' +
+        (item.strengths && item.strengths.length ? '<div class="correction-exp"><strong>Points forts :</strong><ul>' + item.strengths.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + '</ul></div>' : '') +
+        (item.weaknesses && item.weaknesses.length ? '<div class="correction-exp"><strong>Points faibles :</strong><ul>' + item.weaknesses.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + '</ul></div>' : '') +
+        '<div class="correction-exp">' + mdToHtml(item.detailedFeedback || "") + '</div>' +
+        '</div>' +
+        (item.referencePlan ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Corrigé de référence</div><div class="dp-exercise-text">' + mdToHtml(item.referencePlan) + '</div></div>' : '');
+    } else {
+      answerArea = '<div class="field">' + richEditorHtml("methodo-answer-" + item.id, item.mechanic === "plan" ? "Rédige ton plan détaillé (parties, sous-parties, idées et exemples)…" : "Rédige ta réponse…", item.answerHtml || "", true) + '</div>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.submitMethodoAnswer(\'' + methodo.id + '\',\'' + item.id + '\')">Valider ma réponse</button>';
+    }
+    var collapseBtn = '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.toggleMethodoItem(\'' + item.id + '\')">▲ Replier</button>';
+    var itemHead = '<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">' + collapseBtn + deleteBtn + '</div>';
+    return '<div class="dp-exercise-item" style="margin-bottom:26px;padding-bottom:22px;border-bottom:2px solid var(--border-soft)">' + itemHead + docHtml + subjectHtml + '<div style="margin-top:14px">' + answerArea + '</div></div>';
+  }
+  function renderMethodologyDetailPage(id) {
+    var methodo = methodoFind(id);
+    if (!methodo) { navigate("#/methodologies"); return; }
+    var head = '<div class="course-head">' +
+      '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(methodo.title) + '</h1>' +
+      '<p class="page-sub">' + (methodo.genre ? esc(methodo.genre) : "Méthodologie") + '</p></div>' +
+      '<div style="display:flex;gap:10px;margin-left:auto">' +
+      (methodo.status === "ready" && methodo.images && methodo.images.length ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryMethodologyGeneration(\'' + methodo.id + '\')">🔄 Régénérer</button>' : "") +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'methodology\',null,null,null,\'' + methodo.id + '\')">' + icon("trash") + ' Supprimer</button>' +
+      '</div></div>';
+    var body;
+    if (methodo.status === "processing") {
+      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ta méthodologie…</span></div>';
+    } else if (methodo.status === "error") {
+      body = '<div class="processing-box"><span>⚠️ ' + esc(methodo.error || "L'analyse a échoué.") + '</span>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryMethodologyGeneration(\'' + methodo.id + '\')">Réessayer</button></div>';
+    } else {
+      var structureBox = '<div class="dp-exercise-box"><div class="dp-exercise-label">Méthode retenue</div><div class="dp-exercise-text">' + mdToHtml(methodo.structure) + '</div></div>';
+      var allSubs = userData().subjects;
+      var st = methodoTrainState[methodo.id];
+      if (!st) { st = methodoTrainState[methodo.id] = { subjectId: allSubs[0] ? allSubs[0].id : "", chapterId: "", mechanic: methodo.mechanics[0] || "redaction", customMechanic: "" }; }
+      var stSubj = findSubject(st.subjectId) || allSubs[0];
+      if (stSubj) st.subjectId = stSubj.id;
+      var chapters = stSubj ? subjectChaptersWithContent(stSubj) : [];
+      if (!chapters.some(function (c) { return c.id === st.chapterId; })) st.chapterId = chapters[0] ? chapters[0].id : "";
+      var subjectOptionsT = allSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === st.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+      var chapterOptions = chapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === st.chapterId ? "selected" : "") + '>' + esc(c.themeName + " / " + c.name) + '</option>'; }).join("");
+      var mechanicChoices = methodo.mechanics.concat([METHODOLOGY_MECHANIC_CUSTOM]);
+      var mechanicOptions = mechanicChoices.map(function (m) { return '<option value="' + m + '" ' + (m === st.mechanic ? "selected" : "") + '>' + (m === METHODOLOGY_MECHANIC_CUSTOM ? "Autre (à préciser)" : esc(METHODOLOGY_MECHANIC_LABELS[m] || m)) + '</option>'; }).join("");
+      var trainPanel = '<div class="dp-section"><h3 class="dp-section-title">S\'entraîner</h3>' +
+        (allSubs.length
+          ? '<div class="field"><label>Matière</label><select onchange="App.setMethodoTrainSubject(\'' + methodo.id + '\',this.value)">' + subjectOptionsT + '</select></div>' +
+            (chapters.length
+              ? '<div class="field"><label>Chapitre</label><select onchange="App.setMethodoTrainChapter(\'' + methodo.id + '\',this.value)">' + chapterOptions + '</select></div>' +
+                '<div class="field"><label>Type d\'entraînement</label><select onchange="App.setMethodoTrainMechanic(\'' + methodo.id + '\',this.value)">' + mechanicOptions + '</select></div>' +
+                (st.mechanic === METHODOLOGY_MECHANIC_CUSTOM ? '<div class="field"><label>Précise ce que tu veux comme entraînement</label><input value="' + esc(st.customMechanic || "") + '" placeholder="Ex. Rédiger uniquement la conclusion" oninput="App.setMethodoTrainCustom(\'' + methodo.id + '\',this.value)"></div>' : "") +
+                '<button class="btn btn-primary" style="width:auto" ' + (methodo.generatingPractice ? "disabled" : "") + ' onclick="App.generateMethodoSubject(\'' + methodo.id + '\')">' + (methodo.generatingPractice ? "Génération du sujet…" : "🎲 Nouveau sujet") + '</button>'
+              : '<p class="modal-warn">La matière « ' + esc(stSubj.name) + ' » n\'a encore aucun cours généré — génère au moins un cours avant de t\'entraîner, ou choisis une autre matière.</p>')
+          : '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>') +
+        '</div>';
+      var itemsHtml = (methodo.practiceItems || []).map(function (item, idx) { return methodologyItemHtml(methodo, item, idx === 0 || item.status !== "graded"); }).join("");
+      body = structureBox + trainPanel + (itemsHtml || '<p class="dp-empty-note">Aucun sujet généré pour l\'instant.</p>');
+    }
+    renderShell(["methodologies", id], head + '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + body + '</div>' + dinoCompanionHtml() + '</div>');
   }
 
   /* ---------------- Course page ---------------- */
@@ -3507,6 +3985,36 @@
       return;
     }
     var item = s.pool[s.idx];
+    if (item.kind === "methodo") {
+      var mMethodo = methodoFind(item.methodologyId);
+      var mMechLabel = item.customMechanic || METHODOLOGY_MECHANIC_LABELS[item.mechanic] || item.mechanic;
+      var mBody = '<div class="quiz-q-num">' + esc(mMechLabel) + (mMethodo ? " · " + esc(mMethodo.genre || mMethodo.title) : "") + (item.chapterName ? " · " + esc(item.chapterName) : "") + '</div>';
+      if (item.document) {
+        mBody += '<div class="dp-exercise-box" style="margin-bottom:14px"><div class="dp-exercise-label">Document — ' + esc(item.document.author || "?") + (item.document.sourceTitle ? ", " + esc(item.document.sourceTitle) : "") + (item.document.date ? " (" + esc(item.document.date) + ")" : "") + '</div><div class="dp-exercise-text">' + mdToHtml(item.document.excerpt || "") + '</div>' +
+          (item.document.sourceUrl ? '<a href="' + esc(item.document.sourceUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:var(--text-muted);display:inline-block;margin-top:8px">🔗 Source</a>' : '') + '</div>';
+      }
+      mBody += '<div class="quiz-q-text">' + mdToHtml(item.subject) + '</div>';
+      if (item.status === "grading") {
+        mBody += '<div class="processing-box">' + genLogo() + '<span>Correction en cours… (la sévérité prend un peu plus de temps qu\'un simple correct/faux)</span></div>';
+      } else if (item.status !== "graded") {
+        mBody += '<div class="field">' + richEditorHtml("ep-methodo-answer", item.mechanic === "plan" ? "Rédige ton plan détaillé (parties, sous-parties, idées et exemples)…" : "Rédige ta réponse…", item.answerHtml || "", true) + '</div>' +
+          '<button class="btn btn-primary" style="width:auto" onclick="App.examPrepSubmitMethodoAnswer()">Valider ma réponse</button>';
+      } else {
+        var mTier = gradeLevelFromGrade20(item.grade20);
+        mBody += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
+          '<div class="rte-display" style="margin-bottom:14px">' + (item.answerHtml || "<em>(vide)</em>") + '</div>' +
+          '<div class="quiz-feedback ' + mTier + '">' +
+          '<div class="quiz-feedback-title ' + mTier + '" style="display:flex;justify-content:space-between;gap:10px"><span>' + esc(item.verdict) + '</span><span class="mono" style="font-size:18px;flex:none">' + item.grade20 + '/20</span></div>' +
+          (item.strengths && item.strengths.length ? '<div class="correction-exp"><strong>Points forts :</strong><ul>' + item.strengths.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>' : '') +
+          (item.weaknesses && item.weaknesses.length ? '<div class="correction-exp"><strong>Points faibles :</strong><ul>' + item.weaknesses.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>' : '') +
+          '<div class="correction-exp">' + mdToHtml(item.detailedFeedback || "") + '</div>' +
+          '</div>' +
+          (item.referencePlan ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Corrigé de référence</div><div class="dp-exercise-text">' + mdToHtml(item.referencePlan) + '</div></div>' : '') +
+          '<div class="quiz-nav" style="margin-top:14px"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
+      }
+      renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + mBody + '</div>' + dinoCompanionHtml() + '</div>');
+      return;
+    }
     var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + '</div>';
     if (item.kind === "exercise") {
       body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(item.prompt) + '</div></div>' + exerciseFigureHtml(item);
@@ -3543,7 +4051,7 @@
       var slvl = s.level || (s.wasCorrect ? "correct" : "wrong");
       var scls = gradeLevelCls(slvl);
       body += '<div class="quiz-feedback ' + scls + '">' +
-        '<div class="quiz-feedback-title ' + scls + '">' + gradeLevelLabel(slvl) + '</div>' +
+        '<div class="quiz-feedback-title ' + scls + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span>' + gradeLevelLabel(slvl) + '</span>' + gradeScoreBadge(s.score, s.scoreMax) + '</div>' +
         gradeMistakesHtml(s.mistakes) +
         (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
         (item.kind === "exercise" ? '' : '<div class="correction-exp">' + mdToHtml(item.explanation || "") + '</div>') +
@@ -4613,6 +5121,20 @@
           : '<p class="modal-warn">Cette matière n\'a aucun thème — crée-en un d\'abord.</p>') +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary" ' + (currentSubj && currentSubj.themes.length ? "" : "disabled") + '>Générer le cours</button></div>' +
         '</form>';
+    } else if (modal.type === "methodologie") {
+      inner = '<h3>Ajouter une méthodologie</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">La méthode que ton prof t\'a donnée pour un type d\'épreuve (dissertation, commentaire, étude de document...) — pas un cours. Studino ne te fera pas réviser la méthode par cœur : elle générera des sujets d\'entraînement à rédiger, notés comme une vraie copie. Pas besoin de choisir une matière ici : la même méthode sert souvent pour plusieurs matières (ex. la dissertation en français ET en histoire) — tu choisiras la matière et le chapitre au moment de t\'entraîner.</p>' +
+        '<form onsubmit="App.createMethodology(event)">' +
+        '<div class="field"><label>Photos ou PDF de la méthodologie <span style="font-weight:400;color:var(--text-muted)">(optionnel)</span></label>' +
+        '<div class="file-thumbs">' +
+        modal.imagePreviews.map(fileThumbHtml).join("") +
+        '<div class="file-drop' + (modal.imagePreviews.length ? " file-drop-add" : "") + '" onclick="document.getElementById(\'methodoFileInput\').click()" ondragover="App.handleDragOver(event)" ondragleave="App.handleDragLeave(event)" ondrop="App.handleFileDrop(event)">' + icon("camera") + '<div style="margin-top:6px">' + (modal.imagePreviews.length ? "Ajouter" : "Cliquer ou glisser des images/PDF ici") + '</div></div>' +
+        '</div>' +
+        '<input id="methodoFileInput" type="file" accept="image/*,.heic,.heif,.tiff,.tif,.pdf,application/pdf" capture="environment" multiple style="display:none" onchange="App.handleFile(event)"></div>' +
+        (modal.imagePreviews.length ? "" : '<p class="modal-warn" style="margin:-6px 0 14px">Pas de méthode donnée par ton prof ? Laisse vide et écris juste le type d\'épreuve ci-dessous (ex. « Commentaire de texte », « Question problématisée d\'histoire ») — l\'IA rédigera une méthodologie standard à ta place.</p>') +
+        '<div class="field"><label>Titre' + (modal.imagePreviews.length ? "" : ' — le type d\'épreuve') + '</label><input name="title" placeholder="Ex. Méthode de la dissertation" required autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Analyser</button></div>' +
+        '</form>';
     } else if (modal.type === "addCourseDocs") {
       inner = '<h3>Ajouter des documents</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Le contenu de ces nouvelles photos sera fusionné avec la retranscription déjà connue de ce cours, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
@@ -4700,6 +5222,17 @@
                 : '<p class="modal-warn">Ce chapitre n\'a aucun cours généré.</p>'
             ) : "")
           ) : '<p class="modal-warn">Cette matière n\'a aucun cours généré pour l\'instant.</p>') +
+          (function () {
+            // Pas de filtre par matière ici : une méthodologie n'est plus liée à une seule matière
+            // (elle peut servir en français comme en histoire), donc toutes celles prêtes sont proposées.
+            var epmMethodos = methodoData().filter(function (mm) { return mm.status === "ready"; });
+            if (!epmMethodos.length) return "";
+            if (epmMethodos.length === 1) {
+              return '<div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600"><input type="checkbox" ' + (modal.methodologyId === epmMethodos[0].id ? "checked" : "") + ' onchange="App.setExamPrepField(\'methodologyId\', this.checked ? \'' + epmMethodos[0].id + '\' : null)"> Inclure un sujet de « ' + esc(epmMethodos[0].genre || epmMethodos[0].title) + ' » à chaque séance</label></div>';
+            }
+            var epmMethodoOptions = '<option value="">Aucune</option>' + epmMethodos.map(function (mm) { return '<option value="' + mm.id + '" ' + (mm.id === modal.methodologyId ? "selected" : "") + '>' + esc(mm.genre || mm.title) + '</option>'; }).join("");
+            return '<div class="field"><label>Inclure un sujet de méthodologie à chaque séance</label><select onchange="App.setExamPrepField(\'methodologyId\', this.value || null)">' + epmMethodoOptions + '</select></div>';
+          })() +
           '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
           (epmThemes.length && epmReady ? '<button type="button" class="btn btn-metal" onclick="App.createExamPrep()">Générer le planning</button>' : "") +
           '</div>';
@@ -4791,6 +5324,10 @@
         var dep = epFind(modal.courseId);
         name = dep ? dep.title : "";
         warn = "Son planning et ta progression seront définitivement perdus.";
+      } else if (modal.kind === "methodology") {
+        var dmt = methodoFind(modal.courseId);
+        name = dmt ? dmt.title : "";
+        warn = "Tous les sujets générés et leurs corrections seront définitivement perdus.";
       }
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
@@ -5365,6 +5902,74 @@
       navigate("#/course/" + course.id);
       runCourseGeneration(course, s.name, c.name);
     },
+    createMethodology: function (e) {
+      e.preventDefault();
+      var f = e.target;
+      var title = f.title.value.trim();
+      if (!title) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var methodo = {
+        // Volontairement sans matière : la même méthode (dissertation, question problématisée...) sert
+        // souvent pour plusieurs matières — matière et chapitre se choisissent au moment de s'entraîner.
+        id: uid(), title: title, images: modal.imagePreviews.slice(), status: "processing",
+        genre: "", mechanics: [], structure: "", transcription: "", practiceItems: [], error: null, createdAt: Date.now()
+      };
+      methodoData().push(methodo);
+      saveDB();
+      modal = null;
+      navigate("#/methodologies/" + methodo.id);
+      runMethodologyGeneration(methodo);
+    },
+    retryMethodologyGeneration: function (id) {
+      var methodo = methodoFind(id);
+      if (!methodo) return;
+      runMethodologyGeneration(methodo);
+    },
+    setMethodoTrainSubject: function (id, subjectId) {
+      var st = methodoTrainState[id] || (methodoTrainState[id] = {});
+      st.subjectId = subjectId;
+      st.chapterId = ""; // redéterminé au rendu suivant à partir des chapitres de la nouvelle matière
+      render();
+    },
+    setMethodoTrainChapter: function (id, chapterId) { (methodoTrainState[id] || (methodoTrainState[id] = {})).chapterId = chapterId; render(); },
+    setMethodoTrainMechanic: function (id, mechanic) { (methodoTrainState[id] || (methodoTrainState[id] = {})).mechanic = mechanic; render(); },
+    setMethodoTrainCustom: function (id, text) { (methodoTrainState[id] || (methodoTrainState[id] = {})).customMechanic = text; },
+    generateMethodoSubject: function (id) {
+      var methodo = methodoFind(id);
+      if (!methodo || methodo.generatingPractice) return;
+      var st = methodoTrainState[id];
+      if (!st || !st.subjectId) { toast("Choisis une matière"); return; }
+      var subj = findSubject(st.subjectId);
+      if (!subj) return;
+      if (!st.chapterId) { toast("Choisis un chapitre"); return; }
+      if (st.mechanic === METHODOLOGY_MECHANIC_CUSTOM && !(st.customMechanic || "").trim()) { toast("Précise ce que tu veux comme entraînement"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var chap = findChapterAnywhere(subj, st.chapterId);
+      if (!chap) return;
+      var content = chapterContentText(subj, st.chapterId);
+      var customInstruction = st.mechanic === METHODOLOGY_MECHANIC_CUSTOM ? st.customMechanic.trim() : "";
+      runMethodologyPracticeGeneration(methodo, chap.id, chap.name, content, st.mechanic, subj.name, customInstruction).catch(function () {});
+    },
+    submitMethodoAnswer: function (methodoId, itemId) {
+      var methodo = methodoFind(methodoId);
+      if (!methodo) return;
+      var item = (methodo.practiceItems || []).find(function (x) { return x.id === itemId; });
+      if (!item) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var answerHtml = rteValue("methodo-answer-" + item.id);
+      var answerText = rteText("methodo-answer-" + item.id);
+      if (!answerText.trim()) { toast("Écris une réponse avant de valider"); return; }
+      submitMethodologyAnswer(methodo, item, answerHtml, answerText);
+    },
+    toggleMethodoItem: function (itemId) { methodoItemOpen[itemId] = !methodoItemOpen[itemId]; render(); },
+    deleteMethodoItem: function (methodoId, itemId) {
+      var methodo = methodoFind(methodoId);
+      if (!methodo) return;
+      methodo.practiceItems = (methodo.practiceItems || []).filter(function (x) { return x.id !== itemId; });
+      saveDB();
+      toast("Sujet supprimé");
+      render();
+    },
     retryGeneration: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
@@ -5513,7 +6118,7 @@
       var firstSubj = subs[0];
       var firstTheme = firstSubj && dpThemesWithContent(firstSubj)[0];
       var firstChap = firstTheme && dpChaptersWithContent(firstTheme)[0];
-      modal = { type: "examPrepGen", title: "", examDate: "", level: "chapter", subjectId: firstSubj && firstSubj.id, themeId: firstTheme && firstTheme.id, chapterId: firstChap && firstChap.id, courseId: null };
+      modal = { type: "examPrepGen", title: "", examDate: "", level: "chapter", subjectId: firstSubj && firstSubj.id, themeId: firstTheme && firstTheme.id, chapterId: firstChap && firstChap.id, courseId: null, methodologyId: null };
       render();
     },
     setExamPrepField: function (field, value) { modal[field] = value; },
@@ -5527,6 +6132,7 @@
     },
     changeExamPrepSubject: function (subjectId) {
       modal.subjectId = subjectId;
+      modal.methodologyId = null;
       var subj = findSubject(subjectId);
       var firstTheme = subj && dpThemesWithContent(subj)[0];
       modal.themeId = firstTheme ? firstTheme.id : null;
@@ -5588,6 +6194,7 @@
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var prep = {
         id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
+        methodologyId: m.methodologyId || null,
         planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
         overview: "", days: [], topicStatus: {}, sessions: {}, gapFlashcards: []
       };
@@ -5641,6 +6248,35 @@
         epSession = { prepId: prepId, date: date, pool: finalPool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, history: [], review: null, readinessBefore: epReadinessPercent(prep), startedAt: Date.now(), done: false };
         render();
       };
+      // Si cette prépa a une méthodologie liée, chaque séance inclut EN PLUS un sujet à rédiger dessus
+      // (généré à la volée, jamais pré-stocké — c'est justement l'effet de surprise recherché) : on
+      // l'ajoute au pool juste avant de lancer la séance, sous le même sablier que la réécriture des
+      // exercices déjà vus, pour étaler l'entraînement à l'écrit long sur toute la durée de la prépa.
+      var methodo = prep.methodologyId ? methodoFind(prep.methodologyId) : null;
+      var finalizeLaunch = function (finalPool) {
+        if (!methodo || methodo.status !== "ready" || !getApiKey()) { launch(finalPool); return; }
+        // La méthodologie n'est plus liée à une seule matière : ici on utilise la matière de LA PRÉPA
+        // elle-même (celle dont le scope a été choisi à la création), puisque c'est elle qui détermine
+        // quels chapitres sont réellement en cours de révision dans cette prépa précise.
+        var subj = findSubject(prep.scope.subjectId);
+        var chapters = subj ? subjectChaptersWithContent(subj) : [];
+        if (!chapters.length) { launch(finalPool); return; }
+        epStartingSessionFor = prepId + "::" + date;
+        render();
+        var chap = chapters.find(function (c) { return (dayEntry.topics || []).some(function (t) { return epNormTopic(t) === epNormTopic(c.name); }); }) || chapters[0];
+        var content = chapterContentText(subj, chap.id);
+        generateMethodologyPracticeItem(methodo, chap.id, chap.name, content, methodo.mechanics[0] || "redaction", subj.name).then(function (item) {
+          item.kind = "methodo";
+          item.methodologyId = methodo.id;
+          item.prompt = item.subject; // alias pour rester compatible avec le pipeline historique/thèmes commun à tous les items
+          finalPool.push(item);
+          launch(finalPool);
+        }).catch(function () {
+          // Pas grave si ça échoue : on démarre quand même la séance sans le sujet de méthodologie
+          // plutôt que de bloquer tout le reste de la révision du jour.
+          launch(finalPool);
+        });
+      };
       prep.itemUseCount = prep.itemUseCount || {};
       // Un item déjà rencontré lors d'une séance précédente de cette même prépa est réécrit (valeurs et
       // contexte différents, même notion) avant de démarrer, pour éviter de retomber mot pour mot sur le
@@ -5648,7 +6284,7 @@
       var repeats = picked.filter(function (it) { return (it.kind === "exercise" || it.kind === "open") && prep.itemUseCount[it.id]; });
       picked.forEach(function (it) { prep.itemUseCount[it.id] = (prep.itemUseCount[it.id] || 0) + 1; });
       saveDB();
-      if (!repeats.length || !getApiKey()) { launch(picked); return; }
+      if (!repeats.length || !getApiKey()) { finalizeLaunch(picked); return; }
       epStartingSessionFor = prepId + "::" + date;
       render();
       // Timeout dédié : si Gemini traîne ou que la requête reste bloquée, on ne doit JAMAIS laisser
@@ -5657,7 +6293,7 @@
       var timeoutId = setTimeout(function () {
         if (settled) return;
         settled = true;
-        launch(picked);
+        finalizeLaunch(picked);
       }, 25000);
       generateExamPrepVariants(repeats).then(function (data) {
         if (settled) return;
@@ -5676,13 +6312,13 @@
           if (it.figureSvg) updated.figureSvg = v.figureSvg || "";
           return updated;
         });
-        launch(finalPool);
+        finalizeLaunch(finalPool);
       }).catch(function () {
         if (settled) return;
         settled = true;
         clearTimeout(timeoutId);
         // Pas grave si la variation échoue : on démarre quand même avec les énoncés d'origine plutôt que de bloquer l'élève.
-        launch(picked);
+        finalizeLaunch(picked);
       });
     },
     examPrepAnswerQcm: function (i) {
@@ -5713,11 +6349,47 @@
         s.aiFeedback = result.feedback || "";
         var level = normalizeGradeLevel(result);
         s.mistakes = result.mistakes || [];
+        s.score = result.score; s.scoreMax = result.scoreMax;
         epFinishSessionAnswer(s, item, answerText, referenceAnswer, level, s.mistakes);
         render();
         dinoReact(gradeLevelIsSuccess(level));
       }).catch(function (err) {
         s.status = "answering";
+        toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+        render();
+      });
+    },
+    examPrepSubmitMethodoAnswer: function () {
+      var s = epSession;
+      if (!s) return;
+      var item = s.pool[s.idx];
+      if (!item || item.kind !== "methodo") return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var methodo = methodoFind(item.methodologyId);
+      if (!methodo) return;
+      var answerHtml = rteValue("ep-methodo-answer");
+      var answerText = rteText("ep-methodo-answer");
+      if (!answerText.trim()) { toast("Écris une réponse avant de valider"); return; }
+      item.status = "grading";
+      render();
+      gradeMethodologyAnswer(methodo, item, answerText).then(function (g) {
+        item.answerHtml = answerHtml;
+        item.answerText = answerText;
+        item.status = "graded";
+        item.grade20 = typeof g.grade20 === "number" ? Math.max(0, Math.min(20, g.grade20)) : 0;
+        item.verdict = g.verdict || "";
+        item.strengths = g.strengths || [];
+        item.weaknesses = g.weaknesses || [];
+        item.detailedFeedback = g.detailedFeedback || "";
+        // Contribue au baromètre/points/flashcards de lacunes comme n'importe quel autre item de la
+        // séance, en convertissant la note sur 20 vers le barème commun à 4 niveaux (GRADE_LEVELS) —
+        // un sujet de méthodologie compte donc réellement dans la préparation, pas juste à côté.
+        var level = gradeLevelFromGrade20(item.grade20);
+        epFinishSessionAnswer(s, item, answerText, item.referencePlan || "", level, item.weaknesses || []);
+        render();
+        dinoReact(gradeLevelIsSuccess(level));
+      }).catch(function (err) {
+        item.status = "unanswered";
         toast("Échec de la correction : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
         render();
       });
@@ -5803,6 +6475,7 @@
         ex.correct = gradeLevelIsSuccess(level);
         ex.mistakes = result.mistakes || [];
         ex.feedback = result.feedback || "";
+        ex.score = result.score; ex.scoreMax = result.scoreMax;
         saveDB();
         render();
         dinoReact(ex.correct);
@@ -5967,6 +6640,10 @@
         d4.examPreps = d4.examPreps.filter(function (x) { return x.id !== m.courseId; });
         if (epSession && epSession.prepId === m.courseId) epSession = null;
         toast("Prépa supprimée");
+      } else if (m.kind === "methodology") {
+        var d5 = userData();
+        d5.methodologies = d5.methodologies.filter(function (x) { return x.id !== m.courseId; });
+        toast("Méthodologie supprimée");
       }
       saveDB();
       modal = null;
@@ -6256,6 +6933,7 @@
         qz.aiFeedback = result.feedback || "";
         var level = normalizeGradeLevel(result);
         qz.mistakes = result.mistakes || [];
+        qz.score = result.score; qz.scoreMax = result.scoreMax;
         dpFinishAnswer(qz, q, answerText, q.answer, level, qz.mistakes);
         render();
         dinoReact(gradeLevelIsSuccess(level));
@@ -6298,6 +6976,7 @@
         qz.correct = gradeLevelIsSuccess(level);
         qz.mistakes = result.mistakes || [];
         qz.feedback = result.feedback || "";
+        qz.score = result.score; qz.scoreMax = result.scoreMax;
         var earned = Math.round(DP_EXERCISE_POINTS * (GRADE_LEVELS[level] || GRADE_LEVELS.wrong).pointsFactor);
         if (earned > 0) { var dp = dpData(); dp.points += earned; saveDB(); }
         qz.pointsEarned = earned;
@@ -6465,6 +7144,8 @@
       if (parts[0] === "revision" && parts[1]) { renderRevisionSheetPage(parts[1]); return; }
       if (parts[0] === "examprep" && parts[1]) { renderExamPrepDetailPage(parts[1]); return; }
       if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
+      if (parts[0] === "methodologies" && parts[1]) { renderMethodologyDetailPage(parts[1]); return; }
+      if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
       renderDashboard();
     } catch (err) {
       console.error("Erreur de rendu :", err);
