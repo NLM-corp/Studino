@@ -322,10 +322,16 @@
 
   /* ---------------- Gemini AI generation ---------------- */
   var API_KEY_STORAGE = "studino_gemini_key";
+  var BACKUP_API_KEY_STORAGE = "studino_gemini_key_backup";
   var GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
 
   function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ""; }
   function setApiKey(k) { if (k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }
+  // Clé optionnelle d'un second compte Google : si TOUS les modèles de la clé principale sont à quota
+  // (429 partout), on bascule dessus avant d'abandonner — un quota Gemini gratuit est par compte, donc
+  // une deuxième clé d'un autre compte a un quota totalement indépendant.
+  function getBackupApiKey() { return localStorage.getItem(BACKUP_API_KEY_STORAGE) || ""; }
+  function setBackupApiKey(k) { if (k) localStorage.setItem(BACKUP_API_KEY_STORAGE, k); else localStorage.removeItem(BACKUP_API_KEY_STORAGE); }
   var apiKeyGuideShown = false; // une seule ouverture auto par chargement de page, cf. render()
 
   var VOLUME_MUSIC_STORAGE = "studino_volume_music";
@@ -470,18 +476,21 @@
     merged.signal = controller.signal;
     return fetch(url, merged).finally(function () { clearTimeout(timer); });
   }
-  // Message clair à afficher quand TOUS les modèles de secours ont échoué à cause d'une limite de
-  // débit Google (429) — sans ça, l'élève ne voit que le texte brut anglais du DERNIER modèle essayé,
-  // qui donne l'impression trompeuse qu'aucun essai de secours n'a eu lieu alors qu'il y en a eu 4.
-  function rateLimitFallbackError(detail) {
-    var err = new Error("Tous les modèles Gemini disponibles sont temporairement limités par Google (quota gratuit dépassé). Réessaie dans 1 à 2 minutes.");
+  // Message clair à afficher quand TOUS les modèles (et, le cas échéant, la clé de secours) ont
+  // échoué à cause d'une limite de débit Google (429) — sans ça, l'élève ne voit que le texte brut
+  // anglais de la DERNIÈRE tentative, qui donne l'impression trompeuse qu'aucun secours n'a eu lieu.
+  function rateLimitFallbackError(detail, triedBackup) {
+    var err = new Error(triedBackup
+      ? "Tous les modèles Gemini sont temporairement limités par Google, même avec ta clé de secours. Réessaie dans 1 à 2 minutes."
+      : "Tous les modèles Gemini disponibles sont temporairement limités par Google (quota gratuit dépassé). Réessaie dans 1 à 2 minutes, ou ajoute une clé API de secours dans les paramètres.");
     err.status = 429;
     err.detail = detail;
     return err;
   }
-  async function callGemini(parts, schema) {
-    var apiKey = getApiKey();
-    if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+  // Essaie les 4 modèles de secours avec UNE clé API donnée. Lève une erreur avec `.rateLimited = true`
+  // si TOUS ont échoué spécifiquement par manque de quota (429), pour que l'appelant sache s'il vaut la
+  // peine de rebasculer sur une deuxième clé plutôt que d'abandonner tout de suite.
+  async function attemptGeminiWithKey(apiKey, parts, schema) {
     var lastErr = null;
     var hadRateLimit = false;
     // Une température basse rend le modèle plus déterministe, donc plus susceptible de reproduire du
@@ -545,8 +554,26 @@
       lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
-    if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
-    throw lastErr;
+    var finalErr = lastErr || new Error("Erreur inconnue de l'API Gemini.");
+    finalErr.rateLimited = hadRateLimit;
+    throw finalErr;
+  }
+  async function callGemini(parts, schema) {
+    var primaryKey = getApiKey();
+    if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+    try {
+      return await attemptGeminiWithKey(primaryKey, parts, schema);
+    } catch (err1) {
+      var backupKey = getBackupApiKey();
+      if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? rateLimitFallbackError(err1.detail, false) : err1);
+      // Clé principale à quota sur ses 4 modèles : bascule entière sur la clé de secours (compte Google
+      // différent, donc quota totalement indépendant) avant d'abandonner pour de bon.
+      try {
+        return await attemptGeminiWithKey(backupKey, parts, schema);
+      } catch (err2) {
+        throw (err2.rateLimited ? rateLimitFallbackError(err2.detail, true) : err2);
+      }
+    }
   }
 
   // Variante de callGemini qui laisse le modèle interroger le vrai Google Search ("grounding") au lieu
@@ -557,9 +584,7 @@
   // renvoie donc du texte libre avec ses sources, à faire ensuite passer par un second appel callGemini
   // "normal" pour le mettre en forme dans le schéma voulu. Gratuit dans la limite d'un quota mensuel
   // généreux (~5000 requêtes/mois sur les modèles Gemini 3.x), sans carte bancaire.
-  async function callGeminiSearch(parts) {
-    var apiKey = getApiKey();
-    if (!apiKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+  async function attemptGeminiSearchWithKey(apiKey, parts) {
     var lastErr = null;
     var hadRateLimit = false;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
@@ -603,8 +628,24 @@
       lastErr.status = res.status; lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
-    if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
-    throw lastErr;
+    var finalErr = lastErr || new Error("Erreur inconnue de l'API Gemini.");
+    finalErr.rateLimited = hadRateLimit;
+    throw finalErr;
+  }
+  async function callGeminiSearch(parts) {
+    var primaryKey = getApiKey();
+    if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+    try {
+      return await attemptGeminiSearchWithKey(primaryKey, parts);
+    } catch (err1) {
+      var backupKey = getBackupApiKey();
+      if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? rateLimitFallbackError(err1.detail, false) : err1);
+      try {
+        return await attemptGeminiSearchWithKey(backupKey, parts);
+      } catch (err2) {
+        throw (err2.rateLimited ? rateLimitFallbackError(err2.detail, true) : err2);
+      }
+    }
   }
 
   async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription) {
@@ -5436,6 +5477,22 @@
         '<form onsubmit="App.saveApiKey(event)">' +
         '<div class="field"><label>Colle ta clé API ici</label><input name="apiKey" type="password" placeholder="AIzaSy..." autocomplete="off" autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Plus tard</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
+        '</form>' +
+        '<p class="modal-warn" style="margin-top:16px">💡 Conseil : une fois cette clé enregistrée, pense aussi à créer une <strong>clé de secours</strong> avec un second compte Google (dans Paramètres → Clé API de secours) — si celle-ci atteint sa limite gratuite quotidienne, Studino bascule automatiquement dessus au lieu de te bloquer.</p>';
+    } else if (modal.type === "backupApiKeyGuide") {
+      inner = '<h3>🔑 Clé API de secours</h3>' +
+        '<p class="modal-warn" style="margin-bottom:16px">Optionnel : une deuxième clé, créée avec un <strong>autre compte Google</strong> que ta clé principale. Si ta clé principale atteint sa limite gratuite quotidienne sur tous ses modèles, Studino bascule automatiquement sur celle-ci — un compte Google différent a un quota totalement indépendant. Même méthode que pour la première :</p>' +
+        '<ol class="apikey-guide-steps">' +
+        '<li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> (Google AI Studio), mais connecte-toi cette fois avec un <strong>compte Google différent</strong> de celui utilisé pour ta clé principale (ou crées-en un gratuitement).</li>' +
+        '<li>Clique sur <strong>« Create API key »</strong>, en haut de la page.</li>' +
+        '<li>S\'il te demande de choisir un projet, sélectionne <strong>« Create API key in new project »</strong> — aucune carte bancaire n\'est demandée.</li>' +
+        '<li>Ta clé s\'affiche à l\'écran (<code>AIzaSy…</code>). Copie-la.</li>' +
+        '<li>Colle-la dans le champ ci-dessous, puis clique sur <strong>Enregistrer</strong>.</li>' +
+        '</ol>' +
+        '<p style="font-size:12px;color:var(--text-muted);margin:12px 0 16px">Stockée uniquement dans ce navigateur, envoyée uniquement à l\'API Google, et seulement utilisée si la clé principale est complètement à quota.</p>' +
+        '<form onsubmit="App.saveBackupApiKey(event)">' +
+        '<div class="field"><label>Colle ta clé API de secours ici</label><input name="apiKey" type="password" placeholder="AIzaSy..." value="' + esc(getBackupApiKey()) + '" autocomplete="off" autofocus></div>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
         '</form>';
     } else if (modal.type === "settings") {
       var storageInfo = storageUsageInfo();
@@ -5453,6 +5510,13 @@
         '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
         '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openApiKeyModal()">🔑 ' + (getApiKey() ? "Modifier" : "Ajouter") + '</button>' +
         '</div></div>' +
+        '<div class="field"><label>Clé API de secours (optionnel)</label>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getBackupApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
+        '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeModal();App.openBackupApiKeyModal()">🔑 ' + (getBackupApiKey() ? "Modifier" : "Ajouter") + '</button>' +
+        '</div>' +
+        '<p class="modal-warn" style="margin:6px 0 0">Utilisée automatiquement si ta clé principale atteint sa limite gratuite quotidienne — crée-la avec un autre compte Google.</p>' +
+        '</div>' +
         '<div class="field"><label>Stockage utilisé</label>' + storageBarHtml + '</div>' +
         '<div class="field"><label>Sauvegarde de tes données</label>' +
         '<div style="display:flex;gap:8px">' +
@@ -5568,7 +5632,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="submit" class="btn btn-primary">Insérer</button></div>' +
         '</form>';
     }
-    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
+    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "backupApiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
     document.body.appendChild(overlay);
   }
 
@@ -6596,6 +6660,15 @@
       setApiKey(key);
       modal = null;
       toast(key ? "Clé API enregistrée" : "Clé API effacée");
+      render();
+    },
+    openBackupApiKeyModal: function () { modal = { type: "backupApiKeyGuide" }; render(); },
+    saveBackupApiKey: function (e) {
+      e.preventDefault();
+      var key = e.target.apiKey.value.trim();
+      setBackupApiKey(key);
+      modal = null;
+      toast(key ? "Clé API de secours enregistrée" : "Clé API de secours effacée");
       render();
     },
 
