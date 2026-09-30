@@ -826,7 +826,8 @@
       "- Ne cherche JAMAIS un point positif dans une partie fausse ou hors-sujet pour adoucir le propos — si c'est mauvais, dis-le tel quel, sans l'entourer de compliments non mérités.\n" +
       "- Un 20/20 doit être QUASI IMPOSSIBLE à obtenir, même pour une bonne copie : une copie réellement excellente plafonne autour de 16-17/20, une bonne copie solide tourne autour de 12-14/20, une copie avec de vrais problèmes de fond doit descendre sous la moyenne sans hésiter. Ne gonfle JAMAIS la note pour encourager — un élève qui se croit à 18 alors qu'il aura 7 le jour du contrôle est desservi, pas aidé.\n" +
       "- Vérifie que la structure respecte EXACTEMENT la méthode fournie ci-dessous ; toute étape attendue absente ou mal exécutée doit être nommée précisément et pénalisée.\n" +
-      "- Vérifie que le contenu (faits, dates, exemples, citations, analyse du document le cas échéant) est réellement exact et pertinent — toute erreur factuelle, tout hors-sujet, toute affirmation non justifiée par des exemples doit être signalée sans complaisance.\n\n" +
+      "- Vérifie que le contenu (faits, dates, exemples, citations, analyse du document le cas échéant) est réellement exact et pertinent — toute erreur factuelle, tout hors-sujet, toute affirmation non justifiée par des exemples doit être signalée sans complaisance.\n" +
+      "- Orthographe et grammaire : ce n'est presque jamais ce qui est évalué ici. Ça ne doit JAMAIS coûter plus de 1 à 2 points sur 20 au total, même avec des fautes fréquentes, sauf si la méthode/consigne elle-même porte explicitement sur la langue (ex. exercice de traduction, ou correction ciblée de la maîtrise de la langue). Ce qui fait vraiment la note ici, c'est la structure, l'argumentation, la pertinence du contenu et le respect de la méthode — pas la forme.\n\n" +
       "Méthode/grille de correction à appliquer :\n\n" + methodo.structure + "\n\n" +
       "Corrigé de référence (grille détaillée à comparer avec la copie) :\n\n" + (item.referencePlan || "") + "\n\n" +
       (item.document ? "Document fourni à l'élève :\n\n« " + item.document.excerpt + " »\n— " + item.document.author + ", " + item.document.sourceTitle + " (" + item.document.date + ")\n\n" : "") +
@@ -1356,9 +1357,9 @@
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
     properties: {
-      mistakes: { type: "array", items: { type: "string" }, description: "UNE entrée par erreur RÉELLEMENT commise (tableau vide seulement si la réponse est irréprochable sur le fond). Chaque entrée nomme précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée\", \"oublie de convertir en mètres\"), jamais une formule vague comme \"erreur de calcul\". Ne fusionne jamais deux erreurs distinctes en une seule entrée, et ne minimise rien : toute imprécision, approximation ou maladresse compte comme une erreur à part entière. N'invente en revanche aucune erreur qui n'existe pas : une formulation différente mais juste sur le fond n'est pas une erreur." },
+      mistakes: { type: "array", items: { type: "string" }, description: "UNE entrée par erreur RÉELLEMENT commise (tableau vide seulement si la réponse est irréprochable sur le fond). Chaque entrée nomme précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée (-2 pt)\", \"oublie de convertir en mètres (-1 pt)\"), jamais une formule vague comme \"erreur de calcul\", et se termine TOUJOURS par le nombre de points retirés pour cette erreur précise entre parenthèses au format \"(-X pt)\". Ne fusionne jamais deux erreurs distinctes en une seule entrée, et ne minimise rien : toute imprécision, approximation ou maladresse compte comme une erreur à part entière (sauf l'orthographe/grammaire, presque jamais sanctionnée — voir consigne). N'invente en revanche aucune erreur qui n'existe pas : une formulation différente mais juste sur le fond n'est pas une erreur." },
       scoreMax: { type: "integer", description: "Barème choisi pour CET exercice précis selon son ampleur et ses points clés (ex. 5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes)." },
-      score: { type: "number", description: "Note obtenue sur scoreMax, décimale autorisée (ex. 3.5), qui doit refléter fidèlement le nombre et la gravité des erreurs listées dans mistakes. Jamais gonflée pour rassurer l'élève : une réponse avec des erreurs de fond reste loin du score maximal." },
+      score: { type: "number", description: "Note obtenue sur scoreMax, décimale autorisée (ex. 3.5) = scoreMax moins la somme des points retirés listés dans mistakes. Jamais gonflée pour rassurer l'élève : une réponse avec des erreurs de fond reste loin du score maximal." },
       feedback: { type: "string" }
     },
     required: ["mistakes", "scoreMax", "score", "feedback"]
@@ -1413,8 +1414,9 @@
       "Solution de référence : " + referenceSolution + "\n\n" +
       "Réponse de l'élève : " + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie)") + "\n\n" +
       "Règles de correction :\n" +
-      "- Liste dans \"mistakes\" CHAQUE erreur, imprécision, approximation ou maladresse réellement présente par rapport à la solution de référence, une entrée par erreur distincte. Ne limite pas leur nombre et ne les minimise pas : si la réponse est mauvaise, dis-le clairement et liste tout ce qui ne va pas. À l'inverse, n'invente aucune erreur qui n'existe pas juste pour paraître sévère : une réponse formulée différemment mais juste sur le fond ne compte pour aucune erreur.\n" +
-      "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées. N'arrondis jamais à la hausse par gentillesse : une réponse avec des erreurs de fond ne doit jamais approcher le score maximal.\n" +
+      "- Liste dans \"mistakes\" CHAQUE erreur, imprécision, approximation ou maladresse réellement présente par rapport à la solution de référence, une entrée par erreur distincte. Pour CHAQUE entrée, termine par le nombre de points retirés pour CETTE erreur précise entre parenthèses, au format \"(-X pt)\" ou \"(-X,X pt)\" (ex. \"confond vitesse moyenne et instantanée (-2 pt)\") — le barème complet (score/scoreMax) doit être la conséquence transparente et vérifiable de cette liste, jamais un chiffre sorti de nulle part. Ne limite pas leur nombre et ne les minimise pas : si la réponse est mauvaise, dis-le clairement et liste tout ce qui ne va pas. À l'inverse, n'invente aucune erreur qui n'existe pas juste pour paraître sévère : une réponse formulée différemment mais juste sur le fond ne compte pour aucune erreur.\n" +
+      "- Orthographe et grammaire : ne retire PRESQUE JAMAIS de points pour ça. Au grand maximum 1 point sur l'ensemble du barème, et seulement si le sujet n'est ni scientifique ni technique. Deux seules exceptions où une faute d'orthographe compte comme une erreur normale : (1) un terme scientifique/technique précis mal orthographié (ex. un nom d'unité, une notion, un nom propre scientifique) dans une matière où ce terme est justement ce qui est évalué, (2) une faute dans la conjugaison du verbe quand l'exercice porte spécifiquement sur la conjugaison. En dehors de ces deux cas (donc pour la quasi-totalité des exercices de maths, sciences, et de la rédaction générale dans les autres matières), l'orthographe ne doit JAMAIS faire perdre plus d'un point : c'est le fond — le raisonnement, le résultat, la compréhension de la notion — qui est évalué, pas la forme.\n" +
+      "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées (score = scoreMax moins la somme des points retirés listés dans \"mistakes\"). N'arrondis jamais à la hausse par gentillesse : une réponse avec des erreurs de fond ne doit jamais approcher le score maximal.\n" +
       "- Le \"feedback\" doit être factuel et sans complaisance : dis explicitement ce qui est faux, incomplet ou hors sujet, sans formules vagues type \"pas tout à fait\" ou \"presque\" qui adoucissent le constat. Explique aussi ce qui est juste, le cas échéant, mais sans laisser croire que la réponse est meilleure qu'elle ne l'est.\n\n" +
       "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
@@ -6328,6 +6330,7 @@
       s.answer = i;
       s.revealed = true;
       var wasCorrect = i === item.correctIndex;
+      s.score = wasCorrect ? 1 : 0; s.scoreMax = 1;
       epFinishSessionAnswer(s, item, item.choices[i], item.choices[item.correctIndex], wasCorrect ? "correct" : "wrong", []);
       render();
       dinoReact(wasCorrect);
@@ -6398,7 +6401,7 @@
       var s = epSession;
       if (!s) return;
       if (s.idx === s.pool.length - 1) { App.examPrepFinish(); return; }
-      s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null; s.level = null; s.mistakes = null;
+      s.idx++; s.answer = null; s.answerHtml = ""; s.status = "answering"; s.aiFeedback = ""; s.revealed = false; s.wasCorrect = null; s.level = null; s.mistakes = null; s.score = null; s.scoreMax = null;
       render();
     },
     examPrepFinish: function () {
@@ -6914,6 +6917,7 @@
       qz.answer = i;
       qz.revealed = true;
       var wasCorrect = i === q.correctIndex;
+      qz.score = wasCorrect ? 1 : 0; qz.scoreMax = 1;
       dpFinishAnswer(qz, q, q.choices[i], q.choices[q.correctIndex], wasCorrect ? "correct" : "wrong", []);
       render();
       dinoReact(wasCorrect);
@@ -6949,7 +6953,7 @@
       if (isLast) {
         qz.done = true;
       } else {
-        qz.idx++; qz.answer = null; qz.answerHtml = ""; qz.status = "answering"; qz.aiFeedback = ""; qz.revealed = false; qz.wasCorrect = null; qz.level = null; qz.mistakes = null;
+        qz.idx++; qz.answer = null; qz.answerHtml = ""; qz.status = "answering"; qz.aiFeedback = ""; qz.revealed = false; qz.wasCorrect = null; qz.level = null; qz.mistakes = null; qz.score = null; qz.scoreMax = null;
       }
       render();
     },
