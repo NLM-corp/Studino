@@ -458,6 +458,18 @@
     return value;
   }
   function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  // Un fetch() nu n'a AUCUN délai limite : si Google traîne ou que la connexion reste bloquée, l'appel
+  // ne se résout jamais et l'élève reste planté indéfiniment sur le sablier, sans erreur ni recours.
+  // On force donc une limite de temps par tentative, pour toujours retomber sur le modèle de secours
+  // suivant (ou un message d'erreur clair) plutôt que d'attendre pour rien.
+  function fetchWithTimeout(url, opts, timeoutMs) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+    var merged = {};
+    for (var k in opts) merged[k] = opts[k];
+    merged.signal = controller.signal;
+    return fetch(url, merged).finally(function () { clearTimeout(timer); });
+  }
   // Message clair à afficher quand TOUS les modèles de secours ont échoué à cause d'une limite de
   // débit Google (429) — sans ça, l'élève ne voit que le texte brut anglais du DERNIER modèle essayé,
   // qui donne l'impression trompeuse qu'aucun essai de secours n'a eu lieu alors qu'il y en a eu 4.
@@ -482,7 +494,16 @@
       if (recitationRetries > 0) generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
       var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], generationConfig: generationConfig });
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
-      var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
+      var res;
+      try {
+        res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
+      } catch (netErr) {
+        var timedOut = netErr && netErr.name === "AbortError";
+        lastErr = new Error(timedOut ? "Gemini n'a pas répondu à temps (60s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
+        lastErr.status = timedOut ? 408 : 0;
+        lastErr.detail = String(netErr);
+        continue;
+      }
       if (res.ok) {
         var data = await res.json();
         if (data.promptFeedback && data.promptFeedback.blockReason) {
@@ -545,7 +566,16 @@
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
       var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], tools: [{ google_search: {} }] });
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
-      var res = await fetch(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body });
+      var res;
+      try {
+        res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
+      } catch (netErr) {
+        var timedOut = netErr && netErr.name === "AbortError";
+        lastErr = new Error(timedOut ? "Gemini n'a pas répondu à temps (60s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
+        lastErr.status = timedOut ? 408 : 0;
+        lastErr.detail = String(netErr);
+        continue;
+      }
       if (res.ok) {
         var data = await res.json();
         if (data.promptFeedback && data.promptFeedback.blockReason) {
