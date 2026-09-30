@@ -5482,14 +5482,15 @@
     } else if (modal.type === "backupApiKeyGuide") {
       inner = '<h3>🔑 Clé API de secours</h3>' +
         '<p class="modal-warn" style="margin-bottom:16px">Optionnel : une deuxième clé, créée avec un <strong>autre compte Google</strong> que ta clé principale. Si ta clé principale atteint sa limite gratuite quotidienne sur tous ses modèles, Studino bascule automatiquement sur celle-ci — un compte Google différent a un quota totalement indépendant. Même méthode que pour la première :</p>' +
+        '<p class="modal-warn" style="margin-bottom:16px">⚠️ Utilise une <strong>fenêtre de navigation privée</strong> pour tout ce qui suit, avec <strong>uniquement</strong> le nouveau compte connecté dedans (pas ton compte principal en même temps) — sinon Google mélange les permissions des deux comptes et bloque la création.</p>' +
         '<ol class="apikey-guide-steps">' +
-        '<li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> (Google AI Studio), mais connecte-toi cette fois avec un <strong>compte Google différent</strong> de celui utilisé pour ta clé principale (ou crées-en un gratuitement).</li>' +
-        '<li>Clique sur <strong>« Create API key »</strong>, en haut de la page.</li>' +
-        '<li>S\'il te demande de choisir un projet, sélectionne <strong>« Create API key in new project »</strong> — aucune carte bancaire n\'est demandée.</li>' +
+        '<li>En navigation privée, connecté avec le nouveau compte, va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> et clique sur <strong>« Create API key »</strong> (« Créer une clé API »).</li>' +
+        '<li>Dans la fenêtre qui s\'ouvre, choisis <strong>« Créer un projet »</strong> (pas « Importer un projet », c\'est souvent cette étape qui échoue sur un compte tout neuf) et donne-lui un nom, n\'importe lequel.</li>' +
+        '<li>Une fois le projet créé, reviens sur la page <strong>aistudio.google.com/apikey</strong> et relance « Create API key » : cette fois, choisis <strong>« Importer un projet »</strong> et sélectionne le projet que tu viens de créer.</li>' +
         '<li>Ta clé s\'affiche à l\'écran (<code>AIzaSy…</code>). Copie-la.</li>' +
         '<li>Colle-la dans le champ ci-dessous, puis clique sur <strong>Enregistrer</strong>.</li>' +
         '</ol>' +
-        '<p style="font-size:12px;color:var(--text-muted);margin:12px 0 16px">Stockée uniquement dans ce navigateur, envoyée uniquement à l\'API Google, et seulement utilisée si la clé principale est complètement à quota.</p>' +
+        '<p style="font-size:12px;color:var(--text-muted);margin:12px 0 16px">Si malgré tout ça bloque encore sur une erreur de permission, va d\'abord sur console.cloud.google.com avec ce compte pour accepter les conditions d\'utilisation, puis réessaie. Ta clé est stockée uniquement dans ce navigateur, envoyée uniquement à l\'API Google, et seulement utilisée si la clé principale est complètement à quota.</p>' +
         '<form onsubmit="App.saveBackupApiKey(event)">' +
         '<div class="field"><label>Colle ta clé API de secours ici</label><input name="apiKey" type="password" placeholder="AIzaSy..." value="' + esc(getBackupApiKey()) + '" autocomplete="off" autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
