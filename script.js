@@ -542,7 +542,7 @@
       if (res.status === 429) hadRateLimit = true;
       lastErr = new Error(msg);
       lastErr.status = res.status;
-      lastErr.detail = JSON.stringify(errBody, null, 2);
+      lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
     if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
@@ -600,7 +600,7 @@
       var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
       if (res.status === 429) hadRateLimit = true;
       lastErr = new Error(msg);
-      lastErr.status = res.status; lastErr.detail = JSON.stringify(errBody, null, 2);
+      lastErr.status = res.status; lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
     if (hadRateLimit) throw rateLimitFallbackError(lastErr && lastErr.detail);
