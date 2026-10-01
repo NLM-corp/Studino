@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=20">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
@@ -17,8 +17,24 @@
 <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
 </head>
 <body>
+<div id="bg-decor" aria-hidden="true">
+<svg class="bg-pixel bg-pixel-1" viewBox="0 0 20 20"><rect x="8" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="12" y="4" width="4" height="4"/><rect x="0" y="8" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="12" y="8" width="4" height="4"/><rect x="16" y="8" width="4" height="4"/><rect x="4" y="12" width="4" height="4"/><rect x="8" y="12" width="4" height="4"/><rect x="12" y="12" width="4" height="4"/><rect x="8" y="16" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-2" viewBox="0 0 12 12"><rect x="4" y="0" width="4" height="4"/><rect x="0" y="4" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-3" viewBox="0 0 20 16"><rect x="0" y="0" width="4" height="4"/><rect x="4" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="12" y="8" width="4" height="4"/><rect x="12" y="12" width="4" height="4"/><rect x="16" y="12" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-4" viewBox="0 0 12 12"><rect x="4" y="0" width="4" height="4"/><rect x="0" y="4" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-5" viewBox="0 0 20 20"><rect x="8" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="12" y="4" width="4" height="4"/><rect x="0" y="8" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="12" y="8" width="4" height="4"/><rect x="16" y="8" width="4" height="4"/><rect x="4" y="12" width="4" height="4"/><rect x="8" y="12" width="4" height="4"/><rect x="12" y="12" width="4" height="4"/><rect x="8" y="16" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-6" viewBox="0 0 20 16"><rect x="0" y="0" width="4" height="4"/><rect x="4" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="12" y="8" width="4" height="4"/><rect x="12" y="12" width="4" height="4"/><rect x="16" y="12" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-7" viewBox="0 0 12 12"><rect x="4" y="0" width="4" height="4"/><rect x="0" y="4" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-8" viewBox="0 0 16 16"><rect x="0" y="0" width="4" height="4"/><rect x="0" y="4" width="4" height="4"/><rect x="0" y="8" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-9" viewBox="0 0 16 8"><rect x="0" y="0" width="4" height="4"/><rect x="4" y="0" width="4" height="4"/><rect x="8" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-10" viewBox="0 0 20 20"><rect x="0" y="0" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="16" y="16" width="4" height="4"/><rect x="16" y="0" width="4" height="4"/><rect x="0" y="16" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-11" viewBox="0 0 16 16"><rect x="0" y="0" width="4" height="4"/><rect x="0" y="4" width="4" height="4"/><rect x="0" y="8" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-12" viewBox="0 0 16 8"><rect x="0" y="0" width="4" height="4"/><rect x="4" y="0" width="4" height="4"/><rect x="8" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-13" viewBox="0 0 8 8"><rect x="0" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/></svg>
+<svg class="bg-pixel bg-pixel-14" viewBox="0 0 20 20"><rect x="8" y="0" width="4" height="4"/><rect x="4" y="4" width="4" height="4"/><rect x="8" y="4" width="4" height="4"/><rect x="12" y="4" width="4" height="4"/><rect x="0" y="8" width="4" height="4"/><rect x="4" y="8" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="12" y="8" width="4" height="4"/><rect x="16" y="8" width="4" height="4"/><rect x="4" y="12" width="4" height="4"/><rect x="8" y="12" width="4" height="4"/><rect x="12" y="12" width="4" height="4"/><rect x="8" y="16" width="4" height="4"/></svg>
+</div>
 <div id="app"></div>
 <div class="toast-stack" id="toastStack"></div>
-<script src="script.js?v=39"></script>
+<script src="script.js?v=40"></script>
 </body>
 </html>

@@ -5528,6 +5528,14 @@
         '<p class="modal-warn" style="margin:6px 0 0">Exporte un fichier pour récupérer tes comptes et données sur une autre adresse ou un autre appareil (ex. après avoir mis le site en ligne). Importer un fichier remplace toutes les données de ce navigateur.</p>' +
         '</div>' +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
+        (function () {
+          var swatchHex = { vert: "#4C8C4A", bleu: "#2F7FC1", jaune: "#D9A51B", rose: "#D44C80", violet: "#7A4FC4", rouge: "#D14B35", orange: "#E8862B" };
+          var current = document.documentElement.getAttribute("data-app-color") || "vert";
+          return '<div class="field"><label>Couleur du site</label><div class="color-swatches">' +
+            APP_COLORS.map(function (c) {
+              return '<button type="button" class="color-swatch' + (c === current ? " selected" : "") + '" style="background:' + swatchHex[c] + '" title="' + APP_COLOR_LABELS[c] + '" aria-label="' + APP_COLOR_LABELS[c] + '" onclick="App.setAppColor(\'' + c + '\')"></button>';
+            }).join("") + '</div></div>';
+        })() +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
         '<div class="field"><label>Volume effets sonores — <span id="vol-sfx-val">' + getVolumeSfx() + '</span>%</label>' +
@@ -5672,6 +5680,12 @@
       var next = cur === "dark" ? "light" : "dark";
       html.setAttribute("data-app-theme", next);
       localStorage.setItem("recto_theme", next);
+    },
+    setAppColor: function (color) {
+      if (APP_COLORS.indexOf(color) === -1) return;
+      document.documentElement.setAttribute("data-app-color", color);
+      localStorage.setItem("recto_color", color);
+      render();
     },
     openModal: function (type, subjectId, themeId, chapterId) {
       modal = { type: type, subjectId: subjectId || (userData().subjects[0] && userData().subjects[0].id), themeId: themeId, chapterId: chapterId, imagePreviews: [] };
@@ -7310,10 +7324,14 @@
     }
   }
 
+  var APP_COLORS = ["vert", "bleu", "jaune", "rose", "violet", "rouge", "orange"];
+  var APP_COLOR_LABELS = { vert: "Vert", bleu: "Bleu", jaune: "Jaune", rose: "Rose", violet: "Violet", rouge: "Rouge", orange: "Orange" };
   (function initTheme() {
     var saved = localStorage.getItem("recto_theme");
     var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.documentElement.setAttribute("data-app-theme", theme);
+    var savedColor = localStorage.getItem("recto_color");
+    document.documentElement.setAttribute("data-app-color", APP_COLORS.indexOf(savedColor) !== -1 ? savedColor : "vert");
   })();
 
   // Le chargement de la base (IndexedDB, potentiellement avec migration depuis l'ancien localStorage
