@@ -1,5 +1,6 @@
 ﻿(function () {
   "use strict";
+  var APP_VERSION = "1.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -5509,6 +5510,7 @@
           '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés sur ' + formatBytes(storageInfo.quotaBytes) + ' disponibles (' + storageInfo.pct + '%)</div>';
       }
       inner = '<h3>Paramètres</h3>' +
+        '<p style="font-size:11.5px;color:var(--text-muted);margin:-10px 0 16px">Version ' + APP_VERSION + '</p>' +
         '<div class="field"><label>Clé API Gemini</label>' +
         '<div style="display:flex;gap:8px;align-items:center">' +
         '<span style="flex:1;font-size:12.5px;color:var(--text-muted)">' + (getApiKey() ? "Clé enregistrée" : "Aucune clé enregistrée") + '</span>' +
@@ -5528,7 +5530,7 @@
         '<button type="button" class="btn btn-sm btn-ghost" style="width:auto" onclick="document.getElementById(\'import-backup-input\').click()">⬆️ Importer</button>' +
         '<input type="file" id="import-backup-input" accept="application/json" style="display:none" onchange="App.importBackupFile(event)">' +
         '</div>' +
-        '<p class="modal-warn" style="margin:6px 0 0">Exporte un fichier pour récupérer tes comptes et données sur une autre adresse ou un autre appareil (ex. après avoir mis le site en ligne). Importer un fichier remplace toutes les données de ce navigateur.</p>' +
+        '<p class="modal-warn" style="margin:6px 0 0">Exporte un fichier pour récupérer tes comptes et données sur une autre adresse ou un autre appareil. Importer un fichier remplace toutes les données de ce navigateur.</p>' +
         '</div>' +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
         (function () {
