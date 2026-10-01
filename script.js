@@ -1008,14 +1008,14 @@
     return epDateFromStr(dateStr).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
   }
   // Décalages (en jours depuis aujourd'hui) auxquels une séance doit être prévue : tant qu'il reste
-  // plus de 10 jours avant l'examen, une séance tous les 2 jours ; dans les 10 derniers jours, tous les jours.
+  // plus de 16 jours avant l'examen, une séance tous les 2 jours ; dans les 16 derniers jours, tous les jours.
   function epScheduleOffsets(dayCount) {
     var offsets = [];
-    if (dayCount <= 10) {
+    if (dayCount <= 16) {
       for (var o = 0; o < dayCount; o++) offsets.push(o);
       return offsets;
     }
-    var farCount = dayCount - 10;
+    var farCount = dayCount - 16;
     for (var o1 = 0; o1 < farCount; o1 += 2) offsets.push(o1);
     for (var o2 = farCount; o2 < dayCount; o2++) offsets.push(o2);
     return offsets;
