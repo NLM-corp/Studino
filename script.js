@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "1.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "1.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -501,8 +501,15 @@
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
       var generationConfig = { response_mime_type: "application/json", response_schema: schema };
-      if (recitationRetries > 0) generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
-      var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], generationConfig: generationConfig });
+      var requestParts = parts;
+      if (recitationRetries > 0) {
+        generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
+        // Une simple hausse de température ne suffit pas toujours (source très indexée en ligne, ex. un
+        // diaporama de cours partagé par plusieurs profs/élèves) : on ajoute une consigne explicite et de
+        // plus en plus insistante à chaque nouvel échec, plutôt que de compter sur le hasard seul.
+        requestParts = parts.concat([{ text: "\n\n[Note système — IMPORTANT : une tentative précédente de cette même génération a été bloquée par le filtre anti-plagiat de Gemini (RECITATION) pour ressemblance trop forte avec un contenu déjà public en ligne (ex. un diaporama ou une fiche de cours partagée par un autre professeur/élève). Cette fois, reformule ENTIÈREMENT avec une structure de phrases et un vocabulaire différents de toute source existante — change l'ordre des idées, les tournures, les exemples — sans jamais recopier plusieurs mots consécutifs identiques à un texte déjà publié. Conserve néanmoins EXACTEMENT les mêmes informations factuelles (dates, chiffres, définitions, structure logique du cours) : ne réduis jamais la quantité ou la précision de l'information, seule la formulation doit changer." + (recitationRetries > 1 ? " Sois plus radical encore dans la reformulation que lors de la tentative précédente : change complètement l'angle d'explication si besoin." : "") + "]" }]);
+      }
+      var body = JSON.stringify({ contents: [{ role: "user", parts: requestParts }], generationConfig: generationConfig });
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
       var res;
       try {
