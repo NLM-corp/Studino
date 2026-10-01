@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "1.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "1.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -491,76 +491,93 @@
   // Essaie les 4 modèles de secours avec UNE clé API donnée. Lève une erreur avec `.rateLimited = true`
   // si TOUS ont échoué spécifiquement par manque de quota (429), pour que l'appelant sache s'il vaut la
   // peine de rebasculer sur une deuxième clé plutôt que d'abandonner tout de suite.
+  function recitationNoteText(n) {
+    return "\n\n[Note système — IMPORTANT : une tentative précédente de cette même génération a été bloquée par le filtre anti-plagiat de Gemini (RECITATION) pour ressemblance trop forte avec un contenu déjà public en ligne (ex. un diaporama ou une fiche de cours partagée par un autre professeur/élève). Reformule ENTIÈREMENT avec une structure de phrases et un vocabulaire totalement différents de toute source existante — change l'ordre des idées, les tournures, les exemples, regroupe les informations différemment — sans jamais recopier plusieurs mots consécutifs identiques à un texte déjà publié. Conserve néanmoins EXACTEMENT les mêmes informations factuelles (dates, chiffres, définitions, structure logique du cours) : ne réduis jamais la quantité ou la précision de l'information, seule la formulation doit changer." + (n > 1 ? " C'est déjà la " + n + "e tentative bloquée pour la même raison : sois RADICAL dans la reformulation cette fois, quitte à changer complètement l'angle pédagogique, l'ordre des sections ou la façon de présenter l'information." : "") + "]";
+  }
+  // Un seul essai Gemini : modèle + clé donnés, avec une éventuelle note de reformulation si c'est un
+  // réessai après blocage RECITATION. Isolé de la boucle de fallback pour pouvoir aussi re-tenter le
+  // modèle le PLUS CAPABLE (le premier de la liste) en tout dernier recours, plutôt que de finir
+  // systématiquement sur le modèle le plus faible (flash-lite) qui est justement le moins apte à
+  // reformuler intelligemment un contenu très indexé en ligne.
+  async function tryGeminiModel(apiKey, modelName, parts, schema, recitationCount) {
+    var generationConfig = { response_mime_type: "application/json", response_schema: schema };
+    var requestParts = parts;
+    if (recitationCount > 0) {
+      generationConfig.temperature = 1; // max dès le 1er réessai : une hausse progressive laissait trop d'essais à basse créativité
+      requestParts = parts.concat([{ text: recitationNoteText(recitationCount) }]);
+    }
+    var body = JSON.stringify({ contents: [{ role: "user", parts: requestParts }], generationConfig: generationConfig });
+    var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent";
+    var res;
+    try {
+      res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
+    } catch (netErr) {
+      var timedOut = netErr && netErr.name === "AbortError";
+      var netError = new Error(timedOut ? "Gemini n'a pas répondu à temps (60s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
+      netError.status = timedOut ? 408 : 0;
+      netError.detail = String(netErr);
+      return { ok: false, err: netError, retryable: true, recitation: false };
+    }
+    if (res.ok) {
+      var data = await res.json();
+      if (data.promptFeedback && data.promptFeedback.blockReason) {
+        var blockErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
+        blockErr.status = res.status;
+        blockErr.detail = JSON.stringify(data, null, 2);
+        return { ok: false, err: blockErr, retryable: true, recitation: false };
+      }
+      var cand = data.candidates && data.candidates[0];
+      var candParts = cand && cand.content && cand.content.parts;
+      if (!candParts || !candParts[0]) {
+        // HTTP 200 mais réponse vide : Gemini a quand même refusé de générer (souvent finishReason
+        // RECITATION quand le texte source colle de trop près à une œuvre déjà indexée en ligne,
+        // typique d'une analyse littéraire connue ou d'un diaporama scolaire largement partagé).
+        var reason = cand && cand.finishReason;
+        var reasonLabels = {
+          RECITATION: "le contenu généré ressemblait de trop près à une œuvre déjà publiée en ligne (fréquent pour l'analyse d'une œuvre littéraire connue ou un diaporama de cours partagé) et a été bloqué automatiquement",
+          SAFETY: "le contenu a été jugé sensible par les filtres de sécurité de Gemini",
+          PROHIBITED_CONTENT: "le contenu a été jugé non autorisé par Gemini",
+          BLOCKLIST: "le contenu contient des termes bloqués par Gemini",
+          SPII: "le contenu semblait contenir des informations personnelles sensibles",
+          OTHER: "Gemini a refusé de répondre pour une raison non précisée"
+        };
+        var reasonMsg = reason && reasonLabels[reason];
+        var emptyErr = new Error(reasonMsg ? "Génération refusée par Gemini : " + reasonMsg + "." : "Réponse vide de l'API.");
+        emptyErr.status = res.status;
+        emptyErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(data, null, 2);
+        return { ok: false, err: emptyErr, retryable: true, recitation: reason === "RECITATION" };
+      }
+      return { ok: true, value: repairStrayLatexEscapes(JSON.parse(candParts[0].text)) };
+    }
+    var errBody = await res.json().catch(function () { return {}; });
+    var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
+    var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
+    var httpErr = new Error(msg);
+    httpErr.status = res.status;
+    httpErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(errBody, null, 2);
+    return { ok: false, err: httpErr, retryable: retryable, rateLimit: res.status === 429 };
+  }
   async function attemptGeminiWithKey(apiKey, parts, schema) {
     var lastErr = null;
     var hadRateLimit = false;
-    // Une température basse rend le modèle plus déterministe, donc plus susceptible de reproduire du
-    // texte mémorisé mot pour mot (ce qui déclenche le filtre RECITATION) : après un blocage de ce
-    // type, on l'augmente pour le(s) modèle(s) suivant(s) afin d'obtenir une formulation plus originale.
     var recitationRetries = 0;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
-      var generationConfig = { response_mime_type: "application/json", response_schema: schema };
-      var requestParts = parts;
-      if (recitationRetries > 0) {
-        generationConfig.temperature = Math.min(1, 0.6 + recitationRetries * 0.2);
-        // Une simple hausse de température ne suffit pas toujours (source très indexée en ligne, ex. un
-        // diaporama de cours partagé par plusieurs profs/élèves) : on ajoute une consigne explicite et de
-        // plus en plus insistante à chaque nouvel échec, plutôt que de compter sur le hasard seul.
-        requestParts = parts.concat([{ text: "\n\n[Note système — IMPORTANT : une tentative précédente de cette même génération a été bloquée par le filtre anti-plagiat de Gemini (RECITATION) pour ressemblance trop forte avec un contenu déjà public en ligne (ex. un diaporama ou une fiche de cours partagée par un autre professeur/élève). Cette fois, reformule ENTIÈREMENT avec une structure de phrases et un vocabulaire différents de toute source existante — change l'ordre des idées, les tournures, les exemples — sans jamais recopier plusieurs mots consécutifs identiques à un texte déjà publié. Conserve néanmoins EXACTEMENT les mêmes informations factuelles (dates, chiffres, définitions, structure logique du cours) : ne réduis jamais la quantité ou la précision de l'information, seule la formulation doit changer." + (recitationRetries > 1 ? " Sois plus radical encore dans la reformulation que lors de la tentative précédente : change complètement l'angle d'explication si besoin." : "") + "]" }]);
-      }
-      var body = JSON.stringify({ contents: [{ role: "user", parts: requestParts }], generationConfig: generationConfig });
-      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
-      var res;
-      try {
-        res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
-      } catch (netErr) {
-        var timedOut = netErr && netErr.name === "AbortError";
-        lastErr = new Error(timedOut ? "Gemini n'a pas répondu à temps (60s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
-        lastErr.status = timedOut ? 408 : 0;
-        lastErr.detail = String(netErr);
-        continue;
-      }
-      if (res.ok) {
-        var data = await res.json();
-        if (data.promptFeedback && data.promptFeedback.blockReason) {
-          lastErr = new Error("Contenu bloqué par Gemini (" + data.promptFeedback.blockReason + ").");
-          lastErr.status = res.status;
-          lastErr.detail = JSON.stringify(data, null, 2);
-          continue;
-        }
-        var cand = data.candidates && data.candidates[0];
-        var candParts = cand && cand.content && cand.content.parts;
-        if (!candParts || !candParts[0]) {
-          // HTTP 200 mais réponse vide : Gemini a quand même refusé de générer (souvent finishReason
-          // RECITATION quand le texte source colle de trop près à une œuvre déjà indexée en ligne,
-          // typique d'une analyse littéraire connue). On tente un autre modèle avant d'abandonner.
-          var reason = cand && cand.finishReason;
-          var reasonLabels = {
-            RECITATION: "le contenu généré ressemblait de trop près à une œuvre déjà publiée en ligne (fréquent pour l'analyse d'une œuvre littéraire connue) et a été bloqué automatiquement",
-            SAFETY: "le contenu a été jugé sensible par les filtres de sécurité de Gemini",
-            PROHIBITED_CONTENT: "le contenu a été jugé non autorisé par Gemini",
-            BLOCKLIST: "le contenu contient des termes bloqués par Gemini",
-            SPII: "le contenu semblait contenir des informations personnelles sensibles",
-            OTHER: "Gemini a refusé de répondre pour une raison non précisée"
-          };
-          var reasonMsg = reason && reasonLabels[reason];
-          if (reason === "RECITATION") recitationRetries++;
-          lastErr = new Error(reasonMsg ? "Génération refusée par Gemini : " + reasonMsg + "." : "Réponse vide de l'API.");
-          lastErr.status = res.status;
-          lastErr.detail = JSON.stringify(data, null, 2);
-          continue;
-        }
-        return repairStrayLatexEscapes(JSON.parse(candParts[0].text));
-      }
-      var errBody = await res.json().catch(function () { return {}; });
-      var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
-      var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
-      if (res.status === 429) hadRateLimit = true;
-      lastErr = new Error(msg);
-      lastErr.status = res.status;
-      lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
-      if (!retryable) throw lastErr;
+      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries);
+      if (r.ok) return r.value;
+      lastErr = r.err;
+      if (r.rateLimit) hadRateLimit = true;
+      if (r.recitation) recitationRetries++;
+      if (!r.retryable) throw lastErr;
+    }
+    // Dernier recours spécifique au blocage RECITATION : la boucle ci-dessus finit sur flash-lite, le
+    // modèle le moins capable de reformuler intelligemment un contenu très indexé en ligne — on retente
+    // donc une dernière fois avec le modèle le PLUS capable (le premier de la liste) et la consigne de
+    // reformulation la plus insistante, plutôt que d'abandonner sur l'essai le plus faible.
+    if (recitationRetries > 0 && GEMINI_MODELS.length > 1) {
+      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1);
+      if (last.ok) return last.value;
+      lastErr = last.err;
     }
     var finalErr = lastErr || new Error("Erreur inconnue de l'API Gemini.");
     finalErr.rateLimited = hadRateLimit;
