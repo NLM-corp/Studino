@@ -251,6 +251,7 @@
   .color-swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--border-soft); cursor: pointer; padding: 0; flex: none; }
   .color-swatch:hover { transform: scale(1.08); }
   .color-swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+  .mobile-nav-toggle, .mobile-nav-close, .sidebar-backdrop { display: none; }
 
   .main { display: flex; flex-direction: column; min-width: 0; }
   .topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 3px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
@@ -412,6 +413,11 @@
   .prose-figure img { max-width: 100%; max-height: 420px; border: 2px solid var(--border-soft); border-radius: 10px; background: #fff; cursor: zoom-in; }
   .prose-figure figcaption { margin-top: 8px; font-size: 12.5px; color: var(--text-muted); font-style: italic; }
   .prose-figure-removed { max-width: 100%; margin: 14px 0; padding: 14px; text-align: center; border: 2px dashed var(--border-soft); border-radius: 10px; color: var(--text-muted); font-size: 12.5px; background: var(--surface-2); }
+  .prose-schema svg { max-width: 100%; height: auto; border-radius: 10px; border: 2px solid var(--border-soft); }
+  .prose-callout { max-width: 66ch; margin: 14px 0 18px; padding: 14px 18px; border: 2px solid var(--accent); border-left-width: 6px; border-radius: 8px; background: var(--accent-soft); }
+  .prose-callout p { margin: 0; color: var(--text); }
+  .prose-callout p + p { margin-top: 8px; }
+  .prose u { text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
   .course-figures-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .course-figure-item { border: 2px solid var(--border-soft); border-radius: 10px; padding: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; }
   .course-figure-item img { width: 100%; height: 90px; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: #fff; }
@@ -957,18 +963,29 @@
     .print-doc th, .print-doc td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
     .print-doc th { background: #eee; font-weight: 700; }
 
+    .print-doc-fiche, .print-doc-fiche * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .print-doc-fiche { font-family: 'Public Sans', Arial, sans-serif; }
-    .print-fiche-header { border-bottom: 3px solid #3E7A3F; margin-bottom: 22px; padding-bottom: 14px; }
-    .print-fiche-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #3E7A3F; font-weight: 700; margin-bottom: 6px; }
-    .print-doc-fiche h1 { font-size: 27px; margin: 0 0 4px; color: #1c2b16; }
-    .print-fiche-sub { font-size: 12px; color: #666; }
-    .print-fiche-body { font-size: 13.5px; line-height: 1.6; color: #222; }
-    .print-fiche-body h3 { font-size: 18px; margin: 24px 0 8px; color: #2c6e3f; border-bottom: 2px solid #d8e6d0; padding-bottom: 5px; break-after: avoid; }
-    .print-fiche-body h4 { font-size: 14.5px; margin: 16px 0 6px; color: #3a4a2f; break-after: avoid; }
+    .print-fiche-header { background: linear-gradient(135deg, var(--fiche-strong, #2c6e3f), var(--fiche-accent, #3E7A3F)); margin: -14px -14px 24px; padding: 20px 22px 16px; border-radius: 0 0 14px 14px; }
+    .print-fiche-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.85); font-weight: 700; margin-bottom: 6px; }
+    .print-doc-fiche h1 { font-size: 27px; margin: 0 0 4px; color: #fff; }
+    .print-fiche-sub { font-size: 12px; color: rgba(255,255,255,0.85); }
+    .print-fiche-body { font-size: 13.5px; line-height: 1.65; color: #222; }
+    .print-fiche-body h3 { font-size: 16px; margin: 26px 0 10px; padding: 7px 12px; color: #fff; background: var(--fiche-accent, #3E7A3F); border-radius: 6px; break-after: avoid; }
+    .print-fiche-body h3:first-child { margin-top: 0; }
+    .print-fiche-body h4 { font-size: 14px; margin: 16px 0 6px; color: var(--fiche-strong, #2c6e3f); border-left: 4px solid var(--fiche-accent, #8fc98f); padding-left: 8px; break-after: avoid; }
     .print-fiche-body ul { margin: 0 0 12px 20px; padding: 0; }
     .print-fiche-body li { margin-bottom: 5px; }
     .print-fiche-body p { margin: 0 0 10px; }
-    .print-fiche-body strong { color: #1c2b16; }
+    .print-fiche-body strong { color: #1c2b16; background: var(--fiche-soft, #eaf3e3); padding: 0 3px; border-radius: 3px; }
+    .print-fiche-body u { text-decoration-color: var(--fiche-accent, #3E7A3F); text-decoration-thickness: 2px; }
+    .print-fiche-body .prose-callout { border: 2px solid var(--fiche-accent, #3E7A3F); border-left-width: 6px; border-radius: 6px; background: var(--fiche-soft, #eef7ea); padding: 10px 14px; margin: 12px 0 16px; break-inside: avoid; }
+    .print-fiche-body .prose-callout p { margin: 0; color: #1c2b16; }
+    .print-fiche-body .prose-callout p + p { margin-top: 6px; }
+    .print-fiche-body .prose-schema { break-inside: avoid; margin: 14px 0; }
+    .print-fiche-body .prose-schema svg { max-width: 100%; max-height: 260px; border: 1px solid #ccc; border-radius: 6px; }
+    .print-fiche-body table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 12.5px; }
+    .print-fiche-body th, .print-fiche-body td { border: 1px solid #ccc; padding: 7px 9px; text-align: left; }
+    .print-fiche-body th { background: var(--fiche-soft, #dcecd4); font-weight: 700; color: #1c2b16; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -977,7 +994,29 @@
 
   @media (max-width: 780px) {
     .shell { grid-template-columns: 1fr; }
-    .sidebar { display: none; }
-    .content { padding: 18px; }
-    .topbar { padding: 14px 18px; }
+    /* Le menu devient un tiroir qui glisse depuis la gauche par-dessus le contenu (plutôt que
+       disparaître complètement, ce qui rendait Mes exercices/Dino Park/Dino Time/etc. injoignables
+       sur téléphone) : replié par défaut, ouvert via le bouton ☰ de la topbar. */
+    .sidebar {
+      position: fixed; top: 0; left: 0; height: 100vh; width: 78vw; max-width: 300px; z-index: 60;
+      transform: translateX(-100%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(0,0,0,0.3);
+    }
+    .sidebar.sidebar-open { transform: translateX(0); }
+    .mobile-nav-close { display: block; background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+    .sidebar-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 55; }
+    .mobile-nav-toggle { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: none; background: none; border: 2px solid var(--border-soft); border-radius: 8px; color: var(--text); font-size: 17px; cursor: pointer; }
+    .topbar { padding: 12px 14px; gap: 10px; }
+    .breadcrumb { font-size: 12px; }
+    .content { padding: 14px; }
+    /* Grilles de cartes : une seule colonne un peu plus dense plutôt que des cartes trop écrasées. */
+    .card-grid, .card-grid-signs-short, .dp-zone-grid, .dp-shop-grid, .dp-enclosure-grid, .dp-lab-grid, .dt-enc-grid { grid-template-columns: 1fr; }
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 420px) {
+    /* Très petit écran (téléphone en portrait serré) : resserre encore un peu plus pour garder le
+       maximum de contenu visible sans avoir à dézoomer soi-même. */
+    .content { padding: 10px; }
+    .topbar { padding: 10px; }
+    .btn { padding: 10px 12px; font-size: 13px; }
   }

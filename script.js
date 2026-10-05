@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "1.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "1.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -278,7 +278,7 @@
     return out;
   }
   function stripFigureMarkdown(text) {
-    return String(text || "").replace(/!\[[^\]]*\]\((?:data:[^)]+|figure:[^)]+)\)/g, "");
+    return String(text || "").replace(/!\[[^\]]*\]\((?:data:[^)]+|figure:[^)]+|schema:[^)]+)\)/g, "");
   }
   function stripOldInlineFigures(text) {
     // Migration one-shot uniquement : ne retire QUE l'ancien format (image encodée en base64
@@ -344,7 +344,7 @@
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
   // exercice importé par photo (où l'image existe déjà), rien ne garantit qu'un tel visuel existe
   // ailleurs. L'IA doit donc le dessiner elle-même en SVG plutôt que se contenter d'en parler.
-  var FIGURE_SVG_FIELD_DESC = "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe) REPRÉSENTANT RÉELLEMENT un support visuel qui sert de DONNÉE externe au problème (ce que l'élève lirait sur un document fourni en vrai examen), JAMAIS un support qui donnerait la réponse ou la connaissance que la question est censée vérifier. Règle absolue, à appliquer AVANT toute autre considération : si la question teste une connaissance à apprendre par cœur d'après le cours (une date, un événement, une formule, une définition, un résultat, un nom, une valeur numérique à retenir), figureSvg doit rester une chaîne VIDE, même si un support visuel existerait dans l'absolu — fournir ce support reviendrait à donner la réponse à la place de l'élève (ex. jamais de frise chronologique pour une question de date d'histoire, jamais la formule elle-même en image pour une question qui demande de connaître/appliquer une formule de cours, jamais une image qui contient le mot/la définition/le résultat attendu). En dehors de ce cas, fournis un SVG uniquement quand la question donne des valeurs numériques dont l'élève ne peut PAS trouver la correspondance par le calcul ou le raisonnement, mais seulement en lisant un repère externe non mémorisable au mot près (ex. : le spectre de la lumière visible avec ses bandes de couleur et longueurs d'onde en nm quand la question donne une longueur d'onde et demande une couleur, un graphique/une courbe donnés comme données du problème à lire, une figure géométrique dont les mesures/angles sont les données de l'énoncé, une carte ou un schéma de circuit donnés comme support). Chaîne vide dans tous les autres cas (la grande majorité). Le SVG doit être lisible seul (inclure un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs numériques précises), car il s'affiche tel quel, dans n'importe quel thème clair ou sombre.";
+  var FIGURE_SVG_FIELD_DESC = "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe) REPRÉSENTANT RÉELLEMENT un support visuel qui sert de DONNÉE externe au problème (ce que l'élève lirait sur un document fourni en vrai examen), JAMAIS un support qui donnerait la réponse ou la connaissance que la question est censée vérifier. Règle absolue, à appliquer AVANT toute autre considération : si la question teste une connaissance à apprendre par cœur d'après le cours (une date, un événement, une formule, une définition, un résultat, un nom, une valeur numérique à retenir), figureSvg doit rester une chaîne VIDE, même si un support visuel existerait dans l'absolu — fournir ce support reviendrait à donner la réponse à la place de l'élève (ex. jamais de frise chronologique pour une question de date d'histoire, jamais la formule elle-même en image pour une question qui demande de connaître/appliquer une formule de cours, jamais une image qui contient le mot/la définition/le résultat attendu). En dehors de ce cas, fournis un SVG uniquement quand la question donne des valeurs numériques dont l'élève ne peut PAS trouver la correspondance par le calcul ou le raisonnement, mais seulement en lisant un repère externe non mémorisable au mot près (ex. : le spectre de la lumière visible avec ses bandes de couleur et longueurs d'onde en nm quand la question donne une longueur d'onde et demande une couleur EN PARTICULIER, un graphique/une courbe donnés comme données du problème à lire, une figure géométrique dont les mesures/angles sont les données de l'énoncé, une carte ou un schéma de circuit donnés comme support). ATTENTION, piège fréquent : la seule présence d'une valeur en nanomètres (nm) ne justifie PAS à elle seule le spectre visible — une taille de virus/bactérie/cellule, une conversion d'unités, ou tout autre exercice qui ne demande explicitement AUCUNE couleur ne doit JAMAIS afficher ce spectre, même si les valeurs tombent dans la plage 400-700 nm. Chaîne vide dans tous les autres cas (la grande majorité). Le SVG doit être lisible seul (inclure un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs numériques précises), car il s'affiche tel quel, dans n'importe quel thème clair ou sombre.";
   var COURSE_SCHEMA = {
     type: "object",
     properties: {
@@ -685,9 +685,22 @@
   var REVISION_SHEET_SCHEMA = {
     type: "object",
     properties: {
-      content: { type: "string", description: "Fiche de révision complète en Markdown." }
+      content: { type: "string", description: "Fiche de révision complète en Markdown." },
+      schemas: {
+        type: "array",
+        description: "0 à 3 schémas/diagrammes qui aident vraiment à mémoriser ou comprendre une notion dense de cette fiche (ex. un cycle, une structure annotée, une frise chronologique, un schéma de circuit, une figure géométrique). N'en crée QUE si une vraie représentation visuelle apporte quelque chose qu'une liste ou un texte n'apporte pas — ne force jamais un schéma artificiel pour une notion purement textuelle. Contrairement à un exercice, rien n'est caché ici : une fiche de révision montre l'information complète sur le schéma (légendes, valeurs, noms), exactement comme un vrai schéma de cours.",
+        items: {
+          type: "object",
+          properties: {
+            caption: { type: "string", description: "Légende courte du schéma." },
+            placeholder: { type: "string", description: "Jeton unique au format [[schema:N]] (N = index de ce schéma dans ce tableau) à insérer tel quel, seul sur sa ligne, dans \"content\" à l'endroit exact où ce schéma doit apparaître." },
+            svg: { type: "string", description: "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe), avec un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs précises — il doit être lisible seul, affiché tel quel dans n'importe quel thème clair ou sombre." }
+          },
+          required: ["caption", "placeholder", "svg"]
+        }
+      }
     },
-    required: ["content"]
+    required: ["content", "schemas"]
   };
   function buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) {
     var sourceBlocks = courses.map(function (co) {
@@ -695,8 +708,14 @@
     }).join("\n\n");
     return "Tu es un assistant pédagogique pour un élève francophone. Voici " + (scope === "course" ? "le contenu retranscrit d'un cours" : "le contenu retranscrit de tous les cours d'un chapitre") + " intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article, site d'analyse littéraire, résumé de manuel, etc.), REFORMULE ce passage avec des mots différents en gardant strictement le même sens et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n\n" +
-      "Génère une fiche de révision ULTRA COMPLÈTE en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras) qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section avec des titres et sous-titres, prête à réviser juste avant un contrôle.\n\n" +
-      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
+      "Génère une fiche de révision ULTRA COMPLÈTE en Markdown qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section, prête à réviser juste avant un contrôle.\n\n" +
+      "Mise en forme — c'est important, une fiche doit avoir l'allure d'une vraie fiche de révision d'élève, pas d'un texte plat et froid :\n" +
+      "- ## et ### pour les titres de section/sous-section (varie les sous-sections, ne mets pas tout au même niveau).\n" +
+      "- ** pour mettre en gras les termes clés à chaque première apparition.\n" +
+      "- __ (double underscore, ex. __terme__) pour souligner un mot ou un chiffre vraiment critique (une date, une unité, un résultat) — à utiliser avec parcimonie, seulement pour ce qui doit sauter aux yeux, jamais pour un paragraphe entier.\n" +
+      "- > (chevron en début de ligne, comme une citation Markdown) pour ENCADRER dans un bloc à part LA chose la plus importante de chaque section à retenir par cœur — une formule clé, une définition centrale, un piège fréquent (\"Attention à ne pas confondre...\"). Un encadré par section max, réservé à ce qui mérite vraiment de ressortir visuellement, jamais pour du contenu secondaire.\n" +
+      "- Des listes à puces (-) pour énumérer, jamais de longs paragraphes denses quand une liste serait plus lisible.\n\n" +
+      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) ou le soulignement (__) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si le contenu source comporte un tableau (ou si organiser une notion sous forme de tableau serait plus clair), utilise un vrai tableau Markdown, avec EXACTEMENT ce format (jamais de liste à puces à la place) :\n" +
       "| Colonne 1 | Colonne 2 |\n" +
       "|---|---|\n" +
@@ -714,7 +733,16 @@
     sheet.error = null;
     saveDB(); render();
     generateRevisionSheetContent(courses, sheet.title, subjectName, chapterName, sheet.scope).then(function (data) {
-      sheet.content = data.content;
+      var content = data.content || "";
+      var schemas = [];
+      (data.schemas || []).forEach(function (sc) {
+        if (!sc.placeholder || !sc.svg) return;
+        var sid = uid();
+        schemas.push({ id: sid, svg: sc.svg, caption: sc.caption || "" });
+        content = content.split(sc.placeholder).join("![" + String(sc.caption || "").replace(/[[\]]/g, "") + "](schema:" + sid + ")");
+      });
+      sheet.content = content;
+      sheet.schemas = schemas;
       sheet.status = "ready";
       saveDB();
       toast("Fiche générée · " + sheet.title);
@@ -1803,6 +1831,7 @@
 
   /* ---------------- Router state ---------------- */
   var modal = null; // { type: 'subject'|'chapter'|'course'|'confirmDelete'|'dinoFiche', ... }
+  var mobileNavOpen = false; // écran étroit : le menu latéral est un tiroir replié par défaut, ouvert via le bouton ☰ de la topbar
   var dpMerchantZone = null; // zoneId of the currently open full-screen merchant, or null
   var dpMerchantMode = "eggs"; // "eggs" | "objects"
   var dpSellMode = false;
@@ -3472,23 +3501,25 @@
     var user = DB.currentUser;
     var theme = document.documentElement.getAttribute("data-app-theme") || "light";
     var html = '<div class="shell">' +
-      '<aside class="sidebar">' +
+      '<aside class="sidebar' + (mobileNavOpen ? " sidebar-open" : "") + '">' +
       '<div class="sidebar-top"><div class="wordmark" style="font-size:13px"><img src="assets/objects/ui/DinoPark.png" alt="" style="width:20px;height:20px;object-fit:contain;margin-right:4px;vertical-align:-4px;">Studino<span class="dot">.</span></div>' +
-      '<button class="icon-btn" title="Nouvelle matière" onclick="App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
+      '<button class="icon-btn" title="Nouvelle matière" onclick="App.closeMobileNav();App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
+      '<button class="mobile-nav-close" onclick="App.toggleMobileNav()" aria-label="Fermer le menu">✕</button>' +
       '</div>' +
-      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/Menu.png" alt=""> Menu</button>' +
-      '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="location.hash=\'#/exercices\'"><img class="nav-icon-img" src="assets/objects/ui/MesExos.png" alt=""> Mes exercices</button>' +
-      '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
-      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
-      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
-      '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="location.hash=\'#/methodologies\'">' + icon("book") + ' Méthodologie</button>' +
+      '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/Menu.png" alt=""> Menu</button>' +
+      '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/exercices\'"><img class="nav-icon-img" src="assets/objects/ui/MesExos.png" alt=""> Mes exercices</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.closeMobileNav();App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
+      '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.closeMobileNav();App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
+      '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
+      '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'">' + icon("book") + ' Méthodologie</button>' +
       '<div class="sidebar-bottom">' +
-      '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
+      '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeMobileNav();App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
       '</div>' +
       '</aside>' +
+      (mobileNavOpen ? '<div class="sidebar-backdrop" onclick="App.toggleMobileNav()"></div>' : '') +
       '<div class="main">' +
-      '<div class="topbar"><div class="breadcrumb">' + renderBreadcrumb(parts) + '</div>' + (parts[0] === "dinopark" ? '<div class="topbar-points mono">🪙 <span class="dp-points-value">' + dpData().points + '</span></div>' : '') + '</div>' +
+      '<div class="topbar"><button class="mobile-nav-toggle" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="breadcrumb">' + renderBreadcrumb(parts) + '</div>' + (parts[0] === "dinopark" ? '<div class="topbar-points mono">🪙 <span class="dp-points-value">' + dpData().points + '</span></div>' : '') + '</div>' +
       '<div class="content' + (opts.narrow ? " content-narrow" : "") + '">' + contentHtml + '</div>' +
       '</div></div>';
     document.getElementById("app").innerHTML = html;
@@ -4038,7 +4069,7 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      body = '<div class="prose">' + mdToHtml(sheet.content) + '</div>' + exerciseFigureHtml({ prompt: sheet.content });
+      body = '<div class="prose">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' + exerciseFigureHtml({ prompt: sheet.content });
     }
     renderShell(["revision", sheetId], head + body, { narrow: true });
   }
@@ -4370,9 +4401,25 @@
     // ligne. On extrait donc TOUTES les formules sur le texte entier (avant de couper en lignes) et
     // on les remplace par un jeton mono-ligne, substitué par le vrai chip KaTeX à la toute fin.
     var chips = [];
-    var text = String(md || "").replace(/\$\$([^$]+?)\$\$|\$([^$]+?)\$/g, function (m, block, inline) {
+    var text = String(md || "").replace(/\$\$([^$]+?)\$\$|\$([^$]+?)\$/g, function (m2, block, inline) {
       chips.push((block !== undefined ? block : inline).trim());
       return "" + (chips.length - 1) + "";
+    });
+    // Filet de secours : il arrive que Gemini écrive une commande LaTeX isolée (ex. "\mu m") sans la
+    // mettre entre $...$ comme demandé — sans ça, elle reste affichée telle quelle en texte brut
+    // ("\mu") au lieu d'être rendue. Toute commande \xxx restante à ce stade (les vraies formules
+    // $...$ ont déjà été extraites juste au-dessus) est forcément une commande orpheline : on la rend
+    // aussi, dans son propre chip.
+    text = text.replace(/\\[a-zA-Z]+(?:\{[^{}]*\})*/g, function (m3) {
+      chips.push(m3);
+      return "\x02" + (chips.length - 1) + "\x02";
+    });
+    // Même filet pour une puissance de 10 écrite hors $...$ (ex. "10^{-9}", très fréquent dans les
+    // conversions d'unités pico/nano/micro...) : sans ça, l'exposant s'affiche tel quel ("^{-9}") au
+    // lieu d'être mis en exposant. On couvre aussi un multiplicateur juste devant (ex. "2,5 × 10^{-7}").
+    text = text.replace(/(?:[0-9]+(?:[.,][0-9]+)?\s*[×x*]\s*)?[0-9]+(?:[.,][0-9]+)?\s*\^\s*\{[^{}]*\}/g, function (m4) {
+      chips.push(m4.replace(/\s*\^\s*/, "^").replace(/[×x*]/, "\\times"));
+      return "\x02" + (chips.length - 1) + "\x02";
     });
     return { text: text, chips: chips };
   }
@@ -4408,6 +4455,7 @@
       if (imgLine) {
         if (inList) { html += "</ul>"; inList = false; }
         var figRef = /^figure:(.+)$/.exec(imgLine[2]);
+        var schemaRef = /^schema:(.+)$/.exec(imgLine[2]);
         if (figRef) {
           var refFig = (figures || []).find(function (f) { return f.id === figRef[1]; });
           if (refFig) {
@@ -4415,9 +4463,25 @@
           } else {
             html += '<div class="prose-figure-removed">🚫 Schéma supprimé pour libérer de l\'espace' + (imgLine[1] ? " — " + esc(imgLine[1]) : "") + '</div>';
           }
+        } else if (schemaRef) {
+          // Schéma dessiné directement par l'IA (pas une photo recadrée) : le SVG complet est stocké
+          // tel quel, inséré inline plutôt que via <img src>.
+          var refSchema = (figures || []).find(function (f) { return f.id === schemaRef[1]; });
+          if (refSchema) {
+            html += '<figure class="prose-figure prose-schema">' + refSchema.svg + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+          }
         } else {
           html += '<figure class="prose-figure"><img src="' + imgLine[2] + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
         }
+      }
+      else if (/^>\s?/.test(line.trim()) && line.trim() !== ">") {
+        // Bloc encadré ("> ..." consécutifs) pour mettre en valeur une définition/formule/mise en garde
+        // importante — beaucoup plus lisible qu'un mur de texte uniforme sur une fiche de révision.
+        if (inList) { html += "</ul>"; inList = false; }
+        var quoteLines = [];
+        while (i < lines.length && /^>\s?/.test(lines[i].trim())) { quoteLines.push(lines[i].trim().replace(/^>\s?/, "")); i++; }
+        i--;
+        html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMd(l) + "</p>"; }).join("") + '</div>';
       }
       else if (/^#{2,6}\s*/.test(line.trim())) {
         if (inList) { html += "</ul>"; inList = false; }
@@ -4441,6 +4505,7 @@
     s = esc(s);
     s = s.replace(//g, "<br>");
     s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__(.+?)__/g, "<u>$1</u>");
     return s;
   }
   function inlineMd(s) {
@@ -5059,14 +5124,29 @@
       '<h2>Solution de référence</h2><div class="print-block">' + solutionHtml + '</div>' +
       '</div>';
   }
+  // Mêmes teintes "claires" que la palette de couleur de l'appli (voir style.css, data-app-color),
+  // reprises ici tel quel pour que le PDF imprimé (toujours sur fond blanc, quel que soit le mode
+  // sombre/clair actuel) corresponde à la couleur choisie par l'élève plutôt qu'un vert fixe.
+  var PRINT_HUE_COLORS = {
+    vert: { accent: "#4C8C4A", strong: "#3A7038", soft: "#D7ECC9" },
+    bleu: { accent: "#2F7FC1", strong: "#25659C", soft: "#D3E7F7" },
+    jaune: { accent: "#D9A51B", strong: "#B38613", soft: "#F7E7B0" },
+    rose: { accent: "#D44C80", strong: "#B13566", soft: "#F8D3E3" },
+    violet: { accent: "#7A4FC4", strong: "#6238A3", soft: "#E4DAF7" },
+    rouge: { accent: "#D14B35", strong: "#AC3522", soft: "#F8D2C7" },
+    orange: { accent: "#E8862B", strong: "#C56A18", soft: "#FBE4C0" }
+  };
   function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
-    return '<div class="print-doc print-doc-fiche">' +
+    var hue = document.documentElement.getAttribute("data-app-color") || "vert";
+    var hc = PRINT_HUE_COLORS[hue] || PRINT_HUE_COLORS.vert;
+    var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + '"';
+    return '<div class="print-doc print-doc-fiche" ' + hueStyle + '>' +
       '<div class="print-fiche-header">' +
       '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
       '<h1>' + esc(sheet.title) + '</h1>' +
       '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
       '</div>' +
-      '<div class="print-fiche-body">' + mdToHtml(sheet.content) + '</div>' +
+      '<div class="print-fiche-body">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' +
       '</div>';
   }
   function printAndDownload(html) {
@@ -5703,6 +5783,8 @@
       }
     },
     logout: function () { DB.currentUser = null; saveDB(); navigate("#/"); },
+    toggleMobileNav: function () { mobileNavOpen = !mobileNavOpen; render(); },
+    closeMobileNav: function () { mobileNavOpen = false; },
     toggleTheme: function () {
       var html = document.documentElement;
       var cur = html.getAttribute("data-app-theme");
@@ -6258,7 +6340,7 @@
       }
       var sheet = {
         id: uid(), title: title, scope: m.scope, subjectId: subj.id, themeId: theme.id, chapterId: chap.id, courseId: m.scope === "course" ? m.courseId : null,
-        content: "", status: "processing", error: null, errorStatus: null, errorDetail: null, createdAt: Date.now()
+        content: "", schemas: [], status: "processing", error: null, errorStatus: null, errorDetail: null, createdAt: Date.now()
       };
       userData().revisionSheets.push(sheet);
       saveDB();
