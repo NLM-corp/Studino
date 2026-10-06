@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "1.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "2.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -245,6 +245,40 @@
       return canvas.toDataURL("image/jpeg", 0.88);
     });
   }
+  var FIGURE_REFINE_SCHEMA = {
+    type: "object",
+    properties: {
+      boxes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer", description: "Index du schéma dans la liste fournie (à partir de 0)." },
+            found: { type: "boolean", description: "false si ce schéma n'est en réalité PAS présent sur cette image (erreur de la détection précédente) — dans ce cas ignore \"box\"." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone rectangulaire CORRIGÉE [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000 (0,0 = coin haut-gauche de CETTE image, 1000,1000 = coin bas-droit), qui encadre EXACTEMENT ce schéma, sans texte alentour ni morceau d'un autre schéma/tableau voisin. Si found=false, renvoie [0,0,0,0]." }
+          },
+          required: ["index", "found", "box"]
+        }
+      }
+    },
+    required: ["boxes"]
+  };
+  function buildFigureRefinePrompt(figsOnThisImage) {
+    var list = figsOnThisImage.map(function (f, i) { return i + ". " + (f.caption || "(sans légende)"); }).join("\n");
+    return "Voici UNE SEULE image (une page/photo de cours). Une première passe moins précise pense qu'elle contient les schémas/graphiques suivants :\n" + list + "\n\n" +
+      "Pour CHAQUE schéma de cette liste, regarde attentivement CETTE image précise et donne la zone rectangulaire qui l'encadre le plus exactement possible, au format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant tout texte alentour et tout élément d'un AUTRE schéma ou tableau voisin — ne prends surtout pas un morceau de texte ou une zone vide par erreur. Si un schéma de la liste n'est en fait PAS présent sur cette image précise (erreur de la passe précédente), mets \"found\": false pour lui plutôt que d'inventer une zone approximative.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  // Seconde passe dédiée, UNE image à la fois : la détection initiale des schémas se fait en même
+  // temps que toute la retranscription/le quiz/les exercices sur PLUSIEURS photos à la fois, ce qui
+  // laisse peu d'attention pour des coordonnées de zone précises — en pratique ça donne parfois des
+  // découpages n'importe où (un bout de texte, un autre schéma, une zone vide). Montrer à l'IA UNE
+  // seule image avec juste la liste des schémas à y retrouver améliore nettement la précision, sans
+  // bloquer la génération si cet appel échoue (on garde alors la zone d'origine).
+  function refineImageFigureBoxes(src, figsOnThisImage) {
+    var parts = geminiImageParts([src]).concat([{ text: buildFigureRefinePrompt(figsOnThisImage) }]);
+    return callGemini(parts, FIGURE_REFINE_SCHEMA).catch(function () { return null; });
+  }
   function resolveFigures(figures, images) {
     // Chaque figure détectée est croquée depuis la photo source puis stockée à part (course.figures /
     // entry.figures), référencée dans le texte par un simple jeton "figure:ID" plutôt que par son
@@ -252,11 +286,30 @@
     // une image plus tard (bouton "Supprimer" dédié) sans devoir toucher au texte du cours/exercice :
     // la référence reste, elle affiche juste "schéma supprimé" une fois l'entrée retirée de la liste.
     var list = figures || [];
-    return Promise.all(list.map(function (fig) {
-      var src = images[fig.imageIndex];
-      if (!src || isPdfDataUrl(src) || !Array.isArray(fig.box) || fig.box.length !== 4) return Promise.resolve(null);
-      return cropImageRegion(src, fig.box).catch(function () { return null; });
-    })).then(function (crops) {
+    var byImage = {};
+    list.forEach(function (fig, i) { (byImage[fig.imageIndex] = byImage[fig.imageIndex] || []).push(i); });
+    var refinePerImage = Object.keys(byImage).map(function (idxStr) {
+      var idx = +idxStr;
+      var src = images[idx];
+      if (!src || isPdfDataUrl(src)) return Promise.resolve();
+      var idxList = byImage[idx];
+      return refineImageFigureBoxes(src, idxList.map(function (i) { return list[i]; })).then(function (data) {
+        if (!data || !data.boxes) return;
+        data.boxes.forEach(function (b) {
+          var fig = list[idxList[b.index]];
+          if (!fig) return;
+          if (!b.found) { fig.box = null; }
+          else if (Array.isArray(b.box) && b.box.length === 4) { fig.box = b.box; }
+        });
+      });
+    });
+    return Promise.all(refinePerImage).then(function () {
+      return Promise.all(list.map(function (fig) {
+        var src = images[fig.imageIndex];
+        if (!src || isPdfDataUrl(src) || !Array.isArray(fig.box) || fig.box.length !== 4) return Promise.resolve(null);
+        return cropImageRegion(src, fig.box).catch(function () { return null; });
+      }));
+    }).then(function (crops) {
       var subs = [], stored = [];
       list.forEach(function (fig, i) {
         var cropUrl = crops[i];
@@ -3647,7 +3700,8 @@
         { left: "\\(", right: "\\)", display: false }
       ],
       throwOnError: false,
-      macros: KATEX_NO_COLOR_MACROS
+      macros: KATEX_NO_COLOR_MACROS,
+      preProcess: repairLatexForKatex
     });
   }
 
@@ -4896,7 +4950,17 @@
       var childText = rteExtractText(child);
       if (child.tagName === "TD") { out += childText + "\t"; return; }
       if (child.tagName === "TR") { out += childText + "\n"; return; }
-      out += (child.tagName === "DIV" || child.tagName === "P") ? childText + "\n" : childText;
+      if (child.tagName === "DIV" || child.tagName === "P") {
+        // La toute première ligne tapée dans un éditeur vide reste souvent un simple nœud texte SANS
+        // wrapper (seules les lignes suivantes, créées par Entrée, sont de vraies <div>) : sans ce
+        // garde-fou, "mot1" (texte brut) suivi de "<div>mot2</div>" perdait le saut de ligne entre les
+        // deux et les collait en "mot1mot2" aux yeux de l'IA qui corrige, même si l'élève avait bien
+        // tapé chaque mot sur sa propre ligne.
+        if (out && !/\n$/.test(out)) out += "\n";
+        out += childText + "\n";
+        return;
+      }
+      out += childText;
     });
     return out;
   }
@@ -4906,9 +4970,40 @@
   }
 
   /* ---------------- LaTeX formula picker (MathLive) ---------------- */
+  // Répare les motifs les plus fréquents qui font échouer KaTeX sans que ce soit une vraie erreur de
+  // fond (ex. "\,^{\circ}C" pour "°C" : une commande d'espacement juste avant un exposant n'a pas de
+  // "base" valide à côté de laquelle s'accrocher, donc KaTeX refuse TOUTE la formule). Un groupe vide
+  // {} juste avant répare ça sans rien changer visuellement.
+  function repairLatexForKatex(s) {
+    s = String(s || "");
+    s = s.replace(/(\\[,;:! ])(\^|_)/g, "$1{}$2");
+    s = s.replace(/^(\^|_)/, "{}$1");
+    return s;
+  }
+  // Dernier recours si même après réparation KaTeX refuse toujours la formule : plutôt que son texte
+  // d'erreur rouge illisible par défaut, on affiche une version texte simple mais lisible (symboles
+  // les plus courants convertis à la main, le reste des commandes juste retirées).
+  var LATEX_PLAIN_SYMBOLS = {
+    circ: "°", times: "×", cdot: "·", pm: "±", mp: "∓", div: "÷",
+    mu: "μ", pi: "π", infty: "∞", leq: "≤", geq: "≥", neq: "≠", approx: "≈",
+    rightarrow: "→", leftarrow: "←", Rightarrow: "⇒", sqrt: "√",
+    Delta: "Δ", delta: "δ", alpha: "α", beta: "β", gamma: "γ", theta: "θ",
+    lambda: "λ", sigma: "σ", Omega: "Ω", omega: "ω"
+  };
+  function latexToPlainFallback(s) {
+    s = String(s || "");
+    s = s.replace(/\\(?:text|mathrm|mathbf|operatorname)\{([^{}]*)\}/g, "$1");
+    s = s.replace(/\\([a-zA-Z]+)/g, function (m, cmd) { return LATEX_PLAIN_SYMBOLS[cmd] !== undefined ? LATEX_PLAIN_SYMBOLS[cmd] : ""; });
+    s = s.replace(/[{}]/g, "");
+    return s.replace(/\s+/g, " ").trim();
+  }
   function katexRenderSafe(latex) {
-    try { return window.katex ? window.katex.renderToString(latex, { throwOnError: false, macros: KATEX_NO_COLOR_MACROS }) : esc("$" + latex + "$"); }
-    catch (e) { return esc("$" + latex + "$"); }
+    if (!window.katex) return esc("$" + latex + "$");
+    try {
+      return window.katex.renderToString(repairLatexForKatex(latex), { throwOnError: true, macros: KATEX_NO_COLOR_MACROS });
+    } catch (e) {
+      return '<span class="math-fallback">' + esc(latexToPlainFallback(latex)) + '</span>';
+    }
   }
   function mathChipHtml(latex) {
     var zeroWidthSpace = String.fromCharCode(8203);
@@ -7183,7 +7278,7 @@
     dpStartCourseQuiz: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
-      var pool = (loc.course.quizQuestions || []).slice();
+      var pnnool = (loc.course.quizQuestions || []).slice();
       for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
       dpView.quiz = { mode: "questions", courseId: courseId, questions: pool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, totalEarned: 0, answeredCount: 0, history: [], done: false };
       render();
