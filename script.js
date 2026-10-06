@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "2.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "2.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4549,7 +4549,7 @@
       else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
     }
     if (inList) html += "</ul>";
-    html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx]); });
+    html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx] || ""); });
     return html;
   }
   function inlineMdPlain(s) {
@@ -4570,7 +4570,7 @@
     // puissance de 10 hors $...$) plutôt que de dupliquer une extraction $...$ plus basique ici.
     var extracted = mdExtractMath(s);
     var out = inlineMdPlain(extracted.text);
-    out = out.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx]); });
+    out = out.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx] || ""); });
     return out;
   }
 
@@ -5004,7 +5004,12 @@
   }
   function mathChipHtml(latex) {
     var zeroWidthSpace = String.fromCharCode(8203);
-    return '<span class="math-chip" contenteditable="false" data-latex="' + esc(latex) + '" title="Cliquer pour modifier" onclick="App.editLatexChip(this)">' + katexRenderSafe(latex) + '</span>' + zeroWidthSpace;
+    var rendered = katexRenderSafe(latex);
+    // Filet de sécurité ultime : un élève ne doit JAMAIS voir un simple blanc à la place d'une
+    // formule (ni même le fallback texte, s'il finissait lui-même vide pour un cas limite non
+    // prévu) — dans ce cas précis seulement, on retombe sur la source brute échappée.
+    if (!String(rendered || "").replace(/<[^>]*>/g, "").trim()) rendered = esc(String(latex || ""));
+    return '<span class="math-chip" contenteditable="false" data-latex="' + esc(latex) + '" title="Cliquer pour modifier" onclick="App.editLatexChip(this)">' + rendered + '</span>' + zeroWidthSpace;
   }
 
   /* ---------------- Figures dessinées par l'IA (SVG) ---------------- */
