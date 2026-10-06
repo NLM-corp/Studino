@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "2.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "2.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3116,7 +3116,7 @@
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(q.answer) + '</strong></p>';
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + inlineMd(q.answer) + '</strong></p>';
     }
 
     if (qz.revealed && qz.wasCorrect != null) {
@@ -4266,7 +4266,7 @@
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + esc(item.answer) + '</strong></p>';
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + inlineMd(item.answer) + '</strong></p>';
     }
     if (s.revealed && s.wasCorrect != null) {
       var slvl = s.level || (s.wasCorrect ? "correct" : "wrong");
@@ -4459,12 +4459,13 @@
       chips.push((block !== undefined ? block : inline).trim());
       return "" + (chips.length - 1) + "";
     });
-    // Filet de secours : il arrive que Gemini écrive une commande LaTeX isolée (ex. "\mu m") sans la
-    // mettre entre $...$ comme demandé — sans ça, elle reste affichée telle quelle en texte brut
-    // ("\mu") au lieu d'être rendue. Toute commande \xxx restante à ce stade (les vraies formules
-    // $...$ ont déjà été extraites juste au-dessus) est forcément une commande orpheline : on la rend
-    // aussi, dans son propre chip.
-    text = text.replace(/\\[a-zA-Z]+(?:\{[^{}]*\})*/g, function (m3) {
+    // Filet de secours : il arrive que Gemini écrive une commande LaTeX isolée (ex. "\mu m", parfois
+    // même collée à la lettre suivante en "\mum") sans la mettre entre $...$ comme demandé — sans ça,
+    // elle reste affichée telle quelle en texte brut au lieu d'être rendue. On reconnaît une liste de
+    // commandes COURTES ET CONNUES précisément (pas un "\xxx" générique quelconque) : un "+" générique
+    // capturerait "mum" en entier dans "\mum" au lieu de couper juste après "\mu", collant alors "m" au
+    // symbole au lieu de le laisser en texte normal juste après.
+    text = text.replace(/\\(?:mu|pi|circ|times|cdot|pm|mp|div|infty|leq|geq|neq|approx|rightarrow|leftarrow|Rightarrow|sqrt|Delta|delta|alpha|beta|gamma|theta|lambda|sigma|Omega|omega|text|mathrm|mathbf|operatorname)(?:\{[^{}]*\})*/g, function (m3) {
       chips.push(m3);
       return "\x02" + (chips.length - 1) + "\x02";
     });
@@ -4564,16 +4565,12 @@
   }
   function inlineMd(s) {
     // render $...$/$$...$$ as real math-chips (not left as raw text for the global KaTeX
-    // auto-render pass) so any copy-paste of this content keeps the formula's LaTeX source
-    var out = "";
-    var re = /\$\$([^$]+?)\$\$|\$([^$]+?)\$/g;
-    var last = 0, m;
-    while ((m = re.exec(s))) {
-      out += inlineMdPlain(s.slice(last, m.index));
-      out += mathChipHtml((m[1] !== undefined ? m[1] : m[2]).trim());
-      last = re.lastIndex;
-    }
-    out += inlineMdPlain(s.slice(last));
+    // auto-render pass) so any copy-paste of this content keeps the formula's LaTeX source.
+    // Réutilise mdExtractMath (même filet de secours pour une commande LaTeX orpheline ou une
+    // puissance de 10 hors $...$) plutôt que de dupliquer une extraction $...$ plus basique ici.
+    var extracted = mdExtractMath(s);
+    var out = inlineMdPlain(extracted.text);
+    out = out.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx]); });
     return out;
   }
 
