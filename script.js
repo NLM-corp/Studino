@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4934,7 +4934,14 @@
   }
 
   function mdIsTableSep(line) {
-    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+    var core = line.trim();
+    // Tolère un caractère parasite isolé en fin de ligne (ex. "|---|---|>" — un ">" de citation
+    // Markdown qui a fui par erreur dans la ligne de séparation d'un tableau généré par l'IA) : sans
+    // ça, la ligne entière était prise pour une vraie ligne de données et affichée telle quelle
+    // ("---", "---", ">"), créant une fausse colonne à droite du tableau.
+    if (core && !/[|:-]/.test(core.charAt(core.length - 1))) core = core.slice(0, -1).trim();
+    if (core && !/[|:-]/.test(core.charAt(0))) core = core.slice(1).trim();
+    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(core);
   }
   function mdPipeCount(line) {
     var m = line.match(/\|/g);
@@ -5004,7 +5011,11 @@
         i--;
         continue;
       }
-      var imgLine = /^!\[([^\]]*)\]\((\S+)\)\s*$/.exec(line.trim());
+      // Tolère un caractère de ponctuation parasite juste après la parenthèse fermante (ex. un point
+      // final de phrase que l'IA a collé par habitude à "![légende](schema:id)."), sans quoi la ligne
+      // entière n'était plus reconnue comme une image et s'affichait en syntaxe Markdown brute au lieu
+      // du schéma/de la figure réels.
+      var imgLine = /^!\[([^\]]*)\]\((\S+)\)[.,;:]?\s*$/.exec(line.trim());
       if (imgLine) {
         if (inList) { html += "</ul>"; inList = false; }
         var figRef = /^figure:(.+)$/.exec(imgLine[2]);
@@ -5044,6 +5055,10 @@
       }
       else if (/^-\s+/.test(line.trim())) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMdPlain(line.trim().replace(/^-\s+/, "")) + "</li>"; }
       else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
+      // Un ">" tout seul sur sa ligne est un résidu de syntaxe de citation (ex. une ligne de
+      // séparation de tableau contaminée — voir mdIsTableSep) qui n'apporte rien à l'élève : on
+      // l'ignore silencieusement comme une ligne vide plutôt que de l'afficher tel quel.
+      else if (line.trim() === ">") { if (inList) { html += "</ul>"; inList = false; } }
       else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMdPlain(line) + "</p>"; }
     }
     if (inList) html += "</ul>";
