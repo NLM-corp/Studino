@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -833,7 +833,7 @@
     properties: {
       parts: {
         type: "array",
-        description: "Un élément par partie demandée (voir consigne pour le nombre exact). Si une seule partie est demandée, ce tableau contient un seul élément qui couvre tout le contenu.",
+        description: "Toi seul décides du nombre d'éléments (voir consigne : un seul si le contenu est raisonnable, plusieurs si le contenu est riche) — jamais imposé par l'élève.",
         items: {
           type: "object",
           properties: {
@@ -846,23 +846,23 @@
     },
     required: ["parts"]
   };
-  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, partCount) {
-    return "Tu es un vieux conteur chevronné, un grand-père passionné qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + (scopeLevel === "theme" ? "thème" : "chapitre") + " : " + scopeName + ") à partir duquel tu dois créer " + (partCount > 1 ? "un podcast en EXACTEMENT " + partCount + " parties" : "un podcast en une seule partie") + ".\n\n" +
+  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content) {
+    return "Tu es un vieux conteur chevronné, un grand-père passionné qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + (scopeLevel === "theme" ? "thème" : "chapitre") + " : " + scopeName + ") à partir duquel tu dois créer ce podcast.\n\n" +
       "Règles absolues :\n" +
       "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
       "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
       "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
-      "- DURÉE, règle STRICTE : chaque partie doit faire AU MINIMUM 1600 mots (à l'oral, ça représente environ 10 à 12 minutes) — ce n'est pas un objectif approximatif, c'est un plancher à respecter absolument, et il n'y a pas de maximum si le sujet le justifie. Si le contenu du cours semble court pour ça, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
-      (partCount > 1 ? "- Découpe le contenu en EXACTEMENT " + partCount + " parties cohérentes et complémentaires (par grands thèmes/sections du cours), sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies. Le minimum de 1600 mots ci-dessus s'applique à CHAQUE partie individuellement, pas au total réparti entre elles.\n" : "") +
+      "- DURÉE par partie, règle STRICTE : entre 1600 et 3500 mots (à l'oral, environ 10 à 22 minutes) — jamais en dessous de 1600. Si le contenu du cours semble court pour ça, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
+      "- NOMBRE DE PARTIES : C'EST TOI QUI DÉCIDES, pas l'élève. Regarde la quantité réelle de contenu à couvrir : si tout tient confortablement dans UNE SEULE partie de 1600 à 3500 mots en couvrant vraiment tout en profondeur, fais UNE SEULE partie — ne découpe JAMAIS artificiellement juste pour faire plusieurs parties. Si en revanche le contenu est si riche qu'une seule partie dépasserait largement 3500 mots pour tout couvrir en profondeur, découpe en plusieurs parties cohérentes (par grands thèmes/sections), chacune respectant elle-même la fourchette de 1600 à 3500 mots, sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies.\n" +
       "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
-      "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie.\n" +
+      "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie (ou du podcast entier s'il n'y a qu'une seule partie).\n" +
       "- INTERDIT ABSOLU : aucune notation LaTeX, aucun symbole mathématique brut ($, ^, _, \\frac, °, %, =, ×...) ni aucune abréviation qui se prononcerait mal lue telle quelle — une synthèse vocale va lire ce texte MOT POUR MOT. Écris TOUT en toutes lettres, exactement comme un professeur le dirait à voix haute : \"2^3\" devient \"deux puissance trois\", \"H2O\" devient \"H deux O\" dit \"aitch deux o\" ou plus naturellement \"eau\", \"50%\" devient \"cinquante pour cent\", \"20°C\" devient \"vingt degrés Celsius\", \"=\" devient \"égale\", une fraction \"3/4\" devient \"trois quarts\". Fais cette conversion pour CHAQUE formule, unité ou nombre technique du cours, sans exception.\n" +
       "- Respecte une orthographe française irréprochable, avec tous les accents nécessaires (é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal accentué.\n\n" +
       "Voici le cours :\n\n" + content + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, partCount) {
-    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, partCount) }];
+  function generatePodcastScript(subjectName, scopeName, scopeLevel, content) {
+    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content) }];
     return callGemini(parts, PODCAST_SCRIPT_SCHEMA);
   }
 
@@ -992,26 +992,46 @@
       a.src = url;
     });
   }
-  // Génère les N parties d'un coup (un seul appel texte), PUIS l'audio de chaque partie l'une après
-  // l'autre (pas en parallèle, pour rester raisonnable côté quota) — chaque partie passe "ready" dès
-  // que SON audio est prêt, sans attendre les autres, pour que l'élève puisse déjà écouter la première.
-  function runPodcastGeneration(podcasts, subjectName, scopeName, content, partCount) {
-    podcasts.forEach(function (p) { p.status = "processing"; });
+  // C'est l'IA qui décide du nombre de parties (voir buildPodcastScriptPrompt), pas l'élève — on ne
+  // sait donc PAS combien il y en aura avant d'avoir la réponse. "podcast" est la SEULE entrée déjà
+  // créée/affichée (part 1 par défaut) ; si l'IA renvoie plusieurs parties, les suivantes sont créées
+  // ici dynamiquement et ajoutées à la bibliothèque. L'audio de chaque partie se génère ensuite l'une
+  // après l'autre (pas en parallèle, pour rester raisonnable côté quota) — chaque partie passe "ready"
+  // dès que SON audio est prêt, sans attendre les autres.
+  function runPodcastGeneration(podcast, subjectName, scopeName, content) {
+    podcast.status = "processing";
     saveDB(); render();
-    var scopeLevel = (podcasts[0] && podcasts[0].scopeLevel) || "chapter";
-    generatePodcastScript(subjectName, scopeName, scopeLevel, content, partCount).then(function (data) {
-      var scriptParts = (data.parts || []).slice(0, podcasts.length);
+    var scopeLevel = podcast.scopeLevel || "chapter";
+    generatePodcastScript(subjectName, scopeName, scopeLevel, content).then(function (data) {
+      var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
+      if (!scriptParts.length) {
+        podcast.status = "error";
+        podcast.error = "Aucun script généré.";
+        saveDB(); render();
+        return;
+      }
+      var total = scriptParts.length;
+      var pods = [podcast];
+      for (var k = 1; k < total; k++) {
+        var extra = {
+          id: uid(), groupId: podcast.groupId, title: "",
+          subjectId: podcast.subjectId, subjectName: podcast.subjectName,
+          scopeLevel: podcast.scopeLevel, scopeId: podcast.scopeId, scopeName: podcast.scopeName,
+          partIndex: k + 1, partCount: total,
+          status: "processing", error: null, errorStatus: null, errorDetail: null,
+          script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k
+        };
+        podcastData().push(extra);
+        pods.push(extra);
+      }
+      podcast.partIndex = 1;
+      podcast.partCount = total;
+      saveDB(); render();
       var runOne = function (i) {
-        if (i >= podcasts.length) return;
-        var pod = podcasts[i];
+        if (i >= pods.length) return;
+        var pod = pods[i];
         var sp = scriptParts[i];
-        if (!sp || !sp.script) {
-          pod.status = "error";
-          pod.error = "Aucun script généré pour cette partie.";
-          saveDB(); render();
-          return runOne(i + 1);
-        }
-        pod.title = sp.title || pod.title;
+        pod.title = total > 1 ? (sp.title || scopeName) + " — partie " + (i + 1) : (sp.title || scopeName);
         pod.script = sp.script;
         generatePodcastAudio(sp.script, PODCAST_VOICE).then(function (audioUrl) {
           return audioDurationFromDataUrl(audioUrl).then(function (duration) {
@@ -1033,12 +1053,10 @@
       };
       runOne(0);
     }).catch(function (err) {
-      podcasts.forEach(function (p) {
-        p.status = "error";
-        p.error = err.message || "Erreur inconnue";
-        p.errorStatus = err.status || null;
-        p.errorDetail = err.detail || null;
-      });
+      podcast.status = "error";
+      podcast.error = err.message || "Erreur inconnue";
+      podcast.errorStatus = err.status || null;
+      podcast.errorDetail = err.detail || null;
       saveDB();
       toast("Échec de la génération du podcast : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
       render();
@@ -5895,9 +5913,7 @@
             (ppLevel === "theme"
               ? '<div class="field"><label>Thème</label><select onchange="App.changePodcastTheme(this.value)">' + ppThemeOptions + '</select></div>'
               : '<div class="field"><label>Chapitre</label><select onchange="App.changePodcastChapter(this.value)">' + ppChapOptions + '</select></div>') +
-            '<div class="field"><label>Nombre de parties</label><div style="display:flex;gap:8px">' +
-            [1, 2, 3].map(function (n) { return '<button type="button" class="btn btn-sm ' + ((modal.partCount || 1) === n ? "btn-primary" : "btn-ghost") + '" style="width:auto" onclick="App.setPodcastPartCount(' + n + ')">' + n + (n > 1 ? " parties" : " partie") + '</button>'; }).join("") +
-            '</div></div>' +
+            '<p style="font-size:12px;color:var(--text-muted);margin:-4px 0 14px">Le vieux conteur décide lui-même s\'il faut une ou plusieurs parties, selon la quantité réelle de contenu à couvrir.</p>' +
             '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.createPodcast()">Générer</button></div>'
           ) : '<p class="modal-warn">Cette matière n\'a encore aucun cours généré — génère au moins un cours avant de créer un podcast.</p>')
         ) : '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>');
@@ -6735,14 +6751,13 @@
     togglePodcastFolder: function (gid) { podcastFolderOpen[gid] = !podcastFolderOpen[gid]; render(); },
     openPodcastModal: function () {
       var firstSubj = userData().subjects[0];
-      modal = { type: "podcastGen", subjectId: firstSubj && firstSubj.id, level: "chapter", chapterId: null, themeId: null, partCount: 1 };
+      modal = { type: "podcastGen", subjectId: firstSubj && firstSubj.id, level: "chapter", chapterId: null, themeId: null };
       render();
     },
     changePodcastSubject: function (subjectId) { modal.subjectId = subjectId; modal.chapterId = null; modal.themeId = null; render(); },
     setPodcastLevel: function (level) { modal.level = level; render(); },
     changePodcastChapter: function (chapterId) { modal.chapterId = chapterId; render(); },
     changePodcastTheme: function (themeId) { modal.themeId = themeId; render(); },
-    setPodcastPartCount: function (n) { modal.partCount = n; render(); },
     createPodcast: function () {
       var m = modal;
       var subj = findSubject(m.subjectId);
@@ -6764,23 +6779,21 @@
       }
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       if (!content) { toast(level === "theme" ? "Ce thème n'a aucun cours généré" : "Ce chapitre n'a aucun cours généré"); return; }
-      var partCount = m.partCount || 1;
-      var groupId = uid(); // regroupe les parties d'un même podcast en "dossier" dans la bibliothèque
-      var pods = [];
-      for (var i = 0; i < partCount; i++) {
-        pods.push({
-          id: uid(), groupId: groupId, title: partCount > 1 ? scopeName + " — partie " + (i + 1) : scopeName,
-          subjectId: subj.id, subjectName: subj.name, scopeLevel: level, scopeId: scopeId, scopeName: scopeName,
-          partIndex: i + 1, partCount: partCount,
-          status: "processing", error: null, errorStatus: null, errorDetail: null,
-          script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + i
-        });
-      }
-      podcastData().push.apply(podcastData(), pods);
+      // Le nombre de parties n'est PAS choisi ici : c'est l'IA qui décide selon la richesse réelle du
+      // contenu (voir runPodcastGeneration). On crée une seule entrée pour l'instant, les parties
+      // suivantes (s'il y en a) seront ajoutées dynamiquement une fois la réponse connue.
+      var pod = {
+        id: uid(), groupId: uid(), title: scopeName,
+        subjectId: subj.id, subjectName: subj.name, scopeLevel: level, scopeId: scopeId, scopeName: scopeName,
+        partIndex: 1, partCount: 1,
+        status: "processing", error: null, errorStatus: null, errorDetail: null,
+        script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now()
+      };
+      podcastData().push(pod);
       saveDB();
       modal = null;
-      navigate("#/podcasts/" + pods[0].id);
-      runPodcastGeneration(pods, subj.name, scopeName, content, partCount);
+      navigate("#/podcasts/" + pod.id);
+      runPodcastGeneration(pod, subj.name, scopeName, content);
     },
     retryPodcastGeneration: function (id) {
       var pod = podcastFind(id);
@@ -6788,10 +6801,11 @@
       var subj = findSubject(pod.subjectId);
       if (!subj) return;
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      // Repart de zéro pour CETTE partie uniquement (nouveau texte + nouvel audio), sans toucher aux
-      // autres parties éventuelles du même podcast.
+      // Repart de zéro pour CETTE partie uniquement (nouveau texte + nouvel audio) : l'IA peut même
+      // décider de la redécouper différemment, les éventuelles nouvelles parties s'ajoutent alors à
+      // côté sans toucher aux autres parties déjà existantes du même podcast.
       var content = pod.scopeLevel === "theme" ? themeContentText(subj, pod.scopeId) : chapterContentText(subj, pod.scopeId);
-      runPodcastGeneration([pod], subj.name, pod.scopeName, content, 1);
+      runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
     // Reprend le texte déjà généré et ne relance QUE la synthèse vocale — utile pour récupérer la voix
     // courante (ex. après un changement de PODCAST_VOICE) sans regaspiller un appel de génération de texte.
