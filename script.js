@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4992,12 +4992,12 @@
       if (looksLikeTable) {
         if (inList) { html += "</ul>"; inList = false; }
         var head = mdTableRow(line);
-        html += "<table><thead><tr>" + head.map(function (c) { return "<th>" + inlineMd(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+        html += "<table><thead><tr>" + head.map(function (c) { return "<th>" + inlineMdPlain(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
         i++;
         while (i < lines.length && mdPipeCount(lines[i]) >= 1 && lines[i].trim() !== "") {
           if (mdIsTableSep(lines[i])) { i++; continue; }
           var row = mdTableRow(lines[i]);
-          html += "<tr>" + row.map(function (c) { return "<td>" + inlineMd(c) + "</td>"; }).join("") + "</tr>";
+          html += "<tr>" + row.map(function (c) { return "<td>" + inlineMdPlain(c) + "</td>"; }).join("") + "</tr>";
           i++;
         }
         html += "</tbody></table>";
@@ -5034,17 +5034,17 @@
         var quoteLines = [];
         while (i < lines.length && /^>\s?/.test(lines[i].trim())) { quoteLines.push(lines[i].trim().replace(/^>\s?/, "")); i++; }
         i--;
-        html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMd(l) + "</p>"; }).join("") + '</div>';
+        html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMdPlain(l) + "</p>"; }).join("") + '</div>';
       }
       else if (/^#{2,6}\s*/.test(line.trim())) {
         if (inList) { html += "</ul>"; inList = false; }
         var headingMatch = /^(#{2,6})\s*(.*)$/.exec(line.trim());
         var tag = headingMatch[1].length <= 2 ? "h3" : "h4";
-        html += "<" + tag + ">" + esc(headingMatch[2]) + "</" + tag + ">";
+        html += "<" + tag + ">" + inlineMdPlain(headingMatch[2]) + "</" + tag + ">";
       }
-      else if (/^-\s+/.test(line.trim())) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMd(line.trim().replace(/^-\s+/, "")) + "</li>"; }
+      else if (/^-\s+/.test(line.trim())) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMdPlain(line.trim().replace(/^-\s+/, "")) + "</li>"; }
       else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
-      else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMd(line) + "</p>"; }
+      else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMdPlain(line) + "</p>"; }
     }
     if (inList) html += "</ul>";
     html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx] || ""); });
