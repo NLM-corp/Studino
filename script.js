@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "5.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "5.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -397,6 +397,12 @@
   var PRINT_SCALE_STORAGE = "studino_print_scale";
   function getPrintScale() { var v = localStorage.getItem(PRINT_SCALE_STORAGE); return v === null ? 1 : parseFloat(v); }
   function setPrintScale(v) { v = Math.max(0.6, Math.min(3, v)); localStorage.setItem(PRINT_SCALE_STORAGE, v.toFixed(2)); }
+
+  // Genre de l'élève (facultatif) : utilisé uniquement pour que le conteur du Podcast s'adresse à lui
+  // naturellement ("mon petit"/"ma petite") plutôt que de rester neutre par défaut faute d'info.
+  var USER_GENDER_STORAGE = "studino_user_gender";
+  function getUserGender() { return localStorage.getItem(USER_GENDER_STORAGE) || ""; }
+  function setUserGender(g) { if (["m", "f", "autre"].indexOf(g) !== -1) localStorage.setItem(USER_GENDER_STORAGE, g); else localStorage.removeItem(USER_GENDER_STORAGE); }
 
   // Un exercice/question qui renvoie à un support visuel (figure géométrique, graphique, spectre,
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
@@ -1028,12 +1034,20 @@
     required: ["parts"]
   };
   function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content) {
+    var gender = getUserGender();
+    var genderNote = gender === "m"
+      ? "L'élève qui t'écoute est un garçon : si tu t'adresses directement à lui (une interpellation affectueuse, pas à chaque phrase), utilise des formulations masculines (\"mon petit\", \"mon grand\", \"jeune homme\"), jamais féminines."
+      : gender === "f"
+      ? "L'élève qui t'écoute est une fille : si tu t'adresses directement à elle (une interpellation affectueuse, pas à chaque phrase), utilise des formulations féminines (\"ma petite\", \"ma grande\", \"jeune demoiselle\"), jamais masculines."
+      : "Tu ne connais pas le genre de l'élève qui t'écoute : si tu t'adresses directement à lui/elle, utilise des formulations neutres (\"mon enfant\", \"jeune ami\", \"toi qui m'écoutes\") plutôt qu'un terme genré.";
     return "Tu es un vieux conteur chevronné, un grand-père passionné qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + (scopeLevel === "theme" ? "thème" : "chapitre") + " : " + scopeName + ") à partir duquel tu dois créer ce podcast.\n\n" +
       "Règles absolues :\n" +
+      "- " + genderNote + "\n" +
       "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
       "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
       "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
-      "- DURÉE par partie, règle STRICTE : entre 1600 et 3500 mots (à l'oral, environ 10 à 22 minutes) — jamais en dessous de 1600. Si le contenu du cours semble court pour ça, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
+      "- PRÉCISION CONCRÈTE OBLIGATOIRE, règle à prendre très au sérieux : dès que le cours mentionne un élément nommé et identifiable — une expérience scientifique, un événement historique, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — tu dois TOUJOURS raconter CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemples de ce qu'il NE FAUT JAMAIS faire : dire \"une expérience a permis de démontrer que...\" sans raconter en quoi consistait cette expérience (qui l'a menée, sur quoi, comment, ce qui a été observé) ; dire \"tel événement a marqué un tournant...\" sans raconter ce qui s'est concrètement passé pendant cet événement. Si le cours source donne ce détail concret, raconte-le fidèlement et en profondeur ; si le cours source NE donne PAS ce détail (juste le nom et la conclusion), dis-le explicitement à l'élève plutôt que de glisser dessus en silence comme si de rien n'était (ex. \"le cours ne détaille pas comment cette expérience a été menée, mais on sait qu'elle a montré que...\") — n'invente JAMAIS un détail qui ne figure pas dans le cours. La précision prime toujours sur la longueur : mieux vaut une partie plus longue mais qui explique vraiment chaque élément cité, qu'une partie qui enchaîne des noms et des conclusions sans jamais s'arrêter dessus.\n" +
+      "- DURÉE par partie : entre 1600 et 3500 mots (à l'oral, environ 10 à 22 minutes) comme repère — jamais en dessous de 1600, et pas un plafond strict non plus : si vraiment détailler précisément chaque élément du cours (voir règle de précision ci-dessus) demande d'aller au-delà de 3500 mots pour une partie donnée, ne sacrifie JAMAIS la précision pour respecter ce chiffre. Si le contenu du cours semble court, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
       "- NOMBRE DE PARTIES : C'EST TOI QUI DÉCIDES, pas l'élève, et il N'Y A AUCUNE LIMITE HAUTE — ni 2, ni 3, ni 5 : le seul critère est la quantité réelle de contenu à couvrir EN PROFONDEUR. Regarde CHAQUE grande section/notion du cours et demande-toi si elle peut vraiment être expliquée en profondeur (contexte, exemples, implications) dans le temps qui lui reste disponible ; si non, c'est qu'il faut une partie de plus. Repère concret : si le cours a 3 grands thèmes, ça fera souvent 3 parties ; s'il en a 7, ça peut très bien faire 7 parties (ou plus) — ne te bride JAMAIS en te disant qu'un podcast \"a déjà assez de parties\", ce nombre n'existe pas. Si tout tient confortablement dans UNE SEULE partie de 1600 à 3500 mots en couvrant vraiment tout en profondeur, fais UNE SEULE partie — ne découpe JAMAIS artificiellement juste pour faire plusieurs parties. Si en revanche le contenu est si riche qu'une seule partie dépasserait largement 3500 mots pour tout couvrir en profondeur, découpe en plusieurs parties cohérentes (par grands thèmes/sections), chacune respectant elle-même la fourchette de 1600 à 3500 mots, sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies — même si ça fait beaucoup de parties au total, ce n'est jamais un problème.\n" +
       "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
       "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie (ou du podcast entier s'il n'y a qu'une seule partie).\n" +
@@ -6451,6 +6465,13 @@
               return '<button type="button" class="color-swatch' + (c === current ? " selected" : "") + '" style="background:' + swatchHex[c] + '" title="' + APP_COLOR_LABELS[c] + '" aria-label="' + APP_COLOR_LABELS[c] + '" onclick="App.setAppColor(\'' + c + '\')"></button>';
             }).join("") + '</div></div>';
         })() +
+        '<div class="field"><label>Ton genre</label><select onchange="App.setUserGender(this.value)">' +
+        '<option value="" ' + (getUserGender() === "" ? "selected" : "") + '>Non précisé</option>' +
+        '<option value="m" ' + (getUserGender() === "m" ? "selected" : "") + '>Masculin</option>' +
+        '<option value="f" ' + (getUserGender() === "f" ? "selected" : "") + '>Féminin</option>' +
+        '<option value="autre" ' + (getUserGender() === "autre" ? "selected" : "") + '>Autre</option>' +
+        '</select>' +
+        '<p class="modal-warn" style="margin:6px 0 0">Utilisé par le vieux conteur du Podcast pour s\'adresser à toi naturellement ("mon petit"/"ma petite").</p></div>' +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
         '<div class="field"><label>Volume effets sonores — <span id="vol-sfx-val">' + getVolumeSfx() + '</span>%</label>' +
@@ -6607,6 +6628,10 @@
       if (APP_COLORS.indexOf(color) === -1) return;
       document.documentElement.setAttribute("data-app-color", color);
       localStorage.setItem("recto_color", color);
+      render();
+    },
+    setUserGender: function (g) {
+      setUserGender(g);
       render();
     },
     openModal: function (type, subjectId, themeId, chapterId) {
