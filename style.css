@@ -876,7 +876,7 @@
      latéral (250px, même largeur que .shell) qui reste toujours cliquable. En dessous de la barre de
      recherche/modales (z-index 50) et des toasts (100) pour qu'ils restent visibles par-dessus. ---------- */
   .podcast-fullscreen { position: fixed; top: 0; right: 0; bottom: 0; left: 250px; z-index: 40; overflow: hidden; background: #0b0c10; }
-  .podcast-bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+  .podcast-bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
   .podcast-fs-close { position: absolute; top: 16px; right: 16px; z-index: 5; width: 40px; height: 40px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); color: #fff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .podcast-fs-header { position: absolute; top: 16px; left: 16px; right: 72px; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
   .podcast-fs-title { color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.7); font-family: 'Press Start 2P', monospace; font-size: 14px; }

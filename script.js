@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4510,7 +4510,7 @@
     if (pod.status === "processing") {
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
-        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>Le vieux conteur prépare « ' + esc(pod.title) + ' »… (texte, puis voix — ça peut prendre une minute ou deux)</span></div></div>' +
+        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>Le vieux conteur lit « ' + esc(pod.title) + ' » pour te préparer une belle histoire… ça peut prendre quelques minutes.</span></div></div>' +
         '</div>';
     } else if (pod.status === "error") {
       body = '<div class="podcast-fullscreen">' + closeBtn +
