@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1220,6 +1220,17 @@
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
   }
+  // Fusionne le PCM de plusieurs parties (déjà triées par partIndex) bout à bout avant un seul encodage
+  // MP3 — un podcast en 3 parties de 3 min donne ainsi un unique fichier de 9 min, pas 3 fichiers séparés.
+  function mergePodcastPartsToMp3Blob(parts) {
+    var wavs = parts.map(function (p) { return parseWavPcm16(p.audioUrl); });
+    var sampleRate = wavs[0].sampleRate, numChannels = wavs[0].numChannels;
+    var totalLen = wavs.reduce(function (sum, w) { return sum + w.samples.length; }, 0);
+    var merged = new Int16Array(totalLen);
+    var offset = 0;
+    wavs.forEach(function (w) { merged.set(w.samples, offset); offset += w.samples.length; });
+    return pcm16ToMp3Blob(merged, sampleRate, numChannels);
+  }
   // C'est l'IA qui décide du nombre de parties (voir buildPodcastScriptPrompt), pas l'élève — on ne
   // sait donc PAS combien il y en aura avant d'avoir la réponse. "podcast" est la SEULE entrée déjà
   // créée/affichée (part 1 par défaut) ; si l'IA renvoie plusieurs parties, les suivantes sont créées
@@ -1259,7 +1270,7 @@
         if (i >= pods.length) return;
         var pod = pods[i];
         var sp = scriptParts[i];
-        pod.title = total > 1 ? (sp.title || scopeName) + " — partie " + (i + 1) : (sp.title || scopeName);
+        pod.title = sp.title || scopeName;
         pod.script = sp.script;
         generatePodcastAudio(sp.script, PODCAST_VOICE).then(function (audioUrl) {
           return audioDurationFromDataUrl(audioUrl).then(function (duration) {
@@ -4465,12 +4476,14 @@
         '<span class="demo-badge">' + parts.length + ' parties</span>' +
         '</div>';
     }
+    var anyReady = parts.some(function (p) { return p.status === "ready"; });
     return '<div class="tile podcast-folder-open">' +
       '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div>' +
       '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
+      (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">⬇️ Tout télécharger en un seul MP3</button>' : "") +
       '<div class="podcast-folder-items">' + parts.map(function (p) {
         return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
-          '<span>🎙️ Partie ' + p.partIndex + '</span>' + podcastStatusBadge(p) +
+          '<span>🎙️ ' + esc(p.title || ("Partie " + p.partIndex)) + '</span>' + podcastStatusBadge(p) +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
           '</div>';
       }).join("") + '</div></div>';
@@ -4534,7 +4547,8 @@
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img id="podcast-papi-img" src="' + PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[podcastExpliqueByPod[pod.id]] + '" class="podcast-bg-img" alt="">' +
         '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">' + esc(pod.title) + (pod.partCount > 1 ? ' · Partie ' + pod.partIndex + '/' + pod.partCount : "") + '</div>' +
-        '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastMp3(\'' + pod.id + '\')" title="Télécharger en MP3">⬇️ MP3</button>' +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastMp3(\'' + pod.id + '\')" title="Télécharger cette partie en MP3">⬇️ MP3</button>' +
+        (pod.partCount > 1 ? '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastGroupMp3(\'' + pod.groupId + '\')" title="Télécharger toutes les parties en un seul MP3">⬇️ Tout en 1 MP3</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.askDelete(\'podcast\',null,null,null,\'' + pod.id + '\')" title="Supprimer">' + icon("trash") + '</button>' +
         '</div>' +
         '<div class="podcast-fs-bottom">' +
@@ -7057,6 +7071,23 @@
           var filename = String(pod.title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
           triggerBlobDownload(blob, filename);
           toast("⬇️ MP3 téléchargé");
+        } catch (e) {
+          toast("Échec de la conversion MP3 : " + (e.message || "erreur inconnue"));
+        }
+      }, 30);
+    },
+    downloadPodcastGroupMp3: function (groupId) {
+      var parts = podcastData().filter(function (p) { return p.groupId === groupId && p.status === "ready" && p.audioUrl; })
+        .sort(function (a, b) { return a.partIndex - b.partIndex; });
+      if (!parts.length) return;
+      if (typeof lamejs === "undefined") { toast("Le convertisseur MP3 n'a pas pu se charger (vérifie ta connexion puis recharge la page)."); return; }
+      toast("🎙️ Fusion des " + parts.length + " parties et conversion en MP3…");
+      setTimeout(function () {
+        try {
+          var blob = mergePodcastPartsToMp3Blob(parts);
+          var filename = String(parts[0].scopeName || parts[0].title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
+          triggerBlobDownload(blob, filename);
+          toast("⬇️ MP3 téléchargé (" + parts.length + " parties fusionnées)");
         } catch (e) {
           toast("Échec de la conversion MP3 : " + (e.message || "erreur inconnue"));
         }
