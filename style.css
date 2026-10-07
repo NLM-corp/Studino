@@ -1014,8 +1014,8 @@
     .print-fiche-body .prose-callout p + p { margin-top: 6px; }
     .print-fiche-body .prose-schema { break-inside: avoid; margin: 14px 0; }
     .print-fiche-body .prose-schema svg { max-width: 100%; max-height: 260px; border: 1px solid #ccc; border-radius: 6px; }
-    .print-fiche-body table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 12.5px; }
-    .print-fiche-body th, .print-fiche-body td { border: 1px solid #ccc; padding: 7px 9px; text-align: left; }
+    .print-fiche-body table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 8px 0 16px; font-size: 12.5px; }
+    .print-fiche-body th, .print-fiche-body td { border: 1px solid #ccc; padding: 7px 9px; text-align: left; overflow-wrap: break-word; word-break: break-word; }
     .print-fiche-body th { background: var(--fiche-soft, #dcecd4); font-weight: 700; color: #1c2b16; }
   }
 
