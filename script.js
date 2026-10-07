@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -396,7 +396,7 @@
 
   var PRINT_SCALE_STORAGE = "studino_print_scale";
   function getPrintScale() { var v = localStorage.getItem(PRINT_SCALE_STORAGE); return v === null ? 1 : parseFloat(v); }
-  function setPrintScale(v) { v = Math.max(0.6, Math.min(2, v)); localStorage.setItem(PRINT_SCALE_STORAGE, v.toFixed(2)); }
+  function setPrintScale(v) { v = Math.max(0.6, Math.min(3, v)); localStorage.setItem(PRINT_SCALE_STORAGE, v.toFixed(2)); }
 
   // Un exercice/question qui renvoie à un support visuel (figure géométrique, graphique, spectre,
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
