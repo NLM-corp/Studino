@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -394,6 +394,10 @@
   function getVolumeMusic() { var v = localStorage.getItem(VOLUME_MUSIC_STORAGE); return v === null ? 70 : parseInt(v, 10); }
   function getVolumeSfx() { var v = localStorage.getItem(VOLUME_SFX_STORAGE); return v === null ? 70 : parseInt(v, 10); }
 
+  var PRINT_SCALE_STORAGE = "studino_print_scale";
+  function getPrintScale() { var v = localStorage.getItem(PRINT_SCALE_STORAGE); return v === null ? 1 : parseFloat(v); }
+  function setPrintScale(v) { v = Math.max(0.6, Math.min(2, v)); localStorage.setItem(PRINT_SCALE_STORAGE, v.toFixed(2)); }
+
   // Un exercice/question qui renvoie à un support visuel (figure géométrique, graphique, spectre,
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
   // exercice importé par photo (où l'image existe déjà), rien ne garantit qu'un tel visuel existe
@@ -760,7 +764,8 @@
     var sourceBlocks = courses.map(function (co) {
       return "### Cours : " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
-    return "Tu es un assistant pédagogique pour un élève francophone. Voici " + (scope === "course" ? "le contenu retranscrit d'un cours" : "le contenu retranscrit de tous les cours d'un chapitre") + " intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
+    var scopeLabel = scope === "course" ? "le contenu retranscrit d'un cours" : scope === "theme" ? "le contenu retranscrit de tous les cours de tout un thème" : "le contenu retranscrit de tous les cours d'un chapitre";
+    return "Tu es un assistant pédagogique pour un élève francophone. Voici " + scopeLabel + " intitulé « " + title + " » (matière : " + subjectName + ", " + (scope === "theme" ? "thème" : "chapitre") + " : " + chapterName + ").\n\n" +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article, site d'analyse littéraire, résumé de manuel, etc.), REFORMULE ce passage avec des mots différents en gardant strictement le même sens et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n\n" +
       "Génère une fiche de révision ULTRA COMPLÈTE en Markdown qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section, prête à réviser juste avant un contrôle.\n\n" +
       "Mise en forme — c'est important, une fiche doit avoir l'allure d'une vraie fiche de révision d'élève, pas d'un texte plat et froid :\n" +
@@ -4201,6 +4206,7 @@
   var podcastIdleImgCache = null; // choisie une seule fois par session — ne doit pas changer à chaque clic
   var podcastExpliqueByPod = {}; // per podcast id: index courant — stable tant qu'on reste sur CE podcast, change seulement toutes les ~60s
   var podcastFolderOpen = {}; // per groupId: bool — dossier de parties replié par défaut
+  var podcastAutoPlayNext = false; // mis à true juste avant de naviguer vers la partie suivante en fin de lecture
   function podcastFormatTime(sec) {
     sec = Math.max(0, Math.round(sec || 0));
     var m = Math.floor(sec / 60), s = sec % 60;
@@ -4299,14 +4305,13 @@
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img id="podcast-papi-img" src="' + PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[podcastExpliqueByPod[pod.id]] + '" class="podcast-bg-img" alt="">' +
         '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">' + esc(pod.title) + (pod.partCount > 1 ? ' · Partie ' + pod.partIndex + '/' + pod.partCount : "") + '</div>' +
-        '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" title="Régénérer uniquement la voix (ex. après un changement de voix)" onclick="App.regeneratePodcastAudio(\'' + pod.id + '\')">🔄 Voix</button>' +
         '</div>' +
         '<div class="podcast-fs-bottom">' +
         '<div id="podcast-subtitle" class="podcast-subtitle">' + (pod.segments && pod.segments[0] ? esc(pod.segments[0].text) : "") + '</div>' +
         '<audio id="podcast-audio" src="' + pod.audioUrl + '" preload="metadata" ' +
         'onplay="document.getElementById(\'podcast-play-icon\').textContent=\'⏸\'" ' +
         'onpause="document.getElementById(\'podcast-play-icon\').textContent=\'▶\'" ' +
-        'onended="document.getElementById(\'podcast-play-icon\').textContent=\'▶\'"></audio>' +
+        'onended="App.podcastOnEnded()"></audio>' +
         '<div class="podcast-player">' +
         '<div class="podcast-player-row">' +
         '<button class="podcast-ctrl-btn" onclick="App.podcastSkip(-10)" title="Reculer de 10s">⏪</button>' +
@@ -4319,7 +4324,14 @@
         '</div></div>';
     }
     renderShell(["podcasts", id], body);
-    if (pod.status === "ready") podcastEnsurePlayerInterval();
+    if (pod.status === "ready") {
+      podcastEnsurePlayerInterval();
+      if (podcastAutoPlayNext) {
+        podcastAutoPlayNext = false;
+        var autoAudio = document.getElementById("podcast-audio");
+        if (autoAudio) autoAudio.play().catch(function () {});
+      }
+    }
   }
   // Rien à voir avec render() : un re-rendu complet recréerait l'élément <audio> et couperait la
   // lecture en cours. On met donc à jour la barre de progression, le chrono, les sous-titres et la
@@ -4542,8 +4554,9 @@
     var theme = subj && findTheme(subj, sheet.themeId);
     var chap = theme && findChapter(theme, sheet.chapterId);
     var head = '<div class="course-head"><div><h1 class="page-title" style="margin-bottom:6px">📋 ' + esc(sheet.title) + '</h1>' +
-      '<p class="page-sub">' + (subj ? esc(subj.name) : "") + (theme ? ' · ' + esc(theme.name) : "") + (chap ? ' · ' + esc(chap.name) : "") + ' · Fiche de ' + (sheet.scope === "course" ? "cours" : "chapitre") + '</p></div>' +
-      '<div style="display:flex;gap:10px;margin-left:auto">' +
+      '<p class="page-sub">' + (subj ? esc(subj.name) : "") + (theme ? ' · ' + esc(theme.name) : "") + (chap ? ' · ' + esc(chap.name) : "") + ' · Fiche de ' + (sheet.scope === "course" ? "cours" : sheet.scope === "theme" ? "thème" : "chapitre") + '</p></div>' +
+      '<div style="display:flex;gap:10px;margin-left:auto;align-items:center">' +
+      (sheet.status === "ready" ? '<div class="print-scale-ctrl" title="Taille de la police à l\'impression"><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(-0.1)">−</button><span class="mono" style="min-width:42px;text-align:center;display:inline-block">' + Math.round(getPrintScale() * 100) + '%</span><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(0.1)">+</button></div>' : "") +
       (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.downloadRevisionSheetPdf(\'' + sheet.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'revisionSheet\',null,null,null,\'' + sheet.id + '\')">' + icon("trash") + ' Supprimer</button>' +
       '</div>' +
@@ -5671,12 +5684,12 @@
   function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
     var hue = document.documentElement.getAttribute("data-app-color") || "vert";
     var hc = PRINT_HUE_COLORS[hue] || PRINT_HUE_COLORS.vert;
-    var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + '"';
+    var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + ';--print-scale:' + getPrintScale() + '"';
     return '<div class="print-doc print-doc-fiche" ' + hueStyle + '>' +
       '<div class="print-fiche-header">' +
       '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
       '<h1>' + esc(sheet.title) + '</h1>' +
-      '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
+      '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "theme" ? " — thème complet" : sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
       '</div>' +
       '<div class="print-fiche-body">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' +
       '</div>';
@@ -5952,10 +5965,11 @@
             '<div class="field"><label>Thème</label><select onchange="App.changeRevisionSheetTheme(this.value)">' + rsThemeOptions + '</select></div>' +
             (rsChapters.length ? (
               '<div class="field"><label>Portée</label><div class="modal-actions" style="margin:0 0 4px">' +
+              '<button type="button" class="btn btn-sm ' + (modal.scope === "theme" ? "btn-primary" : "btn-ghost") + '" onclick="App.changeRevisionSheetScope(\'theme\')">Thème entier</button>' +
               '<button type="button" class="btn btn-sm ' + (modal.scope === "chapter" ? "btn-primary" : "btn-ghost") + '" onclick="App.changeRevisionSheetScope(\'chapter\')">Chapitre entier</button>' +
               '<button type="button" class="btn btn-sm ' + (modal.scope === "course" ? "btn-primary" : "btn-ghost") + '" onclick="App.changeRevisionSheetScope(\'course\')">Un seul cours</button>' +
               '</div></div>' +
-              '<div class="field"><label>Chapitre</label><select onchange="App.changeRevisionSheetChapter(this.value)">' + rsChapterOptions + '</select></div>' +
+              (modal.scope === "theme" ? "" : '<div class="field"><label>Chapitre</label><select onchange="App.changeRevisionSheetChapter(this.value)">' + rsChapterOptions + '</select></div>') +
               (modal.scope === "course" ? '<div class="field"><label>Cours</label><select onchange="App.changeRevisionSheetCourse(this.value)">' + rsCourseOptions + '</select></div>' : "") +
               '<p class="modal-warn" style="margin-top:4px">Fiche ULTRA COMPLÈTE : reprend absolument tout ce qu\'il y a à savoir, sans rien couper.</p>'
             ) : '<p class="modal-warn">Ce thème n\'a aucun cours généré pour l\'instant.</p>')
@@ -6807,31 +6821,19 @@
       var content = pod.scopeLevel === "theme" ? themeContentText(subj, pod.scopeId) : chapterContentText(subj, pod.scopeId);
       runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
-    // Reprend le texte déjà généré et ne relance QUE la synthèse vocale — utile pour récupérer la voix
-    // courante (ex. après un changement de PODCAST_VOICE) sans regaspiller un appel de génération de texte.
-    regeneratePodcastAudio: function (id) {
-      var pod = podcastFind(id);
-      if (!pod || !pod.script) return;
-      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      pod.status = "processing";
-      saveDB(); render();
-      generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
-        return audioDurationFromDataUrl(audioUrl).then(function (duration) {
-          pod.audioUrl = audioUrl;
-          pod.durationSec = duration;
-          pod.segments = buildPodcastSegments(pod.script, duration);
-          pod.status = "ready";
-          saveDB();
-          toast("🎙️ Nouvelle voix générée");
-          render();
-        });
-      }).catch(function (err) {
-        pod.status = "error";
-        pod.error = err.message || "Erreur inconnue";
-        pod.errorStatus = err.status || null;
-        pod.errorDetail = err.detail || null;
-        saveDB(); render();
-      });
+    // Fin de l'audio d'une partie : si une partie suivante existe déjà et est prête, enchaîne
+    // directement dessus (lecture automatique) plutôt que de laisser l'élève devoir la chercher.
+    podcastOnEnded: function () {
+      var icon = document.getElementById("podcast-play-icon");
+      if (icon) icon.textContent = "▶";
+      var parts = location.hash.replace(/^#\//, "").split("/");
+      var pod = parts[0] === "podcasts" && parts[1] ? podcastFind(parts[1]) : null;
+      if (!pod || !pod.partCount || pod.partIndex >= pod.partCount) return;
+      var next = podcastData().find(function (p) { return p.groupId === pod.groupId && p.partIndex === pod.partIndex + 1; });
+      if (next && next.status === "ready") {
+        podcastAutoPlayNext = true;
+        location.hash = "#/podcasts/" + next.id;
+      }
     },
     openPodcastErrorDetail: function (id) {
       var pod = podcastFind(id);
@@ -6991,42 +6993,58 @@
       if (!subj) return;
       var theme = findTheme(subj, m.themeId);
       if (!theme) { toast("Choisis un thème"); return; }
-      var chap = findChapter(theme, m.chapterId);
-      if (!chap) { toast("Choisis un chapitre"); return; }
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      var courses, title;
-      if (m.scope === "course") {
-        var co = findCourse(chap, m.courseId);
-        if (!co || !dpCourseHasContent(co)) { toast("Choisis un cours"); return; }
-        courses = [co];
-        title = co.title;
+      var courses, title, chap = null;
+      if (m.scope === "theme") {
+        courses = [];
+        theme.chapters.forEach(function (c) { c.courses.forEach(function (co) { if (dpCourseHasContent(co)) courses.push(co); }); });
+        if (!courses.length) { toast("Ce thème n'a aucun cours généré"); return; }
+        title = theme.name;
       } else {
-        courses = chap.courses.filter(dpCourseHasContent);
-        if (!courses.length) { toast("Ce chapitre n'a aucun cours généré"); return; }
-        title = chap.name;
+        chap = findChapter(theme, m.chapterId);
+        if (!chap) { toast("Choisis un chapitre"); return; }
+        if (m.scope === "course") {
+          var co = findCourse(chap, m.courseId);
+          if (!co || !dpCourseHasContent(co)) { toast("Choisis un cours"); return; }
+          courses = [co];
+          title = co.title;
+        } else {
+          courses = chap.courses.filter(dpCourseHasContent);
+          if (!courses.length) { toast("Ce chapitre n'a aucun cours généré"); return; }
+          title = chap.name;
+        }
       }
       var sheet = {
-        id: uid(), title: title, scope: m.scope, subjectId: subj.id, themeId: theme.id, chapterId: chap.id, courseId: m.scope === "course" ? m.courseId : null,
+        id: uid(), title: title, scope: m.scope, subjectId: subj.id, themeId: theme.id, chapterId: chap ? chap.id : null, courseId: m.scope === "course" ? m.courseId : null,
         content: "", schemas: [], status: "processing", error: null, errorStatus: null, errorDetail: null, createdAt: Date.now()
       };
       userData().revisionSheets.push(sheet);
       saveDB();
       modal = null;
       navigate("#/revision/" + sheet.id);
-      runRevisionSheetGeneration(sheet, courses, subj.name, chap.name);
+      runRevisionSheetGeneration(sheet, courses, subj.name, chap ? chap.name : theme.name);
     },
     retryRevisionSheetGeneration: function (sheetId) {
       var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
       if (!sheet) return;
       var subj = findSubject(sheet.subjectId);
       var theme = subj && findTheme(subj, sheet.themeId);
-      var chap = theme && findChapter(theme, sheet.chapterId);
-      if (!subj || !theme || !chap) { toast("Matière, thème ou chapitre introuvable"); return; }
-      var courses = sheet.scope === "course"
-        ? [findCourse(chap, sheet.courseId)].filter(Boolean)
-        : chap.courses.filter(dpCourseHasContent);
+      if (!subj || !theme) { toast("Matière ou thème introuvable"); return; }
+      var courses, scopeName;
+      if (sheet.scope === "theme") {
+        courses = [];
+        theme.chapters.forEach(function (c) { c.courses.forEach(function (co) { if (dpCourseHasContent(co)) courses.push(co); }); });
+        scopeName = theme.name;
+      } else {
+        var chap = findChapter(theme, sheet.chapterId);
+        if (!chap) { toast("Chapitre introuvable"); return; }
+        courses = sheet.scope === "course"
+          ? [findCourse(chap, sheet.courseId)].filter(Boolean)
+          : chap.courses.filter(dpCourseHasContent);
+        scopeName = chap.name;
+      }
       if (!courses.length) { toast("Plus aucun cours source disponible"); return; }
-      runRevisionSheetGeneration(sheet, courses, subj.name, chap.name);
+      runRevisionSheetGeneration(sheet, courses, subj.name, scopeName);
     },
     openRevisionSheetErrorDetail: function (sheetId) {
       var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
@@ -7041,6 +7059,10 @@
       var theme = subj && findTheme(subj, sheet.themeId);
       var chap = theme && findChapter(theme, sheet.chapterId);
       printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
+    },
+    adjustPrintScale: function (delta) {
+      setPrintScale(getPrintScale() + delta);
+      render();
     },
 
     openExamPrepModal: function () {
