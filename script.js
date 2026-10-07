@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4458,7 +4458,8 @@
         '</div>';
     }
     return '<div class="tile podcast-folder-open">' +
-      '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div></div>' +
+      '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div>' +
+      '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
       '<div class="podcast-folder-items">' + parts.map(function (p) {
         return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
           '<span>🎙️ Partie ' + p.partIndex + '</span>' + podcastStatusBadge(p) +
@@ -4526,6 +4527,7 @@
         '<img id="podcast-papi-img" src="' + PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[podcastExpliqueByPod[pod.id]] + '" class="podcast-bg-img" alt="">' +
         '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">' + esc(pod.title) + (pod.partCount > 1 ? ' · Partie ' + pod.partIndex + '/' + pod.partCount : "") + '</div>' +
         '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastMp3(\'' + pod.id + '\')" title="Télécharger en MP3">⬇️ MP3</button>' +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.askDelete(\'podcast\',null,null,null,\'' + pod.id + '\')" title="Supprimer">' + icon("trash") + '</button>' +
         '</div>' +
         '<div class="podcast-fs-bottom">' +
         '<div id="podcast-subtitle" class="podcast-subtitle">' + (pod.segments && pod.segments[0] ? esc(pod.segments[0].text) : "") + '</div>' +
@@ -6305,6 +6307,14 @@
         var dmt = methodoFind(modal.courseId);
         name = dmt ? dmt.title : "";
         warn = "Tous les sujets générés et leurs corrections seront définitivement perdus.";
+      } else if (modal.kind === "podcast") {
+        var dpod = podcastFind(modal.courseId);
+        name = dpod ? dpod.title : "";
+        warn = "Cet épisode audio sera définitivement perdu.";
+      } else if (modal.kind === "podcastGroup") {
+        var dgrp = podcastData().filter(function (x) { return x.groupId === modal.courseId; });
+        name = dgrp.length ? (dgrp[0].scopeName || dgrp[0].title) : "";
+        warn = "Les " + dgrp.length + " parties de ce podcast seront définitivement perdues.";
       }
       inner = '<h3>Supprimer « ' + esc(name) + ' » ?</h3>' +
         '<p class="modal-warn">' + warn + ' <strong>Cette action est définitive.</strong></p>' +
@@ -7826,6 +7836,10 @@
       } else if (m.kind === "podcast") {
         var d6 = userData();
         d6.podcasts = d6.podcasts.filter(function (x) { return x.id !== m.courseId; });
+        toast("Podcast supprimé");
+      } else if (m.kind === "podcastGroup") {
+        var d7 = userData();
+        d7.podcasts = d7.podcasts.filter(function (x) { return x.groupId !== m.courseId; });
         toast("Podcast supprimé");
       }
       saveDB();
