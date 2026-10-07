@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -402,7 +402,7 @@
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
   // exercice importé par photo (où l'image existe déjà), rien ne garantit qu'un tel visuel existe
   // ailleurs. L'IA doit donc le dessiner elle-même en SVG plutôt que se contenter d'en parler.
-  var FIGURE_SVG_FIELD_DESC = "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe) REPRÉSENTANT RÉELLEMENT un support visuel qui sert de DONNÉE externe au problème (ce que l'élève lirait sur un document fourni en vrai examen), JAMAIS un support qui donnerait la réponse ou la connaissance que la question est censée vérifier. Règle absolue, à appliquer AVANT toute autre considération : si la question teste une connaissance à apprendre par cœur d'après le cours (une date, un événement, une formule, une définition, un résultat, un nom, une valeur numérique à retenir), figureSvg doit rester une chaîne VIDE, même si un support visuel existerait dans l'absolu — fournir ce support reviendrait à donner la réponse à la place de l'élève (ex. jamais de frise chronologique pour une question de date d'histoire, jamais la formule elle-même en image pour une question qui demande de connaître/appliquer une formule de cours, jamais une image qui contient le mot/la définition/le résultat attendu). En dehors de ce cas, fournis un SVG uniquement quand la question donne des valeurs numériques dont l'élève ne peut PAS trouver la correspondance par le calcul ou le raisonnement, mais seulement en lisant un repère externe non mémorisable au mot près (ex. : le spectre de la lumière visible avec ses bandes de couleur et longueurs d'onde en nm quand la question donne une longueur d'onde et demande une couleur EN PARTICULIER, un graphique/une courbe donnés comme données du problème à lire, une figure géométrique dont les mesures/angles sont les données de l'énoncé, une carte ou un schéma de circuit donnés comme support). ATTENTION, piège fréquent : la seule présence d'une valeur en nanomètres (nm) ne justifie PAS à elle seule le spectre visible — une taille de virus/bactérie/cellule, une conversion d'unités, ou tout autre exercice qui ne demande explicitement AUCUNE couleur ne doit JAMAIS afficher ce spectre, même si les valeurs tombent dans la plage 400-700 nm. Chaîne vide dans tous les autres cas (la grande majorité). Le SVG doit être lisible seul (inclure un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs numériques précises), car il s'affiche tel quel, dans n'importe quel thème clair ou sombre.";
+  var FIGURE_SVG_FIELD_DESC = "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe) REPRÉSENTANT RÉELLEMENT un support visuel qui sert de DONNÉE externe au problème (ce que l'élève lirait sur un document fourni en vrai examen), JAMAIS un support qui donnerait la réponse ou la connaissance que la question est censée vérifier. Règle absolue, à appliquer AVANT toute autre considération : si la question teste une connaissance à apprendre par cœur d'après le cours (une date, un événement, une formule, une définition, un résultat, un nom, une valeur numérique à retenir), figureSvg doit rester une chaîne VIDE, même si un support visuel existerait dans l'absolu — fournir ce support reviendrait à donner la réponse à la place de l'élève (ex. jamais de frise chronologique pour une question de date d'histoire, jamais la formule elle-même en image pour une question qui demande de connaître/appliquer une formule de cours, jamais une image qui contient le mot/la définition/le résultat attendu). En dehors de ce cas, fournis un SVG uniquement quand la question donne des valeurs numériques dont l'élève ne peut PAS trouver la correspondance par le calcul ou le raisonnement, mais seulement en lisant un repère externe non mémorisable au mot près (ex. : le spectre de la lumière visible avec ses bandes de couleur et longueurs d'onde en nm quand la question donne une longueur d'onde et demande une couleur EN PARTICULIER, un graphique/une courbe donnés comme données du problème à lire, une figure géométrique dont les mesures/angles sont les données de l'énoncé, une carte ou un schéma de circuit donnés comme support). ATTENTION, piège fréquent : la seule présence d'une valeur en nanomètres (nm) ne justifie PAS à elle seule le spectre visible — une taille de virus/bactérie/cellule, une conversion d'unités, ou tout autre exercice qui ne demande explicitement AUCUNE couleur ne doit JAMAIS afficher ce spectre, même si les valeurs tombent dans la plage 400-700 nm. Chaîne vide dans tous les autres cas (la grande majorité). Le SVG doit être lisible seul (inclure un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs numériques précises), car il s'affiche tel quel, dans n'importe quel thème clair ou sombre. Qualité de dessin exigée, sans exception : calcule d'abord un vrai quadrillage/grille de positions pour TOUS les éléments (boîtes, flèches, textes) avant de les placer, de sorte qu'AUCUN texte ne chevauche une forme, une flèche ou un autre texte, et qu'AUCUNE flèche ne traverse une boîte ou une étiquette — prévois une marge généreuse autour de chaque élément et un viewBox assez grand pour tout faire tenir proprement ; chaque flèche doit partir et arriver exactement au bord de l'élément qu'elle relie (jamais en l'air, jamais à travers) ; une étiquette se place toujours à côté de ce qu'elle désigne, jamais superposée dessus.";
   var COURSE_SCHEMA = {
     type: "object",
     properties: {
@@ -752,9 +752,9 @@
           properties: {
             caption: { type: "string", description: "Légende courte du schéma." },
             placeholder: { type: "string", description: "Jeton unique au format [[schema:N]] (N = index de ce schéma dans ce tableau) à insérer tel quel, seul sur sa ligne, dans \"content\" à l'endroit exact où ce schéma doit apparaître." },
-            svg: { type: "string", description: "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe), avec un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs précises — il doit être lisible seul, affiché tel quel dans n'importe quel thème clair ou sombre." }
+            description: { type: "string", description: "Description PRÉCISE et complète de ce que ce schéma doit représenter : tous les éléments à y faire figurer (boîtes, flèches, zones, axes...), leurs noms/légendes exacts, leurs valeurs, et comment ils sont reliés/organisés entre eux (ex. \"flèche du glucose entrant depuis le milieu extracellulaire vers le cytoplasme, à travers une protéine de transport dans la membrane\"). Ce texte sera donné à un autre outil, SANS accès au cours, qui ira chercher sur internet à quoi ressemble vraiment ce schéma dans un manuel scolaire puis le dessinera — sois donc exhaustif et explicite, ne suppose aucune connaissance implicite." }
           },
-          required: ["caption", "placeholder", "svg"]
+          required: ["caption", "placeholder", "description"]
         }
       }
     },
@@ -774,7 +774,7 @@
       "- __ (double underscore, ex. __terme__) pour souligner un mot ou un chiffre vraiment critique (une date, une unité, un résultat) — à utiliser avec parcimonie, seulement pour ce qui doit sauter aux yeux, jamais pour un paragraphe entier.\n" +
       "- > (chevron en début de ligne, comme une citation Markdown) pour ENCADRER dans un bloc à part LA chose la plus importante de chaque section à retenir par cœur — une formule clé, une définition centrale, un piège fréquent (\"Attention à ne pas confondre...\"). Un encadré par section max, réservé à ce qui mérite vraiment de ressortir visuellement, jamais pour du contenu secondaire.\n" +
       "- Des listes à puces (-) pour énumérer, jamais de longs paragraphes denses quand une liste serait plus lisible.\n\n" +
-      "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) ou le soulignement (__) si tu veux mettre quelque chose en valeur.\n\n" +
+      "LaTeX obligatoire — règle stricte, applique-la à CHAQUE occurrence sans exception : dès qu'un symbole/nombre a un exposant, un indice, une fraction, une racine, une lettre grecque ou une unité scientifique composée, encadre-le avec $...$ (ou $$...$$ s'il est isolé sur sa ligne), JAMAIS en texte brut. Exemples à respecter littéralement : écris $H_2O$ (jamais \"H2O\"), $CO_2$ (jamais \"CO2\"), $x^2$ (jamais \"x2\" ou \"x^2\" hors $...$), $3 \\times 10^{8}$ (jamais \"3 x 10^8\"), $\\frac{1}{2}$ (jamais \"1/2\" pour une vraie fraction mathématique), $m^3$, $km/h$, $25°C$. Relis mentalement chaque formule/valeur scientifique de \"content\" avant de répondre : si elle contient un exposant, un indice ou un symbole spécial et n'est pas entre $...$, corrige-la. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) ou le soulignement (__) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si le contenu source comporte un tableau (ou si organiser une notion sous forme de tableau serait plus clair), utilise un vrai tableau Markdown, avec EXACTEMENT ce format (jamais de liste à puces à la place) :\n" +
       "| Colonne 1 | Colonne 2 |\n" +
       "|---|---|\n" +
@@ -787,25 +787,73 @@
     var parts = [{ text: buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) }];
     return callGemini(parts, REVISION_SHEET_SCHEMA);
   }
+  // Dessiner un schéma correct à vue (sans référence) donne souvent des diagrammes bâclés — éléments
+  // qui se chevauchent, flèches mal reliées — alors que la plupart de ces schémas de cours (cycle de
+  // l'eau, membrane plasmique, schéma électrique...) existent déjà sous une forme standard largement
+  // documentée en ligne. On cherche donc d'abord à quoi ressemble VRAIMENT ce schéma (callGeminiSearch,
+  // grounding Google Search) avant de le redessiner fidèlement, plutôt que de laisser l'IA l'improviser
+  // seule. La recherche reste une aide : si elle échoue, on dessine quand même à partir de la
+  // description, sans jamais bloquer toute la fiche pour un seul schéma raté.
+  var SCHEMA_SVG_SCHEMA = {
+    type: "object",
+    properties: {
+      svg: { type: "string", description: "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe), fidèle à la description et à la référence trouvée sur internet fournies ci-dessus — un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs précises. Qualité exigée, sans exception : calcule d'abord une grille de positions pour TOUS les éléments avant de les placer, de sorte qu'AUCUN texte ne chevauche une forme/flèche/autre texte et qu'AUCUNE flèche ne traverse une boîte ou une étiquette, avec une marge généreuse autour de chaque élément et un viewBox assez grand pour que tout tienne proprement ; chaque flèche part et arrive exactement au bord de l'élément qu'elle relie ; chaque étiquette se place à côté de ce qu'elle désigne, jamais dessus." }
+    },
+    required: ["svg"]
+  };
+  function buildSchemaResearchPrompt(caption, description, subjectName, chapterName) {
+    return "Je prépare une fiche de révision scolaire (matière : " + subjectName + ", chapitre : " + chapterName + ") et j'ai besoin d'un schéma intitulé « " + caption + " ».\n\n" +
+      "Ce que ce schéma doit représenter : " + description + "\n\n" +
+      "Cherche sur internet à quoi ressemble VRAIMENT ce schéma dans des manuels scolaires, cours en ligne ou sites pédagogiques de référence pour ce niveau. Décris-moi ensuite précisément, en français et en détail, sa structure réelle telle qu'on la trouve habituellement : quels éléments y figurent, comment ils sont disposés les uns par rapport aux autres (positions relatives : à gauche/à droite, en haut/en bas, à l'intérieur de...), quelles sont les flèches/liaisons entre eux et leur sens exact, et les légendes/valeurs précises qui y apparaissent. Je dois pouvoir redessiner ce schéma fidèlement rien qu'à partir de ta description : sois concret et structuré, pas de généralités.";
+  }
+  function buildSchemaSvgPrompt(caption, description, researchText) {
+    return "Dessine en SVG le schéma de cours intitulé « " + caption + " ».\n\n" +
+      "Ce qu'il doit représenter : " + description + "\n\n" +
+      (researchText ? "Voici une description de la structure réelle de ce schéma telle qu'on la trouve dans des sources pédagogiques (recherchée sur internet juste avant) — reconstruis fidèlement CETTE structure, ces éléments et leur disposition, ne l'improvise pas différemment :\n\n" + researchText + "\n\n" : "") +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  function generateRevisionSheetSchemaSvg(caption, description, subjectName, chapterName) {
+    return callGeminiSearch([{ text: buildSchemaResearchPrompt(caption, description, subjectName, chapterName) }])
+      .then(function (res) { return res.text; })
+      .catch(function () { return ""; })
+      .then(function (researchText) {
+        var parts = [{ text: buildSchemaSvgPrompt(caption, description, researchText) }];
+        return callGemini(parts, SCHEMA_SVG_SCHEMA);
+      })
+      .then(function (data) { return data.svg || ""; });
+  }
   function runRevisionSheetGeneration(sheet, courses, subjectName, chapterName) {
     sheet.status = "processing";
     sheet.error = null;
     saveDB(); render();
     generateRevisionSheetContent(courses, sheet.title, subjectName, chapterName, sheet.scope).then(function (data) {
       var content = data.content || "";
+      var pending = (data.schemas || []).filter(function (sc) { return sc.placeholder && sc.description; });
       var schemas = [];
-      (data.schemas || []).forEach(function (sc) {
-        if (!sc.placeholder || !sc.svg) return;
-        var sid = uid();
-        schemas.push({ id: sid, svg: sc.svg, caption: sc.caption || "" });
-        content = content.split(sc.placeholder).join("![" + String(sc.caption || "").replace(/[[\]]/g, "") + "](schema:" + sid + ")");
-      });
-      sheet.content = content;
-      sheet.schemas = schemas;
-      sheet.status = "ready";
-      saveDB();
-      toast("Fiche générée · " + sheet.title);
-      render();
+      function next(i) {
+        if (i >= pending.length) {
+          sheet.content = content;
+          sheet.schemas = schemas;
+          sheet.status = "ready";
+          saveDB();
+          toast("Fiche générée · " + sheet.title);
+          render();
+          return;
+        }
+        var sc = pending[i];
+        generateRevisionSheetSchemaSvg(sc.caption || "", sc.description, subjectName, chapterName).then(function (svg) {
+          if (svg) {
+            var sid = uid();
+            schemas.push({ id: sid, svg: svg, caption: sc.caption || "" });
+            content = content.split(sc.placeholder).join("![" + String(sc.caption || "").replace(/[[\]]/g, "") + "](schema:" + sid + ")");
+          } else {
+            content = content.split(sc.placeholder).join("");
+          }
+        }).catch(function () {
+          content = content.split(sc.placeholder).join("");
+        }).then(function () { next(i + 1); });
+      }
+      next(0);
     }).catch(function (err) {
       sheet.status = "error";
       sheet.error = err.message || "Erreur inconnue";
@@ -4917,11 +4965,12 @@
       chips.push(m3);
       return "\x02" + (chips.length - 1) + "\x02";
     });
-    // Même filet pour une puissance de 10 écrite hors $...$ (ex. "10^{-9}", très fréquent dans les
-    // conversions d'unités pico/nano/micro...) : sans ça, l'exposant s'affiche tel quel ("^{-9}") au
-    // lieu d'être mis en exposant. On couvre aussi un multiplicateur juste devant (ex. "2,5 × 10^{-7}").
-    text = text.replace(/(?:[0-9]+(?:[.,][0-9]+)?\s*[×x*]\s*)?[0-9]+(?:[.,][0-9]+)?\s*\^\s*\{[^{}]*\}/g, function (m4) {
-      chips.push(m4.replace(/\s*\^\s*/, "^").replace(/[×x*]/, "\\times"));
+    // Même filet pour une puissance de 10 écrite hors $...$ (ex. "10^{-9}" ou, encore plus fréquent
+    // quand l'IA oublie les accolades, "10^9"/"x^2"), très courant dans les conversions d'unités
+    // pico/nano/micro... : sans ça, l'exposant s'affiche tel quel ("^9") au lieu d'être mis en exposant.
+    // On couvre aussi un multiplicateur juste devant (ex. "2,5 × 10^{-7}") et le cas sans accolades.
+    text = text.replace(/((?:[0-9]+(?:[.,][0-9]+)?\s*[×x*]\s*)?[0-9]+(?:[.,][0-9]+)?)\s*\^\s*(?:\{([^{}]*)\}|(-?[0-9]+))/g, function (m4, base, braced, bare) {
+      chips.push(base.replace(/[×x*]/, "\\times") + "^{" + (braced !== undefined ? braced : bare) + "}");
       return "\x02" + (chips.length - 1) + "\x02";
     });
     return { text: text, chips: chips };
@@ -5489,82 +5538,8 @@
       return new XMLSerializer().serializeToString(root);
     } catch (e) { return ""; }
   }
-  // Le spectre de la lumière visible (longueur d'onde ↔ couleur) est un cas très fréquent en physique-
-  // chimie, mais demander à l'IA de juger elle-même qu'il en faut un et de le dessiner s'est révélé peu
-  // fiable en pratique (elle l'oublie souvent, même avec des consignes explicites). Comme ce schéma est
-  // toujours le même (seules les longueurs d'onde marquées changent) et que ces valeurs sont de toute
-  // façon déjà écrites en toutes lettres dans l'énoncé ("530 nm"...), on le reconstruit nous-mêmes de
-  // façon déterministe dès qu'on détecte des "nm" dans le texte, sans dépendre du figureSvg de l'IA.
-  function wavelengthToRgb(nm) {
-    var r = 0, g = 0, b = 0, factor;
-    if (nm >= 380 && nm < 440) { r = -(nm - 440) / 60; b = 1; }
-    else if (nm < 490) { g = (nm - 440) / 50; b = 1; }
-    else if (nm < 510) { g = 1; b = -(nm - 510) / 20; }
-    else if (nm < 580) { r = (nm - 510) / 70; g = 1; }
-    else if (nm < 645) { r = 1; g = -(nm - 645) / 65; }
-    else if (nm <= 780) { r = 1; }
-    if (nm >= 380 && nm < 420) factor = 0.3 + 0.7 * (nm - 380) / 40;
-    else if (nm < 701) factor = 1;
-    else if (nm <= 780) factor = 0.3 + 0.7 * (780 - nm) / 80;
-    else factor = 0;
-    function ch(c) { return c <= 0 ? 0 : Math.round(255 * Math.pow(c * factor, 0.8)); }
-    return "rgb(" + ch(r) + "," + ch(g) + "," + ch(b) + ")";
-  }
-  function extractWavelengthsNm(text) {
-    if (!text) return [];
-    // Le nombre et l'unité "nm" sont presque toujours séparés par du bruit LaTeX entre les deux
-    // (fin de mode maths "$", \text{...}, \mathrm{...}, espace fine \, \; ...) — plutôt que d'essayer
-    // d'énumérer chaque notation LaTeX possible pour l'unité, on neutralise d'abord tout ce bruit pour
-    // ne garder que du texte brut, puis on cherche simplement "440 nm" dedans.
-    var cleaned = String(text)
-      .replace(/\\text\s*\{([^}]*)\}/gi, " $1 ")
-      .replace(/\\mathrm\s*\{([^}]*)\}/gi, " $1 ")
-      .replace(/\\(?:quad|qquad)/gi, " ")
-      .replace(/\\[,;:!]/g, " ")
-      .replace(/[${}\\~]/g, " ");
-    var out = [];
-    var re = /(\d{3}(?:[.,]\d+)?)\s*(?:nm\b|nanom[eè]tres?\b)/gi;
-    var m;
-    while ((m = re.exec(cleaned))) {
-      var v = parseFloat(m[1].replace(",", "."));
-      if (v >= 100 && v <= 1000 && out.indexOf(v) === -1) out.push(v);
-    }
-    return out.slice(0, 4);
-  }
-  var visibleSpectrumSvgSeq = 0;
-  function visibleSpectrumSvg(wavelengths) {
-    var gradId = "specGrad" + (visibleSpectrumSvgSeq++); // plusieurs spectres peuvent s'afficher sur la même page (liste de correction) : un id de <linearGradient> dupliqué ferait pointer le mauvais dégradé
-    var W = 640, H = 170, barX = 50, barY = 50, barW = 540, barH = 55, domainMin = 380, domainMax = 700;
-    function xFor(nm) { return barX + (Math.min(Math.max(nm, domainMin), domainMax) - domainMin) / (domainMax - domainMin) * barW; }
-    var stops = [];
-    for (var nm = domainMin; nm <= domainMax; nm += 10) {
-      stops.push('<stop offset="' + Math.round((nm - domainMin) / (domainMax - domainMin) * 100) + '%" stop-color="' + wavelengthToRgb(nm) + '"/>');
-    }
-    var ticks = [];
-    for (var t = 400; t <= 700; t += 50) {
-      var tx = xFor(t);
-      ticks.push('<line x1="' + tx + '" y1="' + (barY + barH) + '" x2="' + tx + '" y2="' + (barY + barH + 6) + '" stroke="#111" stroke-width="1.5"/>' +
-        '<text x="' + tx + '" y="' + (barY + barH + 20) + '" font-size="12" text-anchor="middle" fill="#111">' + t + '</text>');
-    }
-    var markers = (wavelengths || []).map(function (nmv) {
-      var mx = xFor(nmv);
-      return '<g><line x1="' + mx + '" y1="' + (barY - 14) + '" x2="' + mx + '" y2="' + (barY + barH) + '" stroke="#111" stroke-width="2" stroke-dasharray="3,2"/>' +
-        '<polygon points="' + (mx - 6) + ',' + (barY - 14) + ' ' + (mx + 6) + ',' + (barY - 14) + ' ' + mx + ',' + (barY - 2) + '" fill="#111"/>' +
-        '<text x="' + mx + '" y="' + (barY - 20) + '" font-size="13" font-weight="700" text-anchor="middle" fill="#111">' + nmv + ' nm</text></g>';
-    }).join("");
-    return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
-      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="1" y2="0">' + stops.join("") + '</linearGradient></defs>' +
-      '<rect x="' + barX + '" y="' + barY + '" width="' + barW + '" height="' + barH + '" fill="url(#' + gradId + ')" stroke="#111" stroke-width="1.5"/>' +
-      ticks.join("") + markers +
-      '<text x="' + (barX + barW / 2) + '" y="' + (H - 6) + '" font-size="12" text-anchor="middle" fill="#333">Longueur d\'onde (nm) — spectre de la lumière visible</text>' +
-      '</svg>';
-  }
   function resolveExerciseFigureSvg(item) {
-    if (!item) return "";
-    if (item.figureSvg) return item.figureSvg;
-    var wavelengths = extractWavelengthsNm(item.prompt || "");
-    return wavelengths.length ? visibleSpectrumSvg(wavelengths) : "";
+    return (item && item.figureSvg) || "";
   }
   // Un énoncé qui dit "voir le graphique ci-contre" sans qu'aucun schéma n'ait pu être récupéré (photo
   // importée mal cadrée, détection de figure ratée par l'IA...) est tout aussi inutilisable qu'un
