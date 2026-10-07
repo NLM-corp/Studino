@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -557,8 +557,9 @@
   // modèle le PLUS CAPABLE (le premier de la liste) en tout dernier recours, plutôt que de finir
   // systématiquement sur le modèle le plus faible (flash-lite) qui est justement le moins apte à
   // reformuler intelligemment un contenu très indexé en ligne.
-  async function tryGeminiModel(apiKey, modelName, parts, schema, recitationCount) {
+  async function tryGeminiModel(apiKey, modelName, parts, schema, recitationCount, maxOutputTokens) {
     var generationConfig = { response_mime_type: "application/json", response_schema: schema };
+    if (maxOutputTokens) generationConfig.max_output_tokens = maxOutputTokens;
     var requestParts = parts;
     if (recitationCount > 0) {
       generationConfig.temperature = 1; // max dès le 1er réessai : une hausse progressive laissait trop d'essais à basse créativité
@@ -615,13 +616,13 @@
     httpErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(errBody, null, 2);
     return { ok: false, err: httpErr, retryable: retryable, rateLimit: res.status === 429 };
   }
-  async function attemptGeminiWithKey(apiKey, parts, schema) {
+  async function attemptGeminiWithKey(apiKey, parts, schema, maxOutputTokens) {
     var lastErr = null;
     var hadRateLimit = false;
     var recitationRetries = 0;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
-      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries);
+      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens);
       if (r.ok) return r.value;
       lastErr = r.err;
       if (r.rateLimit) hadRateLimit = true;
@@ -633,7 +634,7 @@
     // donc une dernière fois avec le modèle le PLUS capable (le premier de la liste) et la consigne de
     // reformulation la plus insistante, plutôt que d'abandonner sur l'essai le plus faible.
     if (recitationRetries > 0 && GEMINI_MODELS.length > 1) {
-      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1);
+      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1, maxOutputTokens);
       if (last.ok) return last.value;
       lastErr = last.err;
     }
@@ -641,18 +642,22 @@
     finalErr.rateLimited = hadRateLimit;
     throw finalErr;
   }
-  async function callGemini(parts, schema) {
+  // maxOutputTokens est optionnel (laisse l'API utiliser la limite par défaut du modèle) — utilisé
+  // uniquement pour les générations dont la sortie peut légitimement être très longue (ex. un podcast à
+  // plusieurs parties de plusieurs milliers de mots chacune), pour ne jamais risquer une réponse
+  // tronquée silencieusement par une limite de sortie trop basse pour ce cas précis.
+  async function callGemini(parts, schema, maxOutputTokens) {
     var primaryKey = getApiKey();
     if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     try {
-      return await attemptGeminiWithKey(primaryKey, parts, schema);
+      return await attemptGeminiWithKey(primaryKey, parts, schema, maxOutputTokens);
     } catch (err1) {
       var backupKey = getBackupApiKey();
       if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? rateLimitFallbackError(err1.detail, false) : err1);
       // Clé principale à quota sur ses 4 modèles : bascule entière sur la clé de secours (compte Google
       // différent, donc quota totalement indépendant) avant d'abandonner pour de bon.
       try {
-        return await attemptGeminiWithKey(backupKey, parts, schema);
+        return await attemptGeminiWithKey(backupKey, parts, schema, maxOutputTokens);
       } catch (err2) {
         throw (err2.rateLimited ? rateLimitFallbackError(err2.detail, true) : err2);
       }
@@ -1029,7 +1034,7 @@
       "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
       "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
       "- DURÉE par partie, règle STRICTE : entre 1600 et 3500 mots (à l'oral, environ 10 à 22 minutes) — jamais en dessous de 1600. Si le contenu du cours semble court pour ça, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
-      "- NOMBRE DE PARTIES : C'EST TOI QUI DÉCIDES, pas l'élève. Regarde la quantité réelle de contenu à couvrir : si tout tient confortablement dans UNE SEULE partie de 1600 à 3500 mots en couvrant vraiment tout en profondeur, fais UNE SEULE partie — ne découpe JAMAIS artificiellement juste pour faire plusieurs parties. Si en revanche le contenu est si riche qu'une seule partie dépasserait largement 3500 mots pour tout couvrir en profondeur, découpe en plusieurs parties cohérentes (par grands thèmes/sections), chacune respectant elle-même la fourchette de 1600 à 3500 mots, sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies.\n" +
+      "- NOMBRE DE PARTIES : C'EST TOI QUI DÉCIDES, pas l'élève, et il N'Y A AUCUNE LIMITE HAUTE — ni 2, ni 3, ni 5 : le seul critère est la quantité réelle de contenu à couvrir EN PROFONDEUR. Regarde CHAQUE grande section/notion du cours et demande-toi si elle peut vraiment être expliquée en profondeur (contexte, exemples, implications) dans le temps qui lui reste disponible ; si non, c'est qu'il faut une partie de plus. Repère concret : si le cours a 3 grands thèmes, ça fera souvent 3 parties ; s'il en a 7, ça peut très bien faire 7 parties (ou plus) — ne te bride JAMAIS en te disant qu'un podcast \"a déjà assez de parties\", ce nombre n'existe pas. Si tout tient confortablement dans UNE SEULE partie de 1600 à 3500 mots en couvrant vraiment tout en profondeur, fais UNE SEULE partie — ne découpe JAMAIS artificiellement juste pour faire plusieurs parties. Si en revanche le contenu est si riche qu'une seule partie dépasserait largement 3500 mots pour tout couvrir en profondeur, découpe en plusieurs parties cohérentes (par grands thèmes/sections), chacune respectant elle-même la fourchette de 1600 à 3500 mots, sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies — même si ça fait beaucoup de parties au total, ce n'est jamais un problème.\n" +
       "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
       "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie (ou du podcast entier s'il n'y a qu'une seule partie).\n" +
       "- INTERDIT ABSOLU : aucune notation LaTeX, aucun symbole mathématique brut ($, ^, _, \\frac, °, %, =, ×...) ni aucune abréviation qui se prononcerait mal lue telle quelle — une synthèse vocale va lire ce texte MOT POUR MOT. Écris TOUT en toutes lettres, exactement comme un professeur le dirait à voix haute : \"2^3\" devient \"deux puissance trois\", \"H2O\" devient \"H deux O\" dit \"aitch deux o\" ou plus naturellement \"eau\", \"50%\" devient \"cinquante pour cent\", \"20°C\" devient \"vingt degrés Celsius\", \"=\" devient \"égale\", une fraction \"3/4\" devient \"trois quarts\". Fais cette conversion pour CHAQUE formule, unité ou nombre technique du cours, sans exception.\n" +
@@ -1039,7 +1044,10 @@
   }
   function generatePodcastScript(subjectName, scopeName, scopeLevel, content) {
     var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content) }];
-    return callGemini(parts, PODCAST_SCRIPT_SCHEMA);
+    // Un cours très riche peut légitimement nécessiter de nombreuses parties de plusieurs milliers de
+    // mots chacune : une limite de sortie par défaut trop basse tronquerait la réponse en silence avant
+    // que l'IA ait fini, donnant l'impression d'un plafond artificiel sur le nombre de parties.
+    return callGemini(parts, PODCAST_SCRIPT_SCHEMA, 65536);
   }
 
   // Convertit un buffer en base64 par blocs (plutôt que String.fromCharCode.apply(null, bytes) d'un
