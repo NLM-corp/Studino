@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4606,6 +4606,7 @@
       '<div style="display:flex;gap:10px;margin-left:auto;align-items:center">' +
       (sheet.status === "ready" ? '<div class="print-scale-ctrl" title="Taille de la police à l\'impression"><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(-0.1)">−</button><span class="mono" style="min-width:42px;text-align:center;display:inline-block">' + Math.round(getPrintScale() * 100) + '%</span><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(0.1)">+</button></div>' : "") +
       (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.downloadRevisionSheetPdf(\'' + sheet.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
+      (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.viewRevisionSheetRaw(\'' + sheet.id + '\')">📄 Texte brut</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'revisionSheet\',null,null,null,\'' + sheet.id + '\')">' + icon("trash") + ' Supprimer</button>' +
       '</div>' +
       '</div>';
@@ -6271,6 +6272,11 @@
         (modal.status ? '<p class="modal-warn" style="margin-bottom:10px">Code HTTP : <strong>' + esc(String(modal.status)) + '</strong></p>' : '') +
         '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
+    } else if (modal.type === "revisionSheetRaw") {
+      inner = '<h3>Texte brut de la fiche (Markdown généré par l\'IA)</h3>' +
+        '<p class="modal-warn" style="margin-bottom:10px">Vue de debug : exactement ce que l\'IA a renvoyé, avant mise en forme.</p>' +
+        '<pre class="error-detail-pre">' + esc(modal.content || "(vide)") + '</pre>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
     } else if (modal.type === "latex") {
       var latexNavBtn = function (dir, label, title) {
         return '<button type="button" class="rte-btn latex-nav-btn" title="' + title + '" onmousedown="event.preventDefault()" onclick="App.latexMove(\'' + dir + '\')">' + label + '</button>';
@@ -7034,6 +7040,12 @@
       var theme = subj && findTheme(subj, sheet.themeId);
       var chap = theme && findChapter(theme, sheet.chapterId);
       printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
+    },
+    viewRevisionSheetRaw: function (sheetId) {
+      var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
+      if (!sheet) return;
+      modal = { type: "revisionSheetRaw", content: sheet.content };
+      render();
     },
     adjustPrintScale: function (delta) {
       setPrintScale(getPrintScale() + delta);
