@@ -247,6 +247,7 @@
   .switch::after { content: ""; position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-muted); transition: transform .15s ease, background .15s ease; }
   [data-app-theme="dark"] .switch::after { transform: translateX(16px); background: var(--accent); }
   [data-app-theme="light"] .switch::after { background: var(--accent); }
+  .switch.switch-on::after { transform: translateX(16px); background: var(--accent); }
   .color-swatches { display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 0; }
   .color-swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--border-soft); cursor: pointer; padding: 0; flex: none; }
   .color-swatch:hover { transform: scale(1.08); }

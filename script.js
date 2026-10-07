@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "5.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "5.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -404,6 +404,25 @@
   function getUserGender() { return localStorage.getItem(USER_GENDER_STORAGE) || ""; }
   function setUserGender(g) { if (["m", "f", "autre"].indexOf(g) !== -1) localStorage.setItem(USER_GENDER_STORAGE, g); else localStorage.removeItem(USER_GENDER_STORAGE); }
 
+  // Rappel de révision : limite honnête, Studino est un site statique sans serveur de notifications
+  // push — ça ne peut donc prévenir que si l'onglet est rouvert/déjà ouvert (un simple check au
+  // démarrage), jamais en vrai arrière-plan comme une appli mobile. Mieux que rien, pas une vraie alarme.
+  var REMINDER_STORAGE = "studino_reminder_enabled";
+  var REMINDER_LAST_NOTIF_STORAGE = "studino_reminder_last_notif";
+  function getReminderEnabled() { return localStorage.getItem(REMINDER_STORAGE) === "1"; }
+  function setReminderEnabled(v) { localStorage.setItem(REMINDER_STORAGE, v ? "1" : "0"); }
+  function checkRevisionReminder() {
+    if (!getReminderEnabled() || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    var today = epTodayStr();
+    if (localStorage.getItem(REMINDER_LAST_NOTIF_STORAGE) === today) return;
+    var pending = epData().some(function (p) {
+      return p.planStatus === "ready" && epDaysBetween(today, p.examDate) >= 0 && (!p.sessions || !p.sessions[today] || p.sessions[today].status !== "done");
+    });
+    if (!pending) return;
+    localStorage.setItem(REMINDER_LAST_NOTIF_STORAGE, today);
+    try { new Notification("Studino", { body: "Ta session de révision du jour t'attend sur Mission Contrôle 🦖" }); } catch (e) {}
+  }
+
   // Un exercice/question qui renvoie à un support visuel (figure géométrique, graphique, spectre,
   // schéma, carte...) sans jamais le montrer est inutilisable pour l'élève : contrairement à un
   // exercice importé par photo (où l'image existe déjà), rien ne garantit qu'un tel visuel existe
@@ -413,15 +432,7 @@
     type: "object",
     properties: {
       transcription: { type: "string", description: "Retranscription Markdown structurée du cours." },
-      explanation: { type: "string", description: "Explication simple et claire du cours, en Markdown." },
-      videoQueries: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { label: { type: "string" }, query: { type: "string" } },
-          required: ["label", "query"]
-        }
-      },
+      explanation: { type: "string", description: "Explication pédagogique approfondie du cours, structurée en Markdown (## et ###), notion par notion." },
       flashcards: {
         type: "array",
         items: {
@@ -474,7 +485,7 @@
         }
       }
     },
-    required: ["transcription", "explanation", "videoQueries", "flashcards", "quizQuestions", "exercises", "figures"]
+    required: ["transcription", "explanation", "flashcards", "quizQuestions", "exercises", "figures"]
   };
 
   function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription) {
@@ -493,10 +504,10 @@
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
-      "2. Rédige une explication simple, claire et concrète du contenu pour un élève qui ne comprend pas bien, en français, avec un exemple si utile.\n" +
-      "3. Propose 3 requêtes de recherche YouTube pertinentes pour approfondir ce cours (un label court + la requête de recherche).\n" +
-      "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota.\n" +
-      "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). RÈGLE STRICTE sur le type : toute question de catégorie \"definition\" ou \"formule\" — donc tout ce qui se récite mot pour mot — DOIT être de type \"ouverte\" (l'élève réécrit lui-même la définition/formule ; JAMAIS de type \"qcm\" pour ces deux catégories, reconnaître une bonne réponse parmi 4 ne prouve pas qu'on la sait par cœur). Seule la catégorie \"application\" peut être en \"qcm\", et encore minoritairement : au global sur l'ensemble des questions, le type \"ouverte\" doit rester largement majoritaire (au moins deux tiers), le \"qcm\" n'est qu'un complément. Chaque question a une explication de la bonne réponse dans \"explanation\".\n" +
+      "2. Rédige une VRAIE explication pédagogique approfondie, pas un résumé reformulé en plus simple. Pour CHAQUE notion du cours (pas seulement les principales) : explique le \"pourquoi\" avant/avec le \"quoi\" (d'où ça vient, à quoi ça sert, pourquoi c'est vrai ou pourquoi on en a besoin), donne au moins un exemple concret et chiffré/situé (jamais juste \"par exemple...\" vague), anticipe et lève explicitement la confusion ou l'erreur la plus fréquente sur cette notion précise (\"beaucoup d'élèves confondent X et Y, mais...\"), et relie la notion à celles qui précèdent/suivent dans le cours pour que l'ensemble forme un raisonnement cohérent plutôt qu'une liste de paragraphes indépendants. Structure-la en Markdown avec les mêmes ## et ### que la retranscription (une sous-section par grande notion), jamais un seul bloc de texte continu. Une explication qui se contente de reformuler la transcription avec des mots plus simples, sans profondeur ni exemple ni mise en garde, est un ÉCHEC — vise la longueur et la richesse qu'il faut pour que l'élève comprenne vraiment, pas un résumé expéditif.\n" +
+      "3. Les vidéos YouTube recommandées sont gérées séparément après cette génération (recherche de vraies vidéos existantes) : ignore ce point ici.\n" +
+      "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota. Qualité exigée pour chaque flashcard : \"q\" doit être une question PRÉCISE et autonome (compréhensible sans relire le cours, jamais une question vague type \"à quoi ça sert ?\" sans préciser de quoi on parle) ; \"a\" doit être une réponse COMPLÈTE et formulée en vraie phrase (jamais un mot ou un fragment télégraphique isolé, sauf si la réponse est authentiquement un seul mot/une seule valeur comme une date ou un nombre) — une flashcard doit se suffire à elle-même pour réviser sans le cours sous les yeux.\n" +
+      "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). RÈGLE STRICTE sur le type : toute question de catégorie \"definition\" ou \"formule\" — donc tout ce qui se récite mot pour mot — DOIT être de type \"ouverte\" (l'élève réécrit lui-même la définition/formule ; JAMAIS de type \"qcm\" pour ces deux catégories, reconnaître une bonne réponse parmi 4 ne prouve pas qu'on la sait par cœur). Seule la catégorie \"application\" peut être en \"qcm\", et encore minoritairement : au global sur l'ensemble des questions, le type \"ouverte\" doit rester largement majoritaire (au moins deux tiers), le \"qcm\" n'est qu'un complément. Qualité exigée, sans exception : l'énoncé (\"prompt\") doit être précis et sans ambiguïté (une seule bonne réponse possible, jamais une formulation qui prête à interprétation) ; pour un \"qcm\", les 3 mauvaises réponses doivent être réellement plausibles (des erreurs ou confusions fréquentes sur cette notion précise), jamais des réponses absurdes ou évidemment fausses qui rendent le choix trivial sans connaître le cours ; \"explanation\" doit vraiment expliquer POURQUOI la bonne réponse est correcte (et implicitement pourquoi les autres ne le sont pas pour un qcm), pas se contenter de la répéter. Une question mal formulée, ambiguë ou avec des distracteurs ridicules est un ÉCHEC même si la bonne réponse elle-même est juste.\n" +
       "6. Génère un nombre d'exercices plus complets ADAPTÉ à la richesse du cours (au moins 4, et bien plus pour un cours dense qui s'y prête — pas de plafond artificiel), volontairement PLUS DIFFICILES que les questions ci-dessus : plusieurs étapes de raisonnement ou de calcul, une vraie difficulté à surmonter, quitte à être longs si besoin (un exercice qui prend 15-20 minutes de réflexion n'est pas un problème, l'objectif est que l'élève ait vraiment cherché et progressé, pas reconnu une réponse en 30 secondes). Chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
       (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. Signal à prendre TRÈS au sérieux : dès que le texte source dit \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma, c'est qu'un visuel est physiquement présent à cet endroit — cherche-le activement et capture-le, ne le laisse jamais de côté. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
       "8. Pour CHAQUE question de révision et CHAQUE exercice (champ \"figureSvg\" de chacun) : dès qu'un support visuel est NÉCESSAIRE pour lire une DONNÉE externe du problème — même si l'énoncé ne le dit pas explicitement en mots (ex. donner des longueurs d'onde et demander une couleur suppose le spectre visible sous les yeux, même sans le mot \"spectre\" dans l'énoncé) —, tu DOIS dessiner toi-même ce support en SVG dans \"figureSvg\". ATTENTION, ne confonds jamais ça avec fournir la réponse : si la question teste une connaissance à savoir par cœur d'après le cours (une date/un événement d'histoire-géo, une formule de maths/physique à connaître, une définition, un résultat, un nom), \"figureSvg\" reste VIDE, un point c'est tout — par exemple jamais de frise chronologique pour une question de date, jamais la formule elle-même dessinée en image pour une question qui demande de connaître ou d'appliquer une formule du cours. " + FIGURE_SVG_FIELD_DESC + " Pour toutes les autres questions/exercices (la grande majorité, purement textuels ou calculatoires, ou testant une connaissance à savoir par cœur), laisse \"figureSvg\" vide.\n\n" +
@@ -2315,6 +2326,32 @@
     });
   }
 
+  // Avant, l'IA se contentait de proposer des requêtes de recherche ("un label + une requête") et le
+  // site construisait un simple lien "youtube.com/results?search_query=..." — pas une vraie vidéo, juste
+  // une suggestion de recherche. On cherche maintenant réellement sur internet (grounding Google Search)
+  // de vraies vidéos existantes et on ne garde que les liens youtube.com/youtu.be effectivement trouvés,
+  // sans jamais inventer de vidéo ou d'URL.
+  function buildCourseVideoSearchPrompt(title, subjectName, chapterName, content) {
+    return "Cherche sur internet 3 vraies vidéos YouTube pédagogiques de qualité (de préférence en français, adaptées à un élève) qui expliquent bien le sujet du cours suivant.\n\n" +
+      "Matière : " + subjectName + ", chapitre : " + chapterName + ", titre du cours : " + title + "\n\n" +
+      "Résumé du contenu du cours (pour bien cibler les vidéos) :\n\n" + String(content || "").slice(0, 2500) + "\n\n" +
+      "Pour chacune des vidéos que tu trouves réellement en cherchant, donne son titre exact et explique en une phrase pourquoi elle est pertinente. N'invente JAMAIS une vidéo ou un lien qui n'existe pas : si tu ne trouves vraiment aucune vidéo pertinente, dis-le simplement plutôt que d'en inventer une.";
+  }
+  function generateCourseVideoLinks(title, subjectName, chapterName, content) {
+    return callGeminiSearch([{ text: buildCourseVideoSearchPrompt(title, subjectName, chapterName, content) }])
+      .then(function (res) {
+        var seen = {};
+        return (res.sources || []).filter(function (s) {
+          return s.uri && /(?:youtube\.com\/watch\?v=|youtu\.be\/)/i.test(s.uri);
+        }).filter(function (s) {
+          if (seen[s.uri]) return false;
+          seen[s.uri] = true;
+          return true;
+        }).slice(0, 3).map(function (s) { return { title: s.title || "Vidéo YouTube", sub: subjectName, url: s.uri }; });
+      })
+      .catch(function () { return []; });
+  }
+
   function runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription, attempt) {
     attempt = attempt || 1;
     course.status = "processing";
@@ -2362,9 +2399,7 @@
           // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
           // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
           course.figures = resolved.figures;
-          course.videos = (data.videoQueries || []).map(function (v) {
-            return { title: v.label + " — " + course.title, sub: "Recherche YouTube · " + subjectName, url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(v.query) };
-          });
+          course.videos = course.videos || [];
           course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
           course.quizQuestions = quizQuestions;
           course.exercises = exercises;
@@ -2378,6 +2413,12 @@
           saveDB();
           toast("Cours généré · " + course.title);
           render();
+          // Recherche de vraies vidéos en arrière-plan, après coup : le cours reste utilisable tout de
+          // suite sans attendre cette passe, et si aucune vidéo pertinente n'est trouvée, on laisse
+          // simplement la liste vide plutôt que d'inventer un lien.
+          generateCourseVideoLinks(course.title, subjectName, chapterName, transcription).then(function (videos) {
+            if (videos.length) { course.videos = videos; saveDB(); render(); }
+          });
         });
       });
     }).catch(function (err) {
@@ -4080,6 +4121,7 @@
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.closeMobileNav();App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.closeMobileNav();App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
+      '<button class="nav-item ' + (parts[0] === "progression" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/progression\'">📊 Progression</button>' +
       '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'">' + icon("book") + ' Méthodologie</button>' +
       '<button class="nav-item ' + (parts[0] === "podcasts" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/podcasts\'">🎙️ Podcast</button>' +
       '<div class="sidebar-bottom">' +
@@ -4533,7 +4575,7 @@
     }
     var body = '<div class="podcast-fullscreen">' +
       '<img src="' + PODCAST_DIR + podcastIdleImgCache + '" class="podcast-bg-img" alt="">' +
-      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><div class="podcast-fs-title">Podcast</div></div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
+      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">🎙️ Podcast</div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
       '<div class="podcast-fs-library">' + libraryHtml + '</div>' +
       '</div>';
     renderShell(["podcasts"], body);
@@ -4665,9 +4707,75 @@
     });
     return blocks.join("\n\n");
   }
+
+  /* ---------------- Progression (tableau de bord) ---------------- */
+  function progressionStats() {
+    var subs = userData().subjects;
+    var bySubject = subs.map(function (s) {
+      var courses = 0, fcKnown = 0, fcTotal = 0;
+      (s.themes || []).forEach(function (t) {
+        (t.chapters || []).forEach(function (c) {
+          (c.courses || []).forEach(function (co) {
+            if (co.status === "ready") courses++;
+            (co.flashcards || []).forEach(function (f) { fcTotal++; if (f.status === "known") fcKnown++; });
+          });
+        });
+      });
+      return { id: s.id, name: s.name, courses: courses, fcKnown: fcKnown, fcTotal: fcTotal };
+    }).filter(function (s) { return s.courses > 0 || s.fcTotal > 0; });
+    var activeDays = {};
+    epData().forEach(function (p) {
+      Object.keys(p.sessions || {}).forEach(function (d) { if (p.sessions[d].status === "done") activeDays[d] = true; });
+    });
+    var today = epTodayStr();
+    var streak = 0;
+    var cursor = activeDays[today] ? today : epAddDays(today, -1); // ne casse pas la série si la session du jour n'est juste pas encore faite
+    while (activeDays[cursor]) { streak++; cursor = epAddDays(cursor, -1); }
+    var preps = epData().filter(function (p) { return epDaysBetween(today, p.examDate) >= 0 && p.planStatus === "ready"; });
+    var totalFcKnown = bySubject.reduce(function (sum, s) { return sum + s.fcKnown; }, 0);
+    var totalFcTotal = bySubject.reduce(function (sum, s) { return sum + s.fcTotal; }, 0);
+    var totalCourses = bySubject.reduce(function (sum, s) { return sum + s.courses; }, 0);
+    return { bySubject: bySubject, streak: streak, preps: preps, totalFcKnown: totalFcKnown, totalFcTotal: totalFcTotal, totalCourses: totalCourses };
+  }
+  function progressionBarHtml(label, pct) {
+    var tier = epReadinessTier(pct);
+    return '<div class="ep-readiness ep-readiness-compact">' +
+      '<div class="ep-readiness-head"><span>' + esc(label) + ' : <strong>' + pct + '%</strong></span></div>' +
+      '<div class="ep-readiness-bar"><div class="ep-readiness-fill ep-readiness-' + tier + '" style="width:' + pct + '%"></div></div>' +
+      '</div>';
+  }
+  function renderProgressionPage() {
+    var stats = progressionStats();
+    var head = '<div class="page-head"><div><div class="page-title-row"><h1 class="page-title">📊 Progression</h1></div><p class="page-sub">Ce que tu as déjà révisé, matière par matière.</p></div></div>';
+    var streakHtml = '<div class="card-grid-signs-short"><div class="tile tile-sign tile-sign-metal" style="cursor:default">' +
+      '<div class="tile-icon">🔥</div><div class="tile-title">' + stats.streak + ' jour' + (stats.streak > 1 ? "s" : "") + ' de suite</div>' +
+      '<div class="tile-meta">' + (stats.streak > 0 ? "Continue sur ta lancée avec Mission Contrôle !" : "Fais une session Mission Contrôle aujourd'hui pour démarrer une série.") + '</div>' +
+      '</div></div>';
+    var globalHtml = '<div class="dp-exercise-box" style="margin:16px 0"><div class="dp-exercise-label">Au total</div>' +
+      '<p style="margin:0 0 8px">' + stats.totalCourses + ' cours générés · ' + stats.totalFcKnown + ' / ' + stats.totalFcTotal + ' flashcards maîtrisées' + (stats.preps.length ? ' · ' + stats.preps.length + ' prépa' + (stats.preps.length > 1 ? "s" : "") + ' en cours' : "") + '</p>' +
+      progressionBarHtml("Flashcards maîtrisées", stats.totalFcTotal ? Math.round(stats.totalFcKnown / stats.totalFcTotal * 100) : 0) +
+      '</div>';
+    var subjectsHtml = !stats.bySubject.length ? '<p class="dp-empty-note">Génère au moins un cours pour voir ta progression ici.</p>' :
+      '<div class="card-grid">' + stats.bySubject.map(function (s) {
+        var pct = s.fcTotal ? Math.round(s.fcKnown / s.fcTotal * 100) : 0;
+        return '<div class="tile" style="cursor:default"><div class="tile-title">' + esc(s.name) + '</div>' +
+          '<div class="tile-meta">' + s.courses + ' cours · ' + s.fcKnown + '/' + s.fcTotal + ' flashcards</div>' +
+          progressionBarHtml("Maîtrise", pct) + '</div>';
+      }).join("") + '</div>';
+    var prepsHtml = !stats.preps.length ? "" : '<div class="dp-section"><h3 class="dp-section-title">Prépas en cours</h3><div class="card-grid-signs-short">' +
+      stats.preps.map(function (p) {
+        var daysLeft = epDaysBetween(epTodayStr(), p.examDate);
+        return '<div class="tile tile-sign tile-sign-metal" onclick="location.hash=\'#/examprep/' + p.id + '\'">' +
+          '<div class="tile-icon">' + icon("calendar") + '</div><div class="tile-title">' + esc(p.title) + '</div>' +
+          '<div class="tile-meta">J-' + daysLeft + '</div>' +
+          epReadinessBarHtml(epReadinessPercent(p), true) +
+          '</div>';
+      }).join("") + '</div></div>';
+    renderShell(["progression"], head + streakHtml + globalHtml + '<h3 class="dp-section-title" style="margin-top:20px">Par matière</h3>' + subjectsHtml + prepsHtml);
+  }
   function renderMethodologyListPage() {
     var list = methodoData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
-    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Méthodologie.png" alt=""><h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("book") + '<h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
     var grid;
     if (!list.length) {
@@ -5122,6 +5230,7 @@
       '<p class="page-sub">' + esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) + '</p></div>' +
       (course.status !== "processing" ? (
         '<div style="display:flex;gap:10px;margin-left:auto">' +
+        (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openDownloadCourseModal(\'' + course.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
         '</div>'
@@ -5920,6 +6029,19 @@
       '<div class="print-fiche-body">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' +
       '</div>';
   }
+  function buildCoursePrintHtml(course, subjectName, chapterName, includeExplanation) {
+    var fs = ficheHueAndScaleStyle();
+    var sections = '<h3>Retranscription</h3>' + mdToHtml(course.transcription, course.figures);
+    if (includeExplanation && course.explanation) sections += '<h3>Explication</h3>' + mdToHtml(course.explanation, course.figures);
+    return fs.scaleStyle + '<div class="print-doc print-doc-fiche" ' + fs.hueStyle + '>' +
+      '<div class="print-fiche-header">' +
+      '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
+      '<h1>' + esc(course.title) + '</h1>' +
+      '<div class="print-fiche-sub">Cours</div>' +
+      '</div>' +
+      '<div class="print-fiche-body">' + sections + '</div>' +
+      '</div>';
+  }
   function buildMethodologyPrintHtml(methodo) {
     var fs = ficheHueAndScaleStyle();
     return fs.scaleStyle + '<div class="print-doc print-doc-fiche" ' + fs.hueStyle + '>' +
@@ -5960,7 +6082,10 @@
       return courseFieldEditorHtml(course, "explanation");
     }
     if (tab === "videos") {
-      return '<span class="demo-badge">Recherches suggérées</span><div class="video-list">' + course.videos.map(function (v) {
+      if (!course.videos || !course.videos.length) {
+        return '<p class="dp-empty-note">Aucune vidéo pertinente trouvée pour ce cours' + (course.status === "ready" ? " (recherche en cours ou sans résultat)" : "") + '.</p>';
+      }
+      return '<span class="demo-badge">Vidéos trouvées sur YouTube</span><div class="video-list">' + course.videos.map(function (v) {
         return '<a class="video-item" href="' + v.url + '" target="_blank" rel="noopener noreferrer"><div class="video-ico">' + icon("play") + '</div><div><div class="video-title">' + esc(v.title) + '</div><div class="video-sub">' + esc(v.sub) + '</div></div></a>';
       }).join("") + '</div>';
     }
@@ -6472,6 +6597,8 @@
         '<option value="autre" ' + (getUserGender() === "autre" ? "selected" : "") + '>Autre</option>' +
         '</select>' +
         '<p class="modal-warn" style="margin:6px 0 0">Utilisé par le vieux conteur du Podcast pour s\'adresser à toi naturellement ("mon petit"/"ma petite").</p></div>' +
+        '<div class="theme-row" style="margin-bottom:6px"><span class="theme-label">Rappel de révision</span><button class="switch ' + (getReminderEnabled() ? "switch-on" : "") + '" onclick="App.toggleReminder()" aria-label="Activer le rappel"></button></div>' +
+        '<p class="modal-warn" style="margin:0 0 16px">Notification du navigateur s\'il te reste une session Mission Contrôle à faire aujourd\'hui — seulement quand Studino est ouvert (pas de vraie notification en arrière-plan sans appli).</p>' +
         '<div class="field"><label>Volume musique — <span id="vol-music-val">' + getVolumeMusic() + '</span>%</label>' +
         '<input type="range" min="0" max="100" value="' + getVolumeMusic() + '" oninput="document.getElementById(\'vol-music-val\').textContent=this.value;App.setVolumeMusic(this.value)"></div>' +
         '<div class="field"><label>Volume effets sonores — <span id="vol-sfx-val">' + getVolumeSfx() + '</span>%</label>' +
@@ -6548,6 +6675,12 @@
         (modal.status ? '<p class="modal-warn" style="margin-bottom:10px">Code HTTP : <strong>' + esc(String(modal.status)) + '</strong></p>' : '') +
         '<pre class="error-detail-pre">' + esc(modal.detail || "Aucun détail disponible.") + '</pre>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
+    } else if (modal.type === "downloadCourse") {
+      inner = '<h3>Télécharger ce cours en PDF</h3>' +
+        '<p class="modal-warn" style="margin-bottom:10px">Inclure aussi l\'explication en plus de la retranscription ?</p>' +
+        '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
+        '<button type="button" class="btn btn-ghost" onclick="App.confirmDownloadCoursePdf(\'' + modal.courseId + '\', false)">Juste la retranscription</button>' +
+        '<button type="button" class="btn btn-primary" onclick="App.confirmDownloadCoursePdf(\'' + modal.courseId + '\', true)">+ l\'explication</button></div>';
     } else if (modal.type === "revisionSheetRaw") {
       inner = '<h3>Texte brut de la fiche (Markdown généré par l\'IA)</h3>' +
         '<p class="modal-warn" style="margin-bottom:10px">Vue de debug : exactement ce que l\'IA a renvoyé, avant mise en forme.</p>' +
@@ -6633,6 +6766,15 @@
     setUserGender: function (g) {
       setUserGender(g);
       render();
+    },
+    toggleReminder: function () {
+      if (getReminderEnabled()) { setReminderEnabled(false); render(); return; }
+      if (typeof Notification === "undefined") { toast("Les notifications ne sont pas supportées par ce navigateur."); return; }
+      Notification.requestPermission().then(function (perm) {
+        if (perm === "granted") { setReminderEnabled(true); toast("Rappel activé"); checkRevisionReminder(); }
+        else toast("Autorisation refusée — active les notifications pour ce site dans les réglages de ton navigateur.");
+        render();
+      });
     },
     openModal: function (type, subjectId, themeId, chapterId) {
       modal = { type: type, subjectId: subjectId || (userData().subjects[0] && userData().subjects[0].id), themeId: themeId, chapterId: chapterId, imagePreviews: [] };
@@ -7359,6 +7501,19 @@
       var methodo = methodoFind(id);
       if (!methodo || methodo.status !== "ready") return;
       printAndDownload(buildMethodologyPrintHtml(methodo));
+    },
+    openDownloadCourseModal: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      modal = { type: "downloadCourse", courseId: courseId };
+      render();
+    },
+    confirmDownloadCoursePdf: function (courseId, includeExplanation) {
+      var loc = locateCourse(courseId);
+      if (!loc) return;
+      printAndDownload(buildCoursePrintHtml(loc.course, loc.subject.name, loc.chapter.name, includeExplanation));
+      modal = null;
+      render();
     },
     viewRevisionSheetRaw: function (sheetId) {
       var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
@@ -8433,6 +8588,7 @@
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
       if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
       if (parts[0] === "podcasts") { renderPodcastListPage(); return; }
+      if (parts[0] === "progression") { renderProgressionPage(); return; }
       renderDashboard();
     } catch (err) {
       console.error("Erreur de rendu :", err);
@@ -8459,6 +8615,7 @@
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", syncTopbarHeightVar);
     render();
+    if (DB.currentUser) checkRevisionReminder();
 
     setInterval(function () {
       if (!DB.currentUser) return;
