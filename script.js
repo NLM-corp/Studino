@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "3.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "3.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -5660,8 +5660,25 @@
   function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
     var hue = document.documentElement.getAttribute("data-app-color") || "vert";
     var hc = PRINT_HUE_COLORS[hue] || PRINT_HUE_COLORS.vert;
-    var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + ';--print-scale:' + getPrintScale() + '"';
-    return '<div class="print-doc print-doc-fiche" ' + hueStyle + '>' +
+    var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + '"';
+    // Le zoom d'impression passait par une variable CSS (--print-scale) consommée dans un calc() du
+    // stylesheet statique : correct sur le papier, mais sans effet visible en pratique chez l'utilisateur
+    // (même nombre de pages à 100% et à 280%, donc pas juste une histoire de perception). Plutôt que de
+    // continuer à deviner quelle subtilité de substitution CSS/imprimante neutralise ce mécanisme, on
+    // calcule directement les tailles en pixels ici et on les injecte en dur dans un <style> scopé à
+    // cette page imprimée : aucune dépendance à var()/calc(), donc aucune ambiguïté possible.
+    var scale = getPrintScale();
+    function px(n) { return (n * scale).toFixed(2) + "px"; }
+    var scaleStyle = '<style>' +
+      '.print-fiche-eyebrow{font-size:' + px(11) + '}' +
+      '.print-doc-fiche h1{font-size:' + px(27) + '}' +
+      '.print-fiche-sub{font-size:' + px(12) + '}' +
+      '.print-fiche-body{font-size:' + px(13.5) + '}' +
+      '.print-fiche-body h3{font-size:' + px(16) + '}' +
+      '.print-fiche-body h4{font-size:' + px(14) + '}' +
+      '.print-fiche-body table{font-size:' + px(12.5) + '}' +
+      '</style>';
+    return scaleStyle + '<div class="print-doc print-doc-fiche" ' + hueStyle + '>' +
       '<div class="print-fiche-header">' +
       '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
       '<h1>' + esc(sheet.title) + '</h1>' +
