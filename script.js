@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "5.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "5.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4575,7 +4575,7 @@
     }
     var body = '<div class="podcast-fullscreen">' +
       '<img src="' + PODCAST_DIR + podcastIdleImgCache + '" class="podcast-bg-img" alt="">' +
-      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">🎙️ Podcast</div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
+      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><div class="podcast-fs-title">Podcast</div></div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
       '<div class="podcast-fs-library">' + libraryHtml + '</div>' +
       '</div>';
     renderShell(["podcasts"], body);
@@ -4775,7 +4775,7 @@
   }
   function renderMethodologyListPage() {
     var list = methodoData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
-    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("book") + '<h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Méthodologie.png" alt=""><h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
     var grid;
     if (!list.length) {
