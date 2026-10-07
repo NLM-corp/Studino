@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "2.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "2.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -120,6 +120,7 @@
     if (!DB.data[u].revisionSheets) DB.data[u].revisionSheets = [];
     if (!DB.data[u].examPreps) DB.data[u].examPreps = [];
     if (!DB.data[u].methodologies) DB.data[u].methodologies = [];
+    if (!DB.data[u].podcasts) DB.data[u].podcasts = [];
     // Migration : ancienne hiérarchie matière -> chapitres directement, sans thème.
     // On enveloppe les chapitres existants dans un thème "Général" créé une seule fois.
     DB.data[u].subjects.forEach(function (s) {
@@ -807,6 +808,238 @@
       sheet.errorDetail = err.detail || null;
       saveDB();
       toast("Échec de la génération : " + sheet.error, { status: sheet.errorStatus, detail: sheet.errorDetail });
+      render();
+    });
+  }
+
+  /* ---------------- Podcast (un vieux conteur raconte le cours en audio) ----------------
+     Deux générations distinctes et bien séparées : un texte (le script à lire, un vrai récit engageant
+     plutôt qu'une récitation, fidèle et exhaustif par rapport au cours) PUIS un audio (synthèse vocale
+     à partir de ce script). Les sous-titres sont calés sur la durée réelle de l'audio en répartissant
+     chaque phrase proportionnellement à sa longueur — pas d'horodatage mot-à-mot fourni par l'API, mais
+     une approximation largement suffisante pour suivre à l'oreille. */
+  var PODCAST_DIR = "assets/objects/vieux papi/";
+  var PODCAST_ATTEND_IMGS = ["PapiAttend.png", "PapiAttend2.png", "PapiAttend3.png", "PapiAttend4.png"];
+  var PODCAST_EXPLIQUE_IMGS = ["PapiExplique.png", "PapiExplique2.png", "PapiExplique3.png", "PapiExplique4.png", "PapiExplique5.png", "PapiExplique6.png"];
+  var PODCAST_LIS_IMG = "PapiLis.png";
+  var GEMINI_TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"];
+  var PODCAST_VOICE = "Algenib"; // voix masculine "gravelly" du catalogue Gemini — colle au personnage du vieux conteur
+
+  function podcastData() { return userData().podcasts; }
+  function podcastFind(id) { return podcastData().find(function (p) { return p.id === id; }); }
+
+  var PODCAST_SCRIPT_SCHEMA = {
+    type: "object",
+    properties: {
+      parts: {
+        type: "array",
+        description: "Un élément par partie demandée (voir consigne pour le nombre exact). Si une seule partie est demandée, ce tableau contient un seul élément qui couvre tout le contenu.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Titre court et accrocheur de cette partie du podcast." },
+            script: { type: "string", description: "Texte intégral à lire à voix haute par le narrateur, en français courant, SANS aucune balise, markdown, puce ou didascalie entre parenthèses — uniquement les phrases parlées telles qu'elles doivent être prononcées, prêtes à être envoyées telles quelles à une synthèse vocale." }
+          },
+          required: ["title", "script"]
+        }
+      }
+    },
+    required: ["parts"]
+  };
+  function buildPodcastScriptPrompt(subjectName, chapterName, content, partCount) {
+    return "Tu es un vieux conteur chevronné, un grand-père passionné qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", chapitre : " + chapterName + ") à partir duquel tu dois créer " + (partCount > 1 ? "un podcast en EXACTEMENT " + partCount + " parties" : "un podcast en une seule partie") + ".\n\n" +
+      "Règles absolues :\n" +
+      "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
+      "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
+      "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
+      "- DURÉE, règle STRICTE : chaque partie doit faire AU MINIMUM 1600 mots (à l'oral, ça représente environ 10 à 12 minutes) — ce n'est pas un objectif approximatif, c'est un plancher à respecter absolument, et il n'y a pas de maximum si le sujet le justifie. Si le contenu du cours semble court pour ça, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir avec une vraie compréhension approfondie, pas un résumé accéléré.\n" +
+      (partCount > 1 ? "- Découpe le contenu en EXACTEMENT " + partCount + " parties cohérentes et complémentaires (par grands thèmes/sections du cours), sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies. Le minimum de 1600 mots ci-dessus s'applique à CHAQUE partie individuellement, pas au total réparti entre elles.\n" : "") +
+      "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
+      "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie.\n" +
+      "- INTERDIT ABSOLU : aucune notation LaTeX, aucun symbole mathématique brut ($, ^, _, \\frac, °, %, =, ×...) ni aucune abréviation qui se prononcerait mal lue telle quelle — une synthèse vocale va lire ce texte MOT POUR MOT. Écris TOUT en toutes lettres, exactement comme un professeur le dirait à voix haute : \"2^3\" devient \"deux puissance trois\", \"H2O\" devient \"H deux O\" dit \"aitch deux o\" ou plus naturellement \"eau\", \"50%\" devient \"cinquante pour cent\", \"20°C\" devient \"vingt degrés Celsius\", \"=\" devient \"égale\", une fraction \"3/4\" devient \"trois quarts\". Fais cette conversion pour CHAQUE formule, unité ou nombre technique du cours, sans exception.\n" +
+      "- Respecte une orthographe française irréprochable, avec tous les accents nécessaires (é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal accentué.\n\n" +
+      "Voici le cours :\n\n" + content + "\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  function generatePodcastScript(subjectName, chapterName, content, partCount) {
+    var parts = [{ text: buildPodcastScriptPrompt(subjectName, chapterName, content, partCount) }];
+    return callGemini(parts, PODCAST_SCRIPT_SCHEMA);
+  }
+
+  // Convertit un buffer en base64 par blocs (plutôt que String.fromCharCode.apply(null, bytes) d'un
+  // coup) pour ne pas dépasser la limite d'arguments d'un appel de fonction sur un gros fichier audio.
+  function bytesToBase64(bytes) {
+    var CHUNK = 0x8000;
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
+    }
+    return btoa(parts.join(""));
+  }
+  // La synthèse vocale Gemini renvoie souvent du PCM 16 bits brut (sans en-tête), pas un vrai fichier
+  // .wav directement lisible par <audio> — on reconstruit l'en-tête WAV nous-mêmes autour des octets
+  // reçus si le mimeType annoncé n'est pas déjà un vrai conteneur wav.
+  function pcmBase64ToWavDataUrl(base64Pcm, sampleRate) {
+    sampleRate = sampleRate || 24000;
+    var binary = atob(base64Pcm);
+    var len = binary.length;
+    var pcm = new Uint8Array(len);
+    for (var i = 0; i < len; i++) pcm[i] = binary.charCodeAt(i);
+    var numChannels = 1, bitsPerSample = 16;
+    var byteRate = sampleRate * numChannels * bitsPerSample / 8;
+    var blockAlign = numChannels * bitsPerSample / 8;
+    var buffer = new ArrayBuffer(44 + len);
+    var view = new DataView(buffer);
+    function writeStr(offset, str) { for (var j = 0; j < str.length; j++) view.setUint8(offset + j, str.charCodeAt(j)); }
+    writeStr(0, "RIFF"); view.setUint32(4, 36 + len, true); writeStr(8, "WAVE");
+    writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true); view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true); view.setUint16(32, blockAlign, true); view.setUint16(34, bitsPerSample, true);
+    writeStr(36, "data"); view.setUint32(40, len, true);
+    new Uint8Array(buffer, 44).set(pcm);
+    return "data:audio/wav;base64," + bytesToBase64(new Uint8Array(buffer));
+  }
+  function buildPodcastTtsBody(script, voiceName) {
+    return JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: script }] }],
+      generationConfig: {
+        response_modalities: ["AUDIO"],
+        speech_config: { voice_config: { prebuilt_voice_config: { voice_name: voiceName } } }
+      }
+    });
+  }
+  async function attemptTtsWithKey(apiKey, script, voiceName) {
+    var lastErr = null;
+    for (var i = 0; i < GEMINI_TTS_MODELS.length; i++) {
+      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_TTS_MODELS[i] + ":generateContent";
+      var res;
+      try {
+        res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: buildPodcastTtsBody(script, voiceName) }, 120000);
+      } catch (netErr) {
+        lastErr = new Error("Connexion impossible pour générer l'audio.");
+        lastErr.detail = String(netErr);
+        continue;
+      }
+      if (res.ok) {
+        var data = await res.json();
+        var cand = data.candidates && data.candidates[0];
+        var p = cand && cand.content && cand.content.parts && cand.content.parts[0];
+        var inline = p && p.inlineData;
+        if (inline && inline.data) {
+          var mime = inline.mimeType || "";
+          var rateMatch = /rate=(\d+)/.exec(mime);
+          var sampleRate = rateMatch ? +rateMatch[1] : 24000;
+          return /wav/i.test(mime) ? ("data:audio/wav;base64," + inline.data) : pcmBase64ToWavDataUrl(inline.data, sampleRate);
+        }
+        lastErr = new Error("Réponse audio vide de l'API.");
+        lastErr.detail = "Modèle : " + GEMINI_TTS_MODELS[i] + "\n\n" + JSON.stringify(data, null, 2);
+        continue;
+      }
+      var errBody = await res.json().catch(function () { return {}; });
+      var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
+      var retryable = res.status === 503 || res.status === 429 || res.status === 404;
+      lastErr = new Error(msg);
+      lastErr.status = res.status;
+      lastErr.detail = "Modèle : " + GEMINI_TTS_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
+      if (!retryable) throw lastErr;
+    }
+    throw lastErr || new Error("Erreur inconnue lors de la génération audio.");
+  }
+  async function generatePodcastAudio(script, voiceName) {
+    var primaryKey = getApiKey();
+    if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
+    try {
+      return await attemptTtsWithKey(primaryKey, script, voiceName);
+    } catch (err1) {
+      var backupKey = getBackupApiKey();
+      if (!backupKey) throw err1;
+      try { return await attemptTtsWithKey(backupKey, script, voiceName); }
+      catch (err2) { throw err1; }
+    }
+  }
+  function splitScriptIntoSentences(script) {
+    var raw = String(script || "").replace(/\s+/g, " ").trim();
+    var sentences = raw.match(/[^.!?]+[.!?]+(\s+|$)/g) || (raw ? [raw] : []);
+    return sentences.map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  // Pas d'horodatage mot-à-mot fourni par l'API TTS : on approxime le minutage de chaque phrase sur la
+  // durée réelle de l'audio généré. Au NOMBRE DE MOTS plutôt qu'au nombre de caractères (une phrase
+  // pleine de mots courts prend un temps très différent d'une phrase avec un seul mot très long, alors
+  // que les deux peuvent avoir la même longueur en caractères) + une petite pause fixe estimée entre
+  // chaque phrase (le narrateur respire), pour rester bien calé même sur un long podcast.
+  function buildPodcastSegments(script, durationSec) {
+    var sentences = splitScriptIntoSentences(script);
+    if (!sentences.length || !durationSec) return [];
+    var PAUSE = 0.28;
+    var wordCounts = sentences.map(function (s) { return (s.match(/\S+/g) || []).length || 1; });
+    var totalWords = wordCounts.reduce(function (a, b) { return a + b; }, 0) || 1;
+    var totalPause = PAUSE * Math.max(0, sentences.length - 1);
+    var speakableDuration = Math.max(durationSec * 0.5, durationSec - totalPause);
+    var t = 0;
+    return sentences.map(function (s, i) {
+      var share = wordCounts[i] / totalWords * speakableDuration;
+      var seg = { start: t, end: t + share, text: s };
+      t += share + (i < sentences.length - 1 ? PAUSE : 0);
+      return seg;
+    });
+  }
+  function audioDurationFromDataUrl(url) {
+    return new Promise(function (resolve) {
+      var a = new Audio();
+      a.preload = "metadata";
+      a.onloadedmetadata = function () { resolve(isFinite(a.duration) ? a.duration : 0); };
+      a.onerror = function () { resolve(0); };
+      a.src = url;
+    });
+  }
+  // Génère les N parties d'un coup (un seul appel texte), PUIS l'audio de chaque partie l'une après
+  // l'autre (pas en parallèle, pour rester raisonnable côté quota) — chaque partie passe "ready" dès
+  // que SON audio est prêt, sans attendre les autres, pour que l'élève puisse déjà écouter la première.
+  function runPodcastGeneration(podcasts, subjectName, chapterName, content, partCount) {
+    podcasts.forEach(function (p) { p.status = "processing"; });
+    saveDB(); render();
+    generatePodcastScript(subjectName, chapterName, content, partCount).then(function (data) {
+      var scriptParts = (data.parts || []).slice(0, podcasts.length);
+      var runOne = function (i) {
+        if (i >= podcasts.length) return;
+        var pod = podcasts[i];
+        var sp = scriptParts[i];
+        if (!sp || !sp.script) {
+          pod.status = "error";
+          pod.error = "Aucun script généré pour cette partie.";
+          saveDB(); render();
+          return runOne(i + 1);
+        }
+        pod.title = sp.title || pod.title;
+        pod.script = sp.script;
+        generatePodcastAudio(sp.script, PODCAST_VOICE).then(function (audioUrl) {
+          return audioDurationFromDataUrl(audioUrl).then(function (duration) {
+            pod.audioUrl = audioUrl;
+            pod.durationSec = duration;
+            pod.segments = buildPodcastSegments(sp.script, duration);
+            pod.status = "ready";
+            saveDB();
+            toast("🎙️ " + pod.title + " est prêt");
+            render();
+          });
+        }).catch(function (err) {
+          pod.status = "error";
+          pod.error = err.message || "Erreur inconnue";
+          pod.errorStatus = err.status || null;
+          pod.errorDetail = err.detail || null;
+          saveDB(); render();
+        }).then(function () { runOne(i + 1); });
+      };
+      runOne(0);
+    }).catch(function (err) {
+      podcasts.forEach(function (p) {
+        p.status = "error";
+        p.error = err.message || "Erreur inconnue";
+        p.errorStatus = err.status || null;
+        p.errorDetail = err.detail || null;
+      });
+      saveDB();
+      toast("Échec de la génération du podcast : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
       render();
     });
   }
@@ -3528,6 +3761,12 @@
         var meth = methodoFind(parts[1]);
         if (meth) trail.push({ label: meth.title });
       }
+    } else if (parts[0] === "podcasts") {
+      trail.push({ label: "Podcast", hash: "#/podcasts" });
+      if (parts[1]) {
+        var pod = podcastFind(parts[1]);
+        if (pod) trail.push({ label: pod.title });
+      }
     }
     return trail;
   }
@@ -3565,6 +3804,7 @@
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.closeMobileNav();App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
       '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'">' + icon("book") + ' Méthodologie</button>' +
+      '<button class="nav-item ' + (parts[0] === "podcasts" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/podcasts\'">🎙️ Podcast</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeMobileNav();App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -3935,6 +4175,164 @@
       body = '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + col + '</div>' + dinoCompanionHtml() + '</div>';
     }
     renderShell(["exercices", exId], head + body, { narrow: entry.status !== "ready" });
+  }
+
+  /* ---------------- Podcast (pages) ---------------- */
+  var podcastPlayerInterval = null;
+  var podcastIdleImgCache = null; // choisie une seule fois par session — ne doit pas changer à chaque clic
+  var podcastExpliqueByPod = {}; // per podcast id: index courant — stable tant qu'on reste sur CE podcast, change seulement toutes les ~60s
+  var podcastFolderOpen = {}; // per groupId: bool — dossier de parties replié par défaut
+  function podcastFormatTime(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+  function podcastStatusBadge(p) {
+    return p.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Préparation…</span>'
+      : p.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
+      : '<span class="status-pill status-ready">🎧 ' + podcastFormatTime(p.durationSec) + '</span>';
+  }
+  function podcastTileHtml(p) {
+    return '<div class="tile" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
+      '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
+      '<div class="tile-icon">🎙️</div>' +
+      '<div class="tile-title">' + esc(p.title) + '</div>' +
+      podcastStatusBadge(p) +
+      '</div>';
+  }
+  // Plusieurs parties du même podcast (même groupId) prennent un seul emplacement sous forme de
+  // dossier repliable, plutôt qu'une tuile pleine par partie — beaucoup plus compact.
+  function podcastFolderTileHtml(gid, parts) {
+    var chapterName = parts[0].chapterName || parts[0].title;
+    var open = !!podcastFolderOpen[gid];
+    if (!open) {
+      return '<div class="tile" onclick="App.togglePodcastFolder(\'' + gid + '\')">' +
+        '<div class="tile-icon">📁</div>' +
+        '<div class="tile-title">' + esc(chapterName) + '</div>' +
+        '<span class="demo-badge">' + parts.length + ' parties</span>' +
+        '</div>';
+    }
+    return '<div class="tile podcast-folder-open">' +
+      '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div></div>' +
+      '<div class="podcast-folder-items">' + parts.map(function (p) {
+        return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
+          '<span>🎙️ Partie ' + p.partIndex + '</span>' + podcastStatusBadge(p) +
+          '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
+          '</div>';
+      }).join("") + '</div></div>';
+  }
+  function renderPodcastListPage() {
+    var list = podcastData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
+    if (!podcastIdleImgCache) podcastIdleImgCache = PODCAST_ATTEND_IMGS[Math.floor(Math.random() * PODCAST_ATTEND_IMGS.length)];
+    var libraryHtml;
+    if (!list.length) {
+      libraryHtml = '<p class="podcast-fs-empty">Choisis une matière et un chapitre, le vieux conteur s\'occupe du reste.</p>';
+    } else {
+      // Regroupe par matière (comme dans le Menu), puis par groupId à l'intérieur de chaque matière.
+      var bySubject = {}, subjectOrder = [];
+      list.forEach(function (p) {
+        var key = p.subjectId || "?";
+        if (!bySubject[key]) { bySubject[key] = { name: p.subjectName || "Sans matière", items: [] }; subjectOrder.push(key); }
+        bySubject[key].items.push(p);
+      });
+      libraryHtml = subjectOrder.map(function (key) {
+        var grp = bySubject[key];
+        var byGroup = {}, groupOrder = [];
+        grp.items.forEach(function (p) {
+          var gid = p.groupId || p.id;
+          if (!byGroup[gid]) { byGroup[gid] = []; groupOrder.push(gid); }
+          byGroup[gid].push(p);
+        });
+        var tilesHtml = groupOrder.map(function (gid) {
+          var parts = byGroup[gid].sort(function (a, b) { return a.partIndex - b.partIndex; });
+          return parts.length > 1 ? podcastFolderTileHtml(gid, parts) : podcastTileHtml(parts[0]);
+        }).join("");
+        return '<div class="podcast-fs-subject"><div class="podcast-fs-subject-name">' + esc(grp.name) + '</div><div class="podcast-fs-grid">' + tilesHtml + '</div></div>';
+      }).join("");
+    }
+    var body = '<div class="podcast-fullscreen">' +
+      '<img src="' + PODCAST_DIR + podcastIdleImgCache + '" class="podcast-bg-img" alt="">' +
+      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">🎙️ Podcast</div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
+      '<div class="podcast-fs-library">' + libraryHtml + '</div>' +
+      '</div>';
+    renderShell(["podcasts"], body);
+  }
+  function renderPodcastDetailPage(id) {
+    var pod = podcastFind(id);
+    if (!pod) { navigate("#/podcasts"); return; }
+    var closeBtn = '<button class="podcast-fs-close" onclick="location.hash=\'#/podcasts\'" title="Retour">✕</button>';
+    var body;
+    if (pod.status === "processing") {
+      body = '<div class="podcast-fullscreen">' + closeBtn +
+        '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
+        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>Le vieux conteur prépare « ' + esc(pod.title) + ' »… (texte, puis voix — ça peut prendre une minute ou deux)</span></div></div>' +
+        '</div>';
+    } else if (pod.status === "error") {
+      body = '<div class="podcast-fullscreen">' + closeBtn +
+        '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
+        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff"><span>⚠️ ' + esc(pod.error || "La génération a échoué.") + '</span>' +
+        '<div style="display:flex;gap:10px">' +
+        (pod.errorDetail ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.openPodcastErrorDetail(\'' + pod.id + '\')">Détails</button>' : '') +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryPodcastGeneration(\'' + pod.id + '\')">Réessayer</button>' +
+        '</div></div></div></div>';
+    } else {
+      if (!(pod.id in podcastExpliqueByPod)) podcastExpliqueByPod[pod.id] = Math.floor(Math.random() * PODCAST_EXPLIQUE_IMGS.length);
+      body = '<div class="podcast-fullscreen">' + closeBtn +
+        '<img id="podcast-papi-img" src="' + PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[podcastExpliqueByPod[pod.id]] + '" class="podcast-bg-img" alt="">' +
+        '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">' + esc(pod.title) + (pod.partCount > 1 ? ' · Partie ' + pod.partIndex + '/' + pod.partCount : "") + '</div>' +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" title="Régénérer uniquement la voix (ex. après un changement de voix)" onclick="App.regeneratePodcastAudio(\'' + pod.id + '\')">🔄 Voix</button>' +
+        '</div>' +
+        '<div class="podcast-fs-bottom">' +
+        '<div id="podcast-subtitle" class="podcast-subtitle">' + (pod.segments && pod.segments[0] ? esc(pod.segments[0].text) : "") + '</div>' +
+        '<audio id="podcast-audio" src="' + pod.audioUrl + '" preload="metadata" ' +
+        'onplay="document.getElementById(\'podcast-play-icon\').textContent=\'⏸\'" ' +
+        'onpause="document.getElementById(\'podcast-play-icon\').textContent=\'▶\'" ' +
+        'onended="document.getElementById(\'podcast-play-icon\').textContent=\'▶\'"></audio>' +
+        '<div class="podcast-player">' +
+        '<div class="podcast-player-row">' +
+        '<button class="podcast-ctrl-btn" onclick="App.podcastSkip(-10)" title="Reculer de 10s">⏪</button>' +
+        '<button class="podcast-ctrl-btn podcast-ctrl-play" onclick="App.podcastToggleAudio()" title="Lecture/Pause"><span id="podcast-play-icon">▶</span></button>' +
+        '<button class="podcast-ctrl-btn" onclick="App.podcastSkip(10)" title="Avancer de 10s">⏩</button>' +
+        '</div>' +
+        '<input id="podcast-seek" type="range" min="0" max="1000" value="0" oninput="App.podcastSeek(this.value)">' +
+        '<div class="podcast-time-row"><span id="podcast-time-cur">0:00</span><span id="podcast-time-dur">' + podcastFormatTime(pod.durationSec) + '</span></div>' +
+        '</div>' +
+        '</div></div>';
+    }
+    renderShell(["podcasts", id], body);
+    if (pod.status === "ready") podcastEnsurePlayerInterval();
+  }
+  // Rien à voir avec render() : un re-rendu complet recréerait l'élément <audio> et couperait la
+  // lecture en cours. On met donc à jour la barre de progression, le chrono, les sous-titres et la
+  // rotation du papy directement dans le DOM via un intervalle léger, qui s'auto-arrête dès que le
+  // lecteur n'est plus affiché (navigation vers une autre page).
+  function podcastEnsurePlayerInterval() {
+    if (podcastPlayerInterval) return;
+    var lastImgSwitch = Date.now();
+    podcastPlayerInterval = setInterval(function () {
+      var a = document.getElementById("podcast-audio");
+      if (!a) { clearInterval(podcastPlayerInterval); podcastPlayerInterval = null; return; }
+      var parts = location.hash.replace(/^#\//, "").split("/");
+      var pod = parts[0] === "podcasts" && parts[1] ? podcastFind(parts[1]) : null;
+      if (!pod) return;
+      var dur = a.duration || pod.durationSec || 0;
+      var seekEl = document.getElementById("podcast-seek");
+      if (seekEl && dur) seekEl.value = String(Math.round((a.currentTime / dur) * 1000));
+      var curEl = document.getElementById("podcast-time-cur");
+      if (curEl) curEl.textContent = podcastFormatTime(a.currentTime);
+      var subEl = document.getElementById("podcast-subtitle");
+      if (subEl && pod.segments && pod.segments.length) {
+        var seg = pod.segments.find(function (s) { return a.currentTime >= s.start && a.currentTime < s.end; }) || pod.segments[pod.segments.length - 1];
+        if (seg) subEl.textContent = seg.text;
+      }
+      if (Date.now() - lastImgSwitch > 60000) {
+        lastImgSwitch = Date.now();
+        var nextIdx = (podcastExpliqueByPod[pod.id] + 1) % PODCAST_EXPLIQUE_IMGS.length;
+        podcastExpliqueByPod[pod.id] = nextIdx;
+        var imgEl = document.getElementById("podcast-papi-img");
+        if (imgEl) imgEl.src = PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[nextIdx];
+      }
+    }, 400);
   }
 
   /* ---------------- Méthodologies (pages) ---------------- */
@@ -5453,6 +5851,26 @@
         '<div class="field"><label>Titre' + (modal.imagePreviews.length ? "" : ' — le type d\'épreuve') + '</label><input name="title" placeholder="Ex. Méthode de la dissertation" required autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Analyser</button></div>' +
         '</form>';
+    } else if (modal.type === "podcastGen") {
+      var ppSubs = userData().subjects;
+      var ppSubj = findSubject(modal.subjectId) || ppSubs[0];
+      if (ppSubj) modal.subjectId = ppSubj.id;
+      var ppChapters = ppSubj ? subjectChaptersWithContent(ppSubj) : [];
+      if (!ppChapters.some(function (c) { return c.id === modal.chapterId; })) modal.chapterId = ppChapters[0] ? ppChapters[0].id : "";
+      var ppSubjOptions = ppSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
+      var ppChapOptions = ppChapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.themeName + " / " + c.name) + '</option>'; }).join("");
+      inner = '<h3>🎙️ Nouveau podcast</h3>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Le vieux conteur raconte le chapitre choisi, fidèlement et en entier — pas une récitation, un vrai récit.</p>' +
+        (ppSubs.length ? (
+          '<div class="field"><label>Matière</label><select onchange="App.changePodcastSubject(this.value)">' + ppSubjOptions + '</select></div>' +
+          (ppChapters.length ? (
+            '<div class="field"><label>Chapitre</label><select onchange="App.changePodcastChapter(this.value)">' + ppChapOptions + '</select></div>' +
+            '<div class="field"><label>Nombre de parties</label><div style="display:flex;gap:8px">' +
+            [1, 2, 3].map(function (n) { return '<button type="button" class="btn btn-sm ' + ((modal.partCount || 1) === n ? "btn-primary" : "btn-ghost") + '" style="width:auto" onclick="App.setPodcastPartCount(' + n + ')">' + n + (n > 1 ? " parties" : " partie") + '</button>'; }).join("") +
+            '</div></div>' +
+            '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.createPodcast()">Générer</button></div>'
+          ) : '<p class="modal-warn">Cette matière n\'a encore aucun cours généré — génère au moins un cours avant de créer un podcast.</p>')
+        ) : '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>');
     } else if (modal.type === "addCourseDocs") {
       inner = '<h3>Ajouter des documents</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Le contenu de ces nouvelles photos sera fusionné avec la retranscription déjà connue de ce cours, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
@@ -6284,6 +6702,101 @@
       if (!methodo) return;
       runMethodologyGeneration(methodo);
     },
+    togglePodcastFolder: function (gid) { podcastFolderOpen[gid] = !podcastFolderOpen[gid]; render(); },
+    openPodcastModal: function () {
+      var firstSubj = userData().subjects[0];
+      modal = { type: "podcastGen", subjectId: firstSubj && firstSubj.id, chapterId: null, partCount: 1 };
+      render();
+    },
+    changePodcastSubject: function (subjectId) { modal.subjectId = subjectId; modal.chapterId = null; render(); },
+    changePodcastChapter: function (chapterId) { modal.chapterId = chapterId; render(); },
+    setPodcastPartCount: function (n) { modal.partCount = n; render(); },
+    createPodcast: function () {
+      var m = modal;
+      var subj = findSubject(m.subjectId);
+      if (!subj) { toast("Choisis une matière"); return; }
+      var chap = findChapterAnywhere(subj, m.chapterId);
+      if (!chap) { toast("Choisis un chapitre"); return; }
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var content = chapterContentText(subj, m.chapterId);
+      if (!content) { toast("Ce chapitre n'a aucun cours généré"); return; }
+      var partCount = m.partCount || 1;
+      var baseTitle = chap.name;
+      var groupId = uid(); // regroupe les parties d'un même podcast en "dossier" dans la bibliothèque
+      var pods = [];
+      for (var i = 0; i < partCount; i++) {
+        pods.push({
+          id: uid(), groupId: groupId, title: partCount > 1 ? baseTitle + " — partie " + (i + 1) : baseTitle,
+          subjectId: subj.id, subjectName: subj.name, chapterId: chap.id, chapterName: chap.name,
+          partIndex: i + 1, partCount: partCount,
+          status: "processing", error: null, errorStatus: null, errorDetail: null,
+          script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + i
+        });
+      }
+      podcastData().push.apply(podcastData(), pods);
+      saveDB();
+      modal = null;
+      navigate("#/podcasts/" + pods[0].id);
+      runPodcastGeneration(pods, subj.name, chap.name, content, partCount);
+    },
+    retryPodcastGeneration: function (id) {
+      var pod = podcastFind(id);
+      if (!pod) return;
+      var subj = findSubject(pod.subjectId);
+      if (!subj) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      // Repart de zéro pour CETTE partie uniquement (nouveau texte + nouvel audio), sans toucher aux
+      // autres parties éventuelles du même podcast.
+      var content = chapterContentText(subj, pod.chapterId);
+      runPodcastGeneration([pod], subj.name, pod.chapterName, content, 1);
+    },
+    // Reprend le texte déjà généré et ne relance QUE la synthèse vocale — utile pour récupérer la voix
+    // courante (ex. après un changement de PODCAST_VOICE) sans regaspiller un appel de génération de texte.
+    regeneratePodcastAudio: function (id) {
+      var pod = podcastFind(id);
+      if (!pod || !pod.script) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      pod.status = "processing";
+      saveDB(); render();
+      generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
+        return audioDurationFromDataUrl(audioUrl).then(function (duration) {
+          pod.audioUrl = audioUrl;
+          pod.durationSec = duration;
+          pod.segments = buildPodcastSegments(pod.script, duration);
+          pod.status = "ready";
+          saveDB();
+          toast("🎙️ Nouvelle voix générée");
+          render();
+        });
+      }).catch(function (err) {
+        pod.status = "error";
+        pod.error = err.message || "Erreur inconnue";
+        pod.errorStatus = err.status || null;
+        pod.errorDetail = err.detail || null;
+        saveDB(); render();
+      });
+    },
+    openPodcastErrorDetail: function (id) {
+      var pod = podcastFind(id);
+      if (!pod) return;
+      modal = { type: "errorDetail", status: pod.errorStatus, detail: pod.errorDetail };
+      render();
+    },
+    podcastToggleAudio: function () {
+      var a = document.getElementById("podcast-audio");
+      if (!a) return;
+      if (a.paused) a.play(); else a.pause();
+    },
+    podcastSeek: function (val) {
+      var a = document.getElementById("podcast-audio");
+      if (!a || !a.duration) return;
+      a.currentTime = (val / 1000) * a.duration;
+    },
+    podcastSkip: function (sec) {
+      var a = document.getElementById("podcast-audio");
+      if (!a) return;
+      a.currentTime = Math.max(0, Math.min(a.duration || 0, a.currentTime + sec));
+    },
     setMethodoTrainSubject: function (id, subjectId) {
       var st = methodoTrainState[id] || (methodoTrainState[id] = {});
       st.subjectId = subjectId;
@@ -7022,6 +7535,10 @@
         var d5 = userData();
         d5.methodologies = d5.methodologies.filter(function (x) { return x.id !== m.courseId; });
         toast("Méthodologie supprimée");
+      } else if (m.kind === "podcast") {
+        var d6 = userData();
+        d6.podcasts = d6.podcasts.filter(function (x) { return x.id !== m.courseId; });
+        toast("Podcast supprimé");
       }
       saveDB();
       modal = null;
@@ -7525,6 +8042,8 @@
       if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
       if (parts[0] === "methodologies" && parts[1]) { renderMethodologyDetailPage(parts[1]); return; }
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
+      if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
+      if (parts[0] === "podcasts") { renderPodcastListPage(); return; }
       renderDashboard();
     } catch (err) {
       console.error("Erreur de rendu :", err);

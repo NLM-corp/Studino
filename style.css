@@ -872,10 +872,40 @@
   .dino-react-bad { animation: dinoShakeNo .7s ease-in-out; }
   .dp-subject-card-active { box-shadow: 0 0 0 3px var(--accent) inset; }
 
+  /* ---------- Podcast : grande scène façon marchand Dino Park, plein écran SAUF la colonne du menu
+     latéral (250px, même largeur que .shell) qui reste toujours cliquable. En dessous de la barre de
+     recherche/modales (z-index 50) et des toasts (100) pour qu'ils restent visibles par-dessus. ---------- */
+  .podcast-fullscreen { position: fixed; top: 0; right: 0; bottom: 0; left: 250px; z-index: 40; overflow: hidden; background: #0b0c10; }
+  .podcast-bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+  .podcast-fs-close { position: absolute; top: 16px; right: 16px; z-index: 5; width: 40px; height: 40px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); color: #fff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .podcast-fs-header { position: absolute; top: 16px; left: 16px; right: 72px; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .podcast-fs-title { color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.7); font-family: 'Press Start 2P', monospace; font-size: 14px; }
+  .podcast-fs-bottom { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; padding: 24px 24px 28px; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.78) 45%); }
+  .podcast-fs-library { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; max-height: 46vh; overflow-y: auto; background: rgba(0,0,0,0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); padding: 18px 24px 24px; }
+  .podcast-fs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .podcast-fs-empty { color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); text-align: center; font-size: 13.5px; }
+  .podcast-fs-subject { margin-bottom: 18px; }
+  .podcast-fs-subject-name { color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 8px; }
+  .podcast-folder-open { cursor: default; display: flex; flex-direction: column; gap: 0; padding: 10px; }
+  .podcast-folder-head { display: flex; align-items: center; gap: 10px; cursor: pointer; margin-bottom: 8px; }
+  .podcast-folder-items { display: flex; flex-direction: column; gap: 6px; }
+  .podcast-folder-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 7px 9px; border-radius: 8px; background: var(--surface-2); cursor: pointer; }
+  .podcast-folder-item:hover { background: var(--accent-soft); }
+  .podcast-folder-item .tile-del { position: static; margin-left: auto; opacity: 1; }
+  .podcast-subtitle { min-height: 44px; text-align: center; font-size: 15px; font-weight: 600; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.7); padding: 10px 16px; margin: 0 0 16px; }
+  .podcast-player { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+  .podcast-player-row { display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .podcast-ctrl-btn { background: rgba(255,255,255,0.14); backdrop-filter: blur(4px); border: 2px solid rgba(255,255,255,0.4); border-radius: 999px; width: 44px; height: 44px; font-size: 17px; cursor: pointer; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .podcast-ctrl-btn:hover { border-color: var(--accent); }
+  .podcast-ctrl-play { width: 58px; height: 58px; font-size: 22px; background: var(--accent); border-color: var(--accent-shadow); color: var(--accent-contrast); box-shadow: 0 3px 0 var(--accent-shadow); }
+  #podcast-seek { width: 100%; accent-color: var(--accent); cursor: pointer; }
+  .podcast-time-row { display: flex; justify-content: space-between; font-size: 12px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); font-family: 'Press Start 2P', monospace; }
+
   @media (max-width: 780px) {
     .exercise-layout { flex-direction: column-reverse; }
     .dino-companion-panel { width: 100%; position: static; flex-direction: row; justify-content: center; padding: 12px; }
     .dino-companion-wrap, .dino-companion-img { width: 84px; height: 84px; }
+    .podcast-fs-library { max-height: 60vh; }
   }
 
   /* ---------- Rich text mini-editor ---------- */
@@ -1012,6 +1042,8 @@
     /* Grilles de cartes : une seule colonne un peu plus dense plutôt que des cartes trop écrasées. */
     .card-grid, .card-grid-signs-short, .dp-zone-grid, .dp-shop-grid, .dp-enclosure-grid, .dp-lab-grid, .dt-enc-grid { grid-template-columns: 1fr; }
     .stat-row { grid-template-columns: repeat(2, 1fr); }
+    /* Le menu devient un tiroir replié par défaut ici (voir plus haut) : plus de colonne fixe à éviter. */
+    .podcast-fullscreen { left: 0; }
   }
 
   @media (max-width: 420px) {
