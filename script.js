@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "5.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "5.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4121,7 +4121,6 @@
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.closeMobileNav();App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
       '<button class="nav-item ' + (parts[0] === "dinotime" ? "active" : "") + '" onclick="App.closeMobileNav();App.dtGoDinoTime()"><img class="nav-icon-img" src="assets/objects/ui/DinoTime.png" alt=""> DinoTime</button>' +
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
-      '<button class="nav-item ' + (parts[0] === "progression" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/progression\'">📊 Progression</button>' +
       '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'"><img class="nav-icon-img" src="assets/objects/ui/Méthodologie.png" alt=""> Méthodologie</button>' +
       '<button class="nav-item ' + (parts[0] === "podcasts" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/podcasts\'"><img class="nav-icon-img" src="assets/objects/ui/Podcast.png" alt=""> Podcast</button>' +
       '<div class="sidebar-bottom">' +
@@ -4708,71 +4707,6 @@
     return blocks.join("\n\n");
   }
 
-  /* ---------------- Progression (tableau de bord) ---------------- */
-  function progressionStats() {
-    var subs = userData().subjects;
-    var bySubject = subs.map(function (s) {
-      var courses = 0, fcKnown = 0, fcTotal = 0;
-      (s.themes || []).forEach(function (t) {
-        (t.chapters || []).forEach(function (c) {
-          (c.courses || []).forEach(function (co) {
-            if (co.status === "ready") courses++;
-            (co.flashcards || []).forEach(function (f) { fcTotal++; if (f.status === "known") fcKnown++; });
-          });
-        });
-      });
-      return { id: s.id, name: s.name, courses: courses, fcKnown: fcKnown, fcTotal: fcTotal };
-    }).filter(function (s) { return s.courses > 0 || s.fcTotal > 0; });
-    var activeDays = {};
-    epData().forEach(function (p) {
-      Object.keys(p.sessions || {}).forEach(function (d) { if (p.sessions[d].status === "done") activeDays[d] = true; });
-    });
-    var today = epTodayStr();
-    var streak = 0;
-    var cursor = activeDays[today] ? today : epAddDays(today, -1); // ne casse pas la série si la session du jour n'est juste pas encore faite
-    while (activeDays[cursor]) { streak++; cursor = epAddDays(cursor, -1); }
-    var preps = epData().filter(function (p) { return epDaysBetween(today, p.examDate) >= 0 && p.planStatus === "ready"; });
-    var totalFcKnown = bySubject.reduce(function (sum, s) { return sum + s.fcKnown; }, 0);
-    var totalFcTotal = bySubject.reduce(function (sum, s) { return sum + s.fcTotal; }, 0);
-    var totalCourses = bySubject.reduce(function (sum, s) { return sum + s.courses; }, 0);
-    return { bySubject: bySubject, streak: streak, preps: preps, totalFcKnown: totalFcKnown, totalFcTotal: totalFcTotal, totalCourses: totalCourses };
-  }
-  function progressionBarHtml(label, pct) {
-    var tier = epReadinessTier(pct);
-    return '<div class="ep-readiness ep-readiness-compact">' +
-      '<div class="ep-readiness-head"><span>' + esc(label) + ' : <strong>' + pct + '%</strong></span></div>' +
-      '<div class="ep-readiness-bar"><div class="ep-readiness-fill ep-readiness-' + tier + '" style="width:' + pct + '%"></div></div>' +
-      '</div>';
-  }
-  function renderProgressionPage() {
-    var stats = progressionStats();
-    var head = '<div class="page-head"><div><div class="page-title-row"><h1 class="page-title">📊 Progression</h1></div><p class="page-sub">Ce que tu as déjà révisé, matière par matière.</p></div></div>';
-    var streakHtml = '<div class="card-grid-signs-short"><div class="tile tile-sign tile-sign-metal" style="cursor:default">' +
-      '<div class="tile-icon">🔥</div><div class="tile-title">' + stats.streak + ' jour' + (stats.streak > 1 ? "s" : "") + ' de suite</div>' +
-      '<div class="tile-meta">' + (stats.streak > 0 ? "Continue sur ta lancée avec Mission Contrôle !" : "Fais une session Mission Contrôle aujourd'hui pour démarrer une série.") + '</div>' +
-      '</div></div>';
-    var globalHtml = '<div class="dp-exercise-box" style="margin:16px 0"><div class="dp-exercise-label">Au total</div>' +
-      '<p style="margin:0 0 8px">' + stats.totalCourses + ' cours générés · ' + stats.totalFcKnown + ' / ' + stats.totalFcTotal + ' flashcards maîtrisées' + (stats.preps.length ? ' · ' + stats.preps.length + ' prépa' + (stats.preps.length > 1 ? "s" : "") + ' en cours' : "") + '</p>' +
-      progressionBarHtml("Flashcards maîtrisées", stats.totalFcTotal ? Math.round(stats.totalFcKnown / stats.totalFcTotal * 100) : 0) +
-      '</div>';
-    var subjectsHtml = !stats.bySubject.length ? '<p class="dp-empty-note">Génère au moins un cours pour voir ta progression ici.</p>' :
-      '<div class="card-grid">' + stats.bySubject.map(function (s) {
-        var pct = s.fcTotal ? Math.round(s.fcKnown / s.fcTotal * 100) : 0;
-        return '<div class="tile" style="cursor:default"><div class="tile-title">' + esc(s.name) + '</div>' +
-          '<div class="tile-meta">' + s.courses + ' cours · ' + s.fcKnown + '/' + s.fcTotal + ' flashcards</div>' +
-          progressionBarHtml("Maîtrise", pct) + '</div>';
-      }).join("") + '</div>';
-    var prepsHtml = !stats.preps.length ? "" : '<div class="dp-section"><h3 class="dp-section-title">Prépas en cours</h3><div class="card-grid-signs-short">' +
-      stats.preps.map(function (p) {
-        var daysLeft = epDaysBetween(epTodayStr(), p.examDate);
-        return '<div class="tile tile-sign tile-sign-metal" onclick="location.hash=\'#/examprep/' + p.id + '\'">' +
-          '<div class="tile-icon">' + icon("calendar") + '</div><div class="tile-title">' + esc(p.title) + '</div>' +
-          '<div class="tile-meta">J-' + daysLeft + '</div>' +
-          epReadinessBarHtml(epReadinessPercent(p), true) +
-          '</div>';
-      }).join("") + '</div></div>';
-    renderShell(["progression"], head + streakHtml + globalHtml + '<h3 class="dp-section-title" style="margin-top:20px">Par matière</h3>' + subjectsHtml + prepsHtml);
-  }
   function renderMethodologyListPage() {
     var list = methodoData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
     var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Méthodologie.png" alt=""><h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
@@ -8588,7 +8522,6 @@
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
       if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
       if (parts[0] === "podcasts") { renderPodcastListPage(); return; }
-      if (parts[0] === "progression") { renderProgressionPage(); return; }
       renderDashboard();
     } catch (err) {
       console.error("Erreur de rendu :", err);
