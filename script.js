@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "5.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4519,7 +4519,7 @@
     }
     var body = '<div class="podcast-fullscreen">' +
       '<img src="' + PODCAST_DIR + podcastIdleImgCache + '" class="podcast-bg-img" alt="">' +
-      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">🎙️ Podcast</div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
+      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><div class="podcast-fs-title">Podcast</div></div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
       '<div class="podcast-fs-library">' + libraryHtml + '</div>' +
       '</div>';
     renderShell(["podcasts"], body);
@@ -4653,7 +4653,7 @@
   }
   function renderMethodologyListPage() {
     var list = methodoData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
-    var head = '<div class="page-head"><div><div class="page-title-row">' + icon("book") + '<h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Méthodologie.png" alt=""><h1 class="page-title">Méthodologie</h1></div><p class="page-sub">Les méthodes données par tes profs (dissertation, commentaire, étude de document...) — Studino génère des sujets à rédiger dessus, pas du quiz sur la méthode.</p></div>' +
       '<button class="btn btn-primary" style="width:auto" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
     var grid;
     if (!list.length) {
@@ -4738,7 +4738,9 @@
     var head = '<div class="course-head">' +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(methodo.title) + '</h1>' +
       '<p class="page-sub">' + (methodo.genre ? esc(methodo.genre) : "Méthodologie") + '</p></div>' +
-      '<div style="display:flex;gap:10px;margin-left:auto">' +
+      '<div style="display:flex;gap:10px;margin-left:auto;align-items:center">' +
+      (methodo.status === "ready" ? '<div class="print-scale-ctrl" title="Taille de la police à l\'impression"><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(-0.1)">−</button><span class="mono" style="min-width:42px;text-align:center;display:inline-block">' + Math.round(getPrintScale() * 100) + '%</span><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(0.1)">+</button></div>' : "") +
+      (methodo.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.downloadMethodologyPdf(\'' + methodo.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
       (methodo.status === "ready" && methodo.images && methodo.images.length ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryMethodologyGeneration(\'' + methodo.id + '\')">🔄 Régénérer</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'methodology\',null,null,null,\'' + methodo.id + '\')">' + icon("trash") + ' Supprimer</button>' +
       '</div></div>';
@@ -5869,16 +5871,17 @@
     rouge: { accent: "#D14B35", strong: "#AC3522", soft: "#F8D2C7" },
     orange: { accent: "#E8862B", strong: "#C56A18", soft: "#FBE4C0" }
   };
-  function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
+  // Le zoom d'impression passait par une variable CSS (--print-scale) consommée dans un calc() du
+  // stylesheet statique : correct sur le papier, mais sans effet visible en pratique chez l'utilisateur
+  // (même nombre de pages à 100% et à 280%, donc pas juste une histoire de perception). Plutôt que de
+  // continuer à deviner quelle subtilité de substitution CSS/imprimante neutralise ce mécanisme, on
+  // calcule directement les tailles en pixels ici et on les injecte en dur dans un <style> scopé à
+  // cette page imprimée : aucune dépendance à var()/calc(), donc aucune ambiguïté possible. Partagé par
+  // toutes les "fiches" imprimables (révision, méthodologie...) pour un même réglage de zoom partout.
+  function ficheHueAndScaleStyle() {
     var hue = document.documentElement.getAttribute("data-app-color") || "vert";
     var hc = PRINT_HUE_COLORS[hue] || PRINT_HUE_COLORS.vert;
     var hueStyle = 'style="--fiche-accent:' + hc.accent + ';--fiche-strong:' + hc.strong + ';--fiche-soft:' + hc.soft + '"';
-    // Le zoom d'impression passait par une variable CSS (--print-scale) consommée dans un calc() du
-    // stylesheet statique : correct sur le papier, mais sans effet visible en pratique chez l'utilisateur
-    // (même nombre de pages à 100% et à 280%, donc pas juste une histoire de perception). Plutôt que de
-    // continuer à deviner quelle subtilité de substitution CSS/imprimante neutralise ce mécanisme, on
-    // calcule directement les tailles en pixels ici et on les injecte en dur dans un <style> scopé à
-    // cette page imprimée : aucune dépendance à var()/calc(), donc aucune ambiguïté possible.
     var scale = getPrintScale();
     function px(n) { return (n * scale).toFixed(2) + "px"; }
     var scaleStyle = '<style>' +
@@ -5890,13 +5893,28 @@
       '.print-fiche-body h4{font-size:' + px(14) + '}' +
       '.print-fiche-body table{font-size:' + px(12.5) + '}' +
       '</style>';
-    return scaleStyle + '<div class="print-doc print-doc-fiche" ' + hueStyle + '>' +
+    return { hueStyle: hueStyle, scaleStyle: scaleStyle };
+  }
+  function buildRevisionSheetPrintHtml(sheet, subjectName, chapterName) {
+    var fs = ficheHueAndScaleStyle();
+    return fs.scaleStyle + '<div class="print-doc print-doc-fiche" ' + fs.hueStyle + '>' +
       '<div class="print-fiche-header">' +
       '<div class="print-fiche-eyebrow">' + esc(subjectName) + (chapterName ? ' · ' + esc(chapterName) : "") + '</div>' +
       '<h1>' + esc(sheet.title) + '</h1>' +
       '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "theme" ? " — thème complet" : sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
       '</div>' +
       '<div class="print-fiche-body">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' +
+      '</div>';
+  }
+  function buildMethodologyPrintHtml(methodo) {
+    var fs = ficheHueAndScaleStyle();
+    return fs.scaleStyle + '<div class="print-doc print-doc-fiche" ' + fs.hueStyle + '>' +
+      '<div class="print-fiche-header">' +
+      '<div class="print-fiche-eyebrow">Méthodologie' + (methodo.genre ? ' · ' + esc(methodo.genre) : "") + '</div>' +
+      '<h1>' + esc(methodo.title) + '</h1>' +
+      '<div class="print-fiche-sub">Fiche de méthode</div>' +
+      '</div>' +
+      '<div class="print-fiche-body">' + mdToHtml(methodo.structure) + '</div>' +
       '</div>';
   }
   function printAndDownload(html) {
@@ -7311,6 +7329,11 @@
       var theme = subj && findTheme(subj, sheet.themeId);
       var chap = theme && findChapter(theme, sheet.chapterId);
       printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
+    },
+    downloadMethodologyPdf: function (id) {
+      var methodo = methodoFind(id);
+      if (!methodo || methodo.status !== "ready") return;
+      printAndDownload(buildMethodologyPrintHtml(methodo));
     },
     viewRevisionSheetRaw: function (sheetId) {
       var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
