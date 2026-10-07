@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "4.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "4.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -787,19 +787,138 @@
     var parts = [{ text: buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) }];
     return callGemini(parts, REVISION_SHEET_SCHEMA);
   }
-  // Dessiner un schéma correct à vue (sans référence) donne souvent des diagrammes bâclés — éléments
-  // qui se chevauchent, flèches mal reliées — alors que la plupart de ces schémas de cours (cycle de
-  // l'eau, membrane plasmique, schéma électrique...) existent déjà sous une forme standard largement
-  // documentée en ligne. On cherche donc d'abord à quoi ressemble VRAIMENT ce schéma (callGeminiSearch,
-  // grounding Google Search) avant de le redessiner fidèlement, plutôt que de laisser l'IA l'improviser
-  // seule. La recherche reste une aide : si elle échoue, on dessine quand même à partir de la
-  // description, sans jamais bloquer toute la fiche pour un seul schéma raté.
+  // Laisser l'IA dessiner un schéma "boîtes reliées par des flèches" en SVG libre a été testé deux fois
+  // (consignes anti-chevauchement, puis recherche internet avant de dessiner) et reste systématiquement
+  // raté en pratique : texte qui déborde, flèches qui ne touchent rien, éléments au mauvais endroit —
+  // parce que calculer des coordonnées précises qui ne se chevauchent jamais est un problème spatial que
+  // les LLM ne résolvent pas fiablement en écrivant du texte token par token, aussi bonne soit la
+  // consigne. Pour CE type de schéma (le plus fréquent en cours : cycle, classification, relations entre
+  // notions), on retire donc entièrement la mise en page des mains de l'IA : elle ne fournit QUE le
+  // contenu (des boîtes avec un texte + une position de grille, des flèches entre elles), et c'est du
+  // code déterministe (renderDiagramSvg) qui calcule tailles de boîtes, positions et tracés de flèches —
+  // aucun chevauchement n'est alors possible, par construction. Le mode "svg" libre reste disponible en
+  // repli pour les cas qui ne sont vraiment pas des boîtes/flèches (coupe anatomique, carte...).
+  function diagramWrapText(text, maxChars) {
+    var words = String(text == null ? "" : text).split(/\s+/).filter(Boolean);
+    var lines = [], cur = "";
+    words.forEach(function (w) {
+      var trial = cur ? cur + " " + w : w;
+      if (trial.length > maxChars && cur) { lines.push(cur); cur = w; } else cur = trial;
+    });
+    if (cur) lines.push(cur);
+    return lines.length ? lines : [""];
+  }
+  var DIAGRAM_COLORS = {
+    vert: { fill: "#4C8C4A", text: "#fff" }, bleu: { fill: "#2F7FC1", text: "#fff" },
+    jaune: { fill: "#D9A51B", text: "#1c1c1c" }, orange: { fill: "#E8862B", text: "#fff" },
+    rose: { fill: "#D44C80", text: "#fff" }, violet: { fill: "#7A4FC4", text: "#fff" },
+    rouge: { fill: "#D14B35", text: "#fff" }, gris: { fill: "#5b6472", text: "#fff" }
+  };
+  function renderDiagramSvg(rawNodes, rawEdges) {
+    var nodes = (rawNodes || []).filter(function (n) { return n && n.id && n.label; });
+    if (!nodes.length) return "";
+    var edges = (rawEdges || []).filter(function (e) { return e && e.from && e.to; });
+    var FONT = 15, SUBFONT = 12, PAD_X = 16, PAD_Y = 14, LINE_H = 19, SUB_LINE_H = 15, SUB_GAP = 6;
+    var GAP_X = 70, GAP_Y = 56, CHAR_W = 8.3, MAX_CHARS = 20, MIN_W = 120, MARGIN = 24;
+    var byId = {}, maxCol = 0, maxRow = 0;
+    nodes.forEach(function (n) {
+      n.col = Math.max(0, n.col | 0); n.row = Math.max(0, n.row | 0);
+      maxCol = Math.max(maxCol, n.col); maxRow = Math.max(maxRow, n.row);
+      n._lines = diagramWrapText(n.label, MAX_CHARS);
+      n._subLines = n.sublabel ? diagramWrapText(n.sublabel, MAX_CHARS + 6) : [];
+      var longest = 0;
+      n._lines.concat(n._subLines).forEach(function (l) { longest = Math.max(longest, l.length); });
+      n._w = Math.max(MIN_W, Math.round(longest * CHAR_W) + PAD_X * 2);
+      n._h = PAD_Y * 2 + n._lines.length * LINE_H + (n._subLines.length ? SUB_GAP + n._subLines.length * SUB_LINE_H : 0);
+      byId[n.id] = n;
+    });
+    var colW = [], rowH = [];
+    for (var c = 0; c <= maxCol; c++) colW[c] = 0;
+    for (var r = 0; r <= maxRow; r++) rowH[r] = 0;
+    nodes.forEach(function (n) { colW[n.col] = Math.max(colW[n.col], n._w); rowH[n.row] = Math.max(rowH[n.row], n._h); });
+    var colX = [0], rowY = [0];
+    for (var c2 = 1; c2 <= maxCol; c2++) colX[c2] = colX[c2 - 1] + colW[c2 - 1] + GAP_X;
+    for (var r2 = 1; r2 <= maxRow; r2++) rowY[r2] = rowY[r2 - 1] + rowH[r2 - 1] + GAP_Y;
+    var W = colX[maxCol] + colW[maxCol] + MARGIN * 2;
+    var H = rowY[maxRow] + rowH[maxRow] + MARGIN * 2;
+    nodes.forEach(function (n) {
+      n._x = MARGIN + colX[n.col] + (colW[n.col] - n._w) / 2;
+      n._y = MARGIN + rowY[n.row] + (rowH[n.row] - n._h) / 2;
+      n._cx = n._x + n._w / 2; n._cy = n._y + n._h / 2;
+    });
+    // Point où une flèche sort d'une boîte rectangulaire en partant de son centre vers (dx,dy) : la
+    // plus petite distance t telle que le point centre+t*(dx,dy) touche un des 4 bords de la boîte.
+    function rectExit(n, dx, dy) {
+      if (!dx && !dy) return { x: n._cx, y: n._cy };
+      var hw = n._w / 2, hh = n._h / 2;
+      var tx = dx ? hw / Math.abs(dx) : Infinity, ty = dy ? hh / Math.abs(dy) : Infinity;
+      var t = Math.min(tx, ty);
+      return { x: n._cx + dx * t, y: n._cy + dy * t };
+    }
+    var edgesSvg = edges.map(function (e) {
+      var a = byId[e.from], b = byId[e.to];
+      if (!a || !b || a === b) return "";
+      var dx = b._cx - a._cx, dy = b._cy - a._cy;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / len, uy = dy / len;
+      var p1 = rectExit(a, ux, uy), p2 = rectExit(b, -ux, -uy);
+      var mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      var label = "";
+      if (e.label) {
+        var lw = Math.max(32, String(e.label).length * 7.2 + 12);
+        label = '<rect x="' + (mx - lw / 2) + '" y="' + (my - 11) + '" width="' + lw + '" height="20" rx="5" fill="#fff" stroke="#999" stroke-width="1"/>' +
+          '<text x="' + mx + '" y="' + (my + 4) + '" font-size="12" font-weight="700" text-anchor="middle" fill="#222">' + esc(e.label) + '</text>';
+      }
+      return '<line x1="' + p1.x + '" y1="' + p1.y + '" x2="' + p2.x + '" y2="' + p2.y + '" stroke="#333" stroke-width="2" marker-end="url(#diagArrow)"/>' + label;
+    }).join("");
+    var nodesSvg = nodes.map(function (n) {
+      var palette = DIAGRAM_COLORS[n.color] || DIAGRAM_COLORS.gris;
+      var ty = n._y + PAD_Y + FONT * 0.8;
+      var lines = n._lines.map(function (l, idx) { return '<tspan x="' + n._cx + '" dy="' + (idx === 0 ? 0 : LINE_H) + '">' + esc(l) + '</tspan>'; }).join("");
+      var subSvg = "";
+      if (n._subLines.length) {
+        var subY = ty + (n._lines.length - 1) * LINE_H + LINE_H / 2 + SUB_GAP + SUBFONT * 0.7;
+        var subLines = n._subLines.map(function (l, idx) { return '<tspan x="' + n._cx + '" dy="' + (idx === 0 ? 0 : SUB_LINE_H) + '">' + esc(l) + '</tspan>'; }).join("");
+        subSvg = '<text x="' + n._cx + '" y="' + subY + '" font-size="' + SUBFONT + '" text-anchor="middle" fill="' + palette.text + '" opacity="0.92">' + subLines + '</text>';
+      }
+      return '<rect x="' + n._x + '" y="' + n._y + '" width="' + n._w + '" height="' + n._h + '" rx="10" fill="' + palette.fill + '"/>' +
+        '<text x="' + n._cx + '" y="' + ty + '" font-size="' + FONT + '" font-weight="700" text-anchor="middle" fill="' + palette.text + '">' + lines + '</text>' + subSvg;
+    }).join("");
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
+      '<defs><marker id="diagArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker></defs>' +
+      edgesSvg + nodesSvg + '</svg>';
+  }
+  var DIAGRAM_NODE_SCHEMA = {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Identifiant court unique (ex. \"masse\"), réutilisé tel quel dans \"diagramEdges\"." },
+      label: { type: "string", description: "Texte principal de la boîte, COURT (2-5 mots max)." },
+      sublabel: { type: "string", description: "Texte secondaire optionnel sous le label (ex. une formule écrite en toutes lettres, JAMAIS de LaTeX/symbole brut) — chaîne vide si inutile." },
+      col: { type: "integer", description: "Colonne de la boîte dans une grille (0, 1, 2...) : détermine sa position horizontale." },
+      row: { type: "integer", description: "Ligne de la boîte dans une grille (0, 1, 2...) : détermine sa position verticale." },
+      color: { type: "string", description: "Une seule couleur parmi : vert, bleu, jaune, orange, rose, violet, rouge, gris." }
+    },
+    required: ["id", "label", "sublabel", "col", "row", "color"]
+  };
+  var DIAGRAM_EDGE_SCHEMA = {
+    type: "object",
+    properties: {
+      from: { type: "string", description: "id du nœud de départ." },
+      to: { type: "string", description: "id du nœud d'arrivée." },
+      label: { type: "string", description: "Texte très court optionnel sur la flèche (ex. une opération, en toutes lettres, jamais de LaTeX brut) — chaîne vide si inutile." }
+    },
+    required: ["from", "to", "label"]
+  };
   var SCHEMA_SVG_SCHEMA = {
     type: "object",
     properties: {
-      svg: { type: "string", description: "SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe), fidèle à la description et à la référence trouvée sur internet fournies ci-dessus — un rectangle de fond blanc plein cadre, des traits/textes en noir ou en couleurs vives et contrastées, des légendes/graduations/valeurs précises. Qualité exigée, sans exception : calcule d'abord une grille de positions pour TOUS les éléments avant de les placer, de sorte qu'AUCUN texte ne chevauche une forme/flèche/autre texte et qu'AUCUNE flèche ne traverse une boîte ou une étiquette, avec une marge généreuse autour de chaque élément et un viewBox assez grand pour que tout tienne proprement ; chaque flèche part et arrive exactement au bord de l'élément qu'elle relie ; chaque étiquette se place à côté de ce qu'elle désigne, jamais dessus." }
+      figureType: { type: "string", description: "'diagram' si ce schéma peut se représenter avec des boîtes de texte reliées par des flèches (cycle, processus, classification, relations entre notions/grandeurs/formules — LE CAS LE PLUS FRÉQUENT, à choisir PAR DÉFAUT) : BEAUCOUP plus fiable visuellement, résultat garanti sans chevauchement. 'svg' UNIQUEMENT si c'est vraiment impossible à représenter avec des boîtes/flèches (une figure géométrique avec angles/mesures précises, une courbe/un graphique, une carte, une coupe anatomique détaillée)." },
+      diagramNodes: { type: "array", description: "Si figureType = 'diagram' : la liste des boîtes du schéma. Pense la disposition comme une grille simple (2-4 colonnes, 1-3 lignes suffisent presque toujours) qui reflète la logique du schéma (ex. une boîte centrale avec les autres autour). Tableau vide si figureType = 'svg'.", items: DIAGRAM_NODE_SCHEMA },
+      diagramEdges: { type: "array", description: "Si figureType = 'diagram' : les flèches entre boîtes. Tableau vide si figureType = 'svg' ou s'il n'y a aucune flèche.", items: DIAGRAM_EDGE_SCHEMA },
+      svg: { type: "string", description: "Si figureType = 'svg' UNIQUEMENT : SVG autonome et complet (une seule balise <svg viewBox=\"0 0 W H\">...</svg>, sans dépendance externe), fidèle à la description et à la référence trouvée sur internet fournies ci-dessus — fond blanc plein cadre, traits/textes en noir ou en couleurs vives et contrastées, légendes/graduations/valeurs précises, qualité soignée sans chevauchement. Chaîne vide si figureType = 'diagram'." }
     },
-    required: ["svg"]
+    required: ["figureType", "diagramNodes", "diagramEdges", "svg"]
   };
   function buildSchemaResearchPrompt(caption, description, subjectName, chapterName) {
     return "Je prépare une fiche de révision scolaire (matière : " + subjectName + ", chapitre : " + chapterName + ") et j'ai besoin d'un schéma intitulé « " + caption + " ».\n\n" +
@@ -807,10 +926,14 @@
       "Cherche sur internet à quoi ressemble VRAIMENT ce schéma dans des manuels scolaires, cours en ligne ou sites pédagogiques de référence pour ce niveau. Décris-moi ensuite précisément, en français et en détail, sa structure réelle telle qu'on la trouve habituellement : quels éléments y figurent, comment ils sont disposés les uns par rapport aux autres (positions relatives : à gauche/à droite, en haut/en bas, à l'intérieur de...), quelles sont les flèches/liaisons entre eux et leur sens exact, et les légendes/valeurs précises qui y apparaissent. Je dois pouvoir redessiner ce schéma fidèlement rien qu'à partir de ta description : sois concret et structuré, pas de généralités.";
   }
   function buildSchemaSvgPrompt(caption, description, researchText) {
-    return "Dessine en SVG le schéma de cours intitulé « " + caption + " ».\n\n" +
+    return "Prépare le schéma de cours intitulé « " + caption + " ».\n\n" +
       "Ce qu'il doit représenter : " + description + "\n\n" +
-      (researchText ? "Voici une description de la structure réelle de ce schéma telle qu'on la trouve dans des sources pédagogiques (recherchée sur internet juste avant) — reconstruis fidèlement CETTE structure, ces éléments et leur disposition, ne l'improvise pas différemment :\n\n" + researchText + "\n\n" : "") +
+      (researchText ? "Voici une description de la structure réelle de ce schéma telle qu'on la trouve dans des sources pédagogiques (recherchée sur internet juste avant) — base-toi fidèlement sur CETTE structure, ces éléments et leur disposition, ne l'improvise pas différemment :\n\n" + researchText + "\n\n" : "") +
       "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  function resolveSchemaVisualSvg(data) {
+    if (data.figureType === "svg" && data.svg) return data.svg;
+    return renderDiagramSvg(data.diagramNodes, data.diagramEdges);
   }
   function generateRevisionSheetSchemaSvg(caption, description, subjectName, chapterName) {
     return callGeminiSearch([{ text: buildSchemaResearchPrompt(caption, description, subjectName, chapterName) }])
@@ -820,7 +943,7 @@
         var parts = [{ text: buildSchemaSvgPrompt(caption, description, researchText) }];
         return callGemini(parts, SCHEMA_SVG_SCHEMA);
       })
-      .then(function (data) { return data.svg || ""; });
+      .then(function (data) { return resolveSchemaVisualSvg(data); });
   }
   function runRevisionSheetGeneration(sheet, courses, subjectName, chapterName) {
     sheet.status = "processing";
@@ -2063,9 +2186,12 @@
           type: "object",
           properties: {
             id: { type: "string", description: "Reprend EXACTEMENT l'id fourni pour cet élément." },
-            figureSvg: { type: "string", description: "SVG autonome reconstruisant fidèlement le schéma/graphique que tu observes dans la/les photo(s) pour CET élément précis — pas un dessin générique, une vraie reconstruction (mêmes proportions, mêmes valeurs/graduations visibles). Chaîne vide UNIQUEMENT si tu ne retrouves vraiment aucun schéma correspondant dans les photos fournies." }
+            figureType: { type: "string", description: "'diagram' si le schéma observé sur la photo est constitué de boîtes de texte reliées par des flèches (cycle, processus, classification, relations entre notions — LE CAS LE PLUS FRÉQUENT, à choisir PAR DÉFAUT) : résultat garanti sans chevauchement. 'svg' UNIQUEMENT si c'est vraiment un dessin libre impossible à représenter avec des boîtes/flèches (courbe, figure géométrique avec mesures, carte, coupe détaillée). 'aucun' si tu ne retrouves vraiment aucun schéma correspondant dans les photos fournies." },
+            diagramNodes: { type: "array", description: "Si figureType = 'diagram' : les boîtes du schéma observé, fidèles à ce qui est réellement sur la photo. Tableau vide sinon.", items: DIAGRAM_NODE_SCHEMA },
+            diagramEdges: { type: "array", description: "Si figureType = 'diagram' : les flèches entre boîtes, fidèles à ce qui est réellement sur la photo. Tableau vide sinon.", items: DIAGRAM_EDGE_SCHEMA },
+            figureSvg: { type: "string", description: "Si figureType = 'svg' UNIQUEMENT : SVG autonome reconstruisant fidèlement le schéma/graphique observé (mêmes proportions, mêmes valeurs/graduations visibles). Chaîne vide sinon." }
           },
-          required: ["id", "figureSvg"]
+          required: ["id", "figureType", "diagramNodes", "diagramEdges", "figureSvg"]
         }
       }
     },
@@ -2074,7 +2200,7 @@
   function buildFigureReconstructionPrompt(items) {
     var lines = items.map(function (it) { return "ID : " + it.id + "\nTexte : " + it.text; }).join("\n\n");
     return "Voici la ou les photos originales d'un document. Les énoncés suivants, extraits de ce document, font référence à un schéma ou un graphique (« ci-contre », « ci-dessous »...) qu'une première tentative de découpage automatique n'a pas réussi à récupérer dans la photo.\n\n" +
-      "Pour CHAQUE élément ci-dessous : regarde attentivement la ou les photos, retrouve toi-même le schéma/graphique qui correspond à cet énoncé précis, et RECONSTRUIS-le fidèlement en SVG dans \"figureSvg\" — pas une illustration générique, une vraie reconstruction de ce que tu observes réellement sur la photo (même forme de courbe, mêmes graduations/valeurs, mêmes proportions). " + FIGURE_SVG_FIELD_DESC + "\n\n" +
+      "Pour CHAQUE élément ci-dessous : regarde attentivement la ou les photos, retrouve toi-même le schéma/graphique qui correspond à cet énoncé précis, et reconstruis-le fidèlement (mêmes proportions, mêmes valeurs/graduations visibles) — pas une illustration générique.\n\n" +
       "Éléments :\n\n" + lines + "\n\n" +
       "Renvoie un tableau \"results\", une entrée par élément, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
@@ -2097,7 +2223,9 @@
         (data.results || []).forEach(function (r) { byId[r.id] = r; });
         missing.forEach(function (m) {
           var r = byId[m.id];
-          if (r && r.figureSvg) setSvg(m.it, r.figureSvg);
+          if (!r) return;
+          var svg = r.figureType === "svg" && r.figureSvg ? r.figureSvg : renderDiagramSvg(r.diagramNodes, r.diagramEdges);
+          if (svg) setSvg(m.it, svg);
         });
         return stillMissing();
       })
