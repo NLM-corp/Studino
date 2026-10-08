@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -492,14 +492,20 @@
     var step1;
     if (priorTranscription) {
       step1 = imageCount > 0
-        ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Retranscris fidèlement leur contenu, puis FUSIONNE-le avec le contenu déjà connu ci-dessus pour produire UNE SEULE transcription complète, cohérente et bien organisée qui couvre tout (ancien ET nouveau), en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). C'est un enrichissement, pas un remplacement : ne perds RIEN de ce qui était déjà connu."
+        // mergeNewOnly : volontairement, "transcription" ne doit contenir QUE le nouveau contenu — le
+        // contenu déjà connu est donné ci-dessous UNIQUEMENT comme contexte (pour que l'explication et
+        // les questions restent cohérentes), jamais pour être réécrit. Faire réécrire par l'IA un long
+        // texte déjà transcrit, même avec la consigne "ne perds rien", finit toujours par le compresser
+        // un peu (une tendance naturelle des modèles à "faire plus propre") — la seule façon de garantir
+        // zéro perte est de ne plus jamais y retoucher, et de laisser le code les recoller tel quel.
+        ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu, donné ici UNIQUEMENT comme contexte pour que ton explication/tes questions restent cohérentes avec lui — tu ne dois PAS le recopier ni le reformuler dans \"transcription\" :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Dans le champ \"transcription\" de ta réponse, retranscris UNIQUEMENT le contenu de CES NOUVELLES photos, fidèlement et intégralement, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras) — reprends les détails/exemples/remarques QUI SONT RÉELLEMENT ÉCRITS SUR CES PHOTOS, jamais un exemple ou un détail que tu inventerais toi-même. Le contenu déjà connu ci-dessus sera rajouté automatiquement par le site, tel quel, tu n'as pas à t'en occuper."
         : "Ce cours a déjà été retranscrit à partir de documents précédents (aucune nouvelle photo n'est fournie cette fois). Reprends sa transcription telle quelle dans \"transcription\" (tu peux la nettoyer légèrement si besoin, mais garde tout le contenu, en Markdown structuré) :\n\n" + priorTranscription;
     } else if (imageCount === 0) {
       step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
     } else if (imageCount === 1) {
-      step1 = "Retranscris fidèlement et proprement le contenu visible sur la photo, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si la photo contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
+      step1 = "Retranscris fidèlement et INTÉGRALEMENT le contenu visible sur la photo, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. C'est une vraie retranscription, pas une synthèse : ne garde pas seulement les points importants, reprends aussi les détails, exemples et remarques annexes QUI SONT RÉELLEMENT ÉCRITS SUR LA PHOTO (jamais un exemple ou un détail que tu inventerais toi-même pour illustrer — la transcription doit rester un reflet fidèle à 100% de ce que l'enseignant a écrit, rien de plus, rien de moins). Ne résume et ne saute rien : si la photo contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
     } else {
-      step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
+      step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement et INTÉGRALEMENT en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. C'est une vraie retranscription, pas une synthèse : ne garde pas seulement les points importants, reprends aussi les détails, exemples et remarques annexes QUI SONT RÉELLEMENT ÉCRITS SUR LES PHOTOS (jamais un exemple ou un détail que tu inventerais toi-même pour illustrer — la transcription doit rester un reflet fidèle à 100% de ce que l'enseignant a écrit, rien de plus, rien de moins). Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
     }
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
@@ -790,6 +796,7 @@
     return "Tu es un assistant pédagogique pour un élève francophone. Voici " + scopeLabel + " intitulé « " + title + " » (matière : " + subjectName + ", " + (scope === "theme" ? "thème" : "chapitre") + " : " + chapterName + ").\n\n" +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article, site d'analyse littéraire, résumé de manuel, etc.), REFORMULE ce passage avec des mots différents en gardant strictement le même sens et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n\n" +
       "Génère une fiche de révision ULTRA COMPLÈTE en Markdown qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section, prête à réviser juste avant un contrôle.\n\n" +
+      "PRÉCISION CONCRÈTE OBLIGATOIRE : dès que le contenu source mentionne un élément nommé et identifiable — une expérience, un événement, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — la fiche doit dire CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemple à ne jamais faire : écrire \"une expérience a montré que...\" sans préciser en quoi elle consistait (qui, sur quoi, comment, ce qui a été observé) si le cours source le précise. Si le cours source ne donne pas ce détail, ne l'invente jamais — dans ce cas, contente-toi de ce qui est donné plutôt que de meubler.\n\n" +
       "Mise en forme — c'est important, une fiche doit avoir l'allure d'une vraie fiche de révision d'élève, pas d'un texte plat et froid :\n" +
       "- ## et ### pour les titres de section/sous-section (varie les sous-sections, ne mets pas tout au même niveau).\n" +
       "- ** pour mettre en gras les termes clés à chaque première apparition.\n" +
@@ -1181,29 +1188,38 @@
       catch (err2) { throw err1; }
     }
   }
+  // Découpe sur la ponctuation forte (.!?) ET sur les virgules/points-virgules/deux-points : des
+  // segments plus courts et plus nombreux limitent l'accumulation de dérive sur un long podcast (une
+  // erreur d'estimation sur une seule grosse phrase pesait lourd ; répartie sur plusieurs petits
+  // segments, chaque erreur reste petite et le sous-titre "rattrape" son retard plus souvent).
   function splitScriptIntoSentences(script) {
     var raw = String(script || "").replace(/\s+/g, " ").trim();
-    var sentences = raw.match(/[^.!?]+[.!?]+(\s+|$)/g) || (raw ? [raw] : []);
+    var sentences = raw.match(/[^.!?,;:]+[.!?,;:]*(\s+|$)/g) || (raw ? [raw] : []);
     return sentences.map(function (s) { return s.trim(); }).filter(Boolean);
   }
-  // Pas d'horodatage mot-à-mot fourni par l'API TTS : on approxime le minutage de chaque phrase sur la
-  // durée réelle de l'audio généré. Au NOMBRE DE MOTS plutôt qu'au nombre de caractères (une phrase
+  // Une pause après une virgule/un point-virgule est naturellement plus courte qu'une pause en fin de
+  // phrase complète — distinguer les deux rapproche un peu plus l'estimation du rythme réel du narrateur.
+  function podcastPauseAfter(s) {
+    var last = s.charAt(s.length - 1);
+    return (last === "," || last === ";" || last === ":") ? 0.14 : 0.3;
+  }
+  // Pas d'horodatage mot-à-mot fourni par l'API TTS : on approxime le minutage de chaque segment sur la
+  // durée réelle de l'audio généré, au NOMBRE DE MOTS plutôt qu'au nombre de caractères (une phrase
   // pleine de mots courts prend un temps très différent d'une phrase avec un seul mot très long, alors
-  // que les deux peuvent avoir la même longueur en caractères) + une petite pause fixe estimée entre
-  // chaque phrase (le narrateur respire), pour rester bien calé même sur un long podcast.
+  // que les deux peuvent avoir la même longueur en caractères) + une pause estimée entre chaque segment.
   function buildPodcastSegments(script, durationSec) {
     var sentences = splitScriptIntoSentences(script);
     if (!sentences.length || !durationSec) return [];
-    var PAUSE = 0.28;
     var wordCounts = sentences.map(function (s) { return (s.match(/\S+/g) || []).length || 1; });
     var totalWords = wordCounts.reduce(function (a, b) { return a + b; }, 0) || 1;
-    var totalPause = PAUSE * Math.max(0, sentences.length - 1);
+    var pauses = sentences.map(function (s, i) { return i < sentences.length - 1 ? podcastPauseAfter(s) : 0; });
+    var totalPause = pauses.reduce(function (a, b) { return a + b; }, 0);
     var speakableDuration = Math.max(durationSec * 0.5, durationSec - totalPause);
     var t = 0;
     return sentences.map(function (s, i) {
       var share = wordCounts[i] / totalWords * speakableDuration;
       var seg = { start: t, end: t + share, text: s };
-      t += share + (i < sentences.length - 1 ? PAUSE : 0);
+      t += share + pauses[i];
       return seg;
     });
   }
@@ -2376,6 +2392,10 @@
     generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription).then(function (data) {
       return resolveFigures(data.figures, images).then(function (resolved) {
         var transcription = substituteFigures(data.transcription, resolved.subs);
+        // Ajout de nouvelles photos à un cours existant : l'IA n'a retranscrit QUE le nouveau contenu
+        // (voir buildCoursePrompt) — on recolle l'ancien texte tel quel, jamais retouché par l'IA, pour
+        // garantir qu'aucun détail déjà transcrit ne puisse être perdu/compressé lors de l'ajout.
+        if (priorTranscription && images && images.length) transcription = priorTranscription + "\n\n" + transcription;
         var explanation = substituteFigures(data.explanation, resolved.subs);
         var missedFigure = [transcription, explanation].some(statementMissesFigure);
         // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
@@ -4668,7 +4688,16 @@
       if (curEl) curEl.textContent = podcastFormatTime(a.currentTime);
       var subEl = document.getElementById("podcast-subtitle");
       if (subEl && pod.segments && pod.segments.length) {
-        var seg = pod.segments.find(function (s) { return a.currentTime >= s.start && a.currentTime < s.end; }) || pod.segments[pod.segments.length - 1];
+        var seg = pod.segments.find(function (s) { return a.currentTime >= s.start && a.currentTime < s.end; });
+        if (!seg) {
+          // Pendant la petite pause entre deux phrases, le temps ne tombe dans AUCUN segment : on
+          // garde le dernier segment déjà commencé plutôt que de retomber sur le tout dernier segment
+          // du podcast (ancien bug : ça faisait flasher une phrase de la fin à chaque pause).
+          for (var si = pod.segments.length - 1; si >= 0; si--) {
+            if (pod.segments[si].start <= a.currentTime) { seg = pod.segments[si]; break; }
+          }
+          if (!seg) seg = pod.segments[0];
+        }
         if (seg) subEl.textContent = seg.text;
       }
       if (Date.now() - lastImgSwitch > 60000) {
