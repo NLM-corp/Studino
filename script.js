@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -580,7 +580,8 @@
   // modèle le PLUS CAPABLE (le premier de la liste) en tout dernier recours, plutôt que de finir
   // systématiquement sur le modèle le plus faible (flash-lite) qui est justement le moins apte à
   // reformuler intelligemment un contenu très indexé en ligne.
-  async function tryGeminiModel(apiKey, modelName, parts, schema, recitationCount, maxOutputTokens) {
+  async function tryGeminiModel(apiKey, modelName, parts, schema, recitationCount, maxOutputTokens, timeoutMs) {
+    timeoutMs = timeoutMs || 60000;
     var generationConfig = { response_mime_type: "application/json", response_schema: schema };
     if (maxOutputTokens) generationConfig.max_output_tokens = maxOutputTokens;
     var requestParts = parts;
@@ -592,10 +593,10 @@
     var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent";
     var res;
     try {
-      res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
+      res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, timeoutMs);
     } catch (netErr) {
       var timedOut = netErr && netErr.name === "AbortError";
-      var netError = new Error(timedOut ? "Gemini n'a pas répondu à temps (60s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
+      var netError = new Error(timedOut ? "Gemini n'a pas répondu à temps (" + Math.round(timeoutMs / 1000) + "s)." : ("Connexion à Gemini impossible : " + (netErr && netErr.message || "erreur réseau")));
       netError.status = timedOut ? 408 : 0;
       netError.detail = String(netErr);
       return { ok: false, err: netError, retryable: true, recitation: false };
@@ -639,13 +640,13 @@
     httpErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(errBody, null, 2);
     return { ok: false, err: httpErr, retryable: retryable, rateLimit: res.status === 429 };
   }
-  async function attemptGeminiWithKey(apiKey, parts, schema, maxOutputTokens) {
+  async function attemptGeminiWithKey(apiKey, parts, schema, maxOutputTokens, timeoutMs) {
     var lastErr = null;
     var hadRateLimit = false;
     var recitationRetries = 0;
     for (var i = 0; i < GEMINI_MODELS.length; i++) {
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
-      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens);
+      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens, timeoutMs);
       if (r.ok) return r.value;
       lastErr = r.err;
       if (r.rateLimit) hadRateLimit = true;
@@ -657,7 +658,7 @@
     // donc une dernière fois avec le modèle le PLUS capable (le premier de la liste) et la consigne de
     // reformulation la plus insistante, plutôt que d'abandonner sur l'essai le plus faible.
     if (recitationRetries > 0 && GEMINI_MODELS.length > 1) {
-      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1, maxOutputTokens);
+      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1, maxOutputTokens, timeoutMs);
       if (last.ok) return last.value;
       lastErr = last.err;
     }
@@ -665,22 +666,23 @@
     finalErr.rateLimited = hadRateLimit;
     throw finalErr;
   }
-  // maxOutputTokens est optionnel (laisse l'API utiliser la limite par défaut du modèle) — utilisé
-  // uniquement pour les générations dont la sortie peut légitimement être très longue (ex. un podcast à
-  // plusieurs parties de plusieurs milliers de mots chacune), pour ne jamais risquer une réponse
-  // tronquée silencieusement par une limite de sortie trop basse pour ce cas précis.
-  async function callGemini(parts, schema, maxOutputTokens) {
+  // maxOutputTokens et timeoutMs sont optionnels (défauts : limite du modèle, 60s) — utilisés pour les
+  // générations dont la sortie peut légitimement être très longue (ex. un podcast à plusieurs parties de
+  // plusieurs milliers de mots chacune) : sans un délai allongé en conséquence, une réponse volumineuse
+  // qui met plus de 60s à s'écrire se fait couper court côté navigateur avant même que Gemini ait fini,
+  // ce qui ressemble à un échec silencieux (ça recommence sur le modèle suivant, en boucle, très long).
+  async function callGemini(parts, schema, maxOutputTokens, timeoutMs) {
     var primaryKey = getApiKey();
     if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     try {
-      return await attemptGeminiWithKey(primaryKey, parts, schema, maxOutputTokens);
+      return await attemptGeminiWithKey(primaryKey, parts, schema, maxOutputTokens, timeoutMs);
     } catch (err1) {
       var backupKey = getBackupApiKey();
       if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? rateLimitFallbackError(err1.detail, false) : err1);
       // Clé principale à quota sur ses 4 modèles : bascule entière sur la clé de secours (compte Google
       // différent, donc quota totalement indépendant) avant d'abandonner pour de bon.
       try {
-        return await attemptGeminiWithKey(backupKey, parts, schema, maxOutputTokens);
+        return await attemptGeminiWithKey(backupKey, parts, schema, maxOutputTokens, timeoutMs);
       } catch (err2) {
         throw (err2.rateLimited ? rateLimitFallbackError(err2.detail, true) : err2);
       }
@@ -1094,7 +1096,7 @@
     // Un cours très riche peut légitimement nécessiter de nombreuses parties de plusieurs milliers de
     // mots chacune : une limite de sortie par défaut trop basse tronquerait la réponse en silence avant
     // que l'IA ait fini, donnant l'impression d'un plafond artificiel sur le nombre de parties.
-    return callGemini(parts, PODCAST_SCRIPT_SCHEMA, 65536).then(function (data) {
+    return callGemini(parts, PODCAST_SCRIPT_SCHEMA, 65536, 180000).then(function (data) {
       var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
       var tooShort = scriptParts.some(function (p) { return podcastScriptWordCount(p.script) < 900; });
       var actualWords = scriptParts.reduce(function (sum, p) { return sum + podcastScriptWordCount(p.script); }, 0);
@@ -1307,6 +1309,7 @@
   // dès que SON audio est prêt, sans attendre les autres.
   function runPodcastGeneration(podcast, subjectName, scopeName, content) {
     podcast.status = "processing";
+    podcast.processingStartedAt = Date.now();
     saveDB(); render();
     var scopeLevel = podcast.scopeLevel || "chapter";
     generatePodcastScript(subjectName, scopeName, scopeLevel, content).then(function (data) {
@@ -1326,7 +1329,7 @@
           scopeLevel: podcast.scopeLevel, scopeId: podcast.scopeId, scopeName: podcast.scopeName,
           partIndex: k + 1, partCount: total,
           status: "processing", error: null, errorStatus: null, errorDetail: null,
-          script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k
+          script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k, processingStartedAt: Date.now()
         };
         podcastData().push(extra);
         pods.push(extra);
@@ -1376,6 +1379,7 @@
   // relance donc QUE l'audio, à partir du script déjà existant, sans toucher au reste du groupe.
   function retryPodcastPartAudio(pod) {
     pod.status = "processing";
+    pod.processingStartedAt = Date.now();
     pod.error = null; pod.errorStatus = null; pod.errorDetail = null;
     saveDB(); render();
     generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
@@ -4573,6 +4577,7 @@
 
   /* ---------------- Podcast (pages) ---------------- */
   var podcastPlayerInterval = null;
+  var podcastProcessingInterval = null;
   var podcastIdleImgCache = null; // choisie une seule fois par session — ne doit pas changer à chaque clic
   var podcastExpliqueByPod = {}; // per podcast id: index courant — stable tant qu'on reste sur CE podcast, change seulement toutes les ~60s
   var podcastFolderOpen = {}; // per groupId: bool — dossier de parties replié par défaut
@@ -4661,9 +4666,18 @@
     var closeBtn = '<button class="podcast-fs-close" onclick="location.hash=\'#/podcasts\'" title="Retour">✕</button>';
     var body;
     if (pod.status === "processing") {
+      var procStart = pod.processingStartedAt || pod.createdAt || Date.now();
+      // pod.script n'est rempli qu'une fois le texte généré (voir runPodcastGeneration/retryPodcastPartAudio)
+      // : ça permet de distinguer les deux étapes (texte, puis voix) pour donner une estimation honnête
+      // plutôt qu'un seul message vague pendant tout le temps de génération.
+      var procLabel = pod.script
+        ? "Le vieux conteur enregistre sa voix pour « " + pod.title + " »… généralement 1 à 2 minutes par partie."
+        : "Le vieux conteur prépare son texte sur « " + pod.title + " »… généralement 1 à 3 minutes, un peu plus pour un cours très riche en plusieurs parties.";
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
-        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>Le vieux conteur lit « ' + esc(pod.title) + ' » pour te préparer une belle histoire… ça peut prendre quelques minutes.</span></div></div>' +
+        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>' + esc(procLabel) + '</span>' +
+        '<div class="mono" id="podcast-processing-timer" style="margin-top:8px;opacity:0.85">⏱️ ' + dpFormatCountdown(Date.now() - procStart) + '</div>' +
+        '</div></div>' +
         '</div>';
     } else if (pod.status === "error") {
       body = '<div class="podcast-fullscreen">' + closeBtn +
@@ -4707,7 +4721,21 @@
         var autoAudio = document.getElementById("podcast-audio");
         if (autoAudio) autoAudio.play().catch(function () {});
       }
+    } else if (pod.status === "processing") {
+      podcastEnsureProcessingTimer(pod.processingStartedAt || pod.createdAt || Date.now());
     }
+  }
+  // Chrono écoulé pendant la génération (texte puis voix) — on ne connaît pas de durée totale fixe à
+  // l'avance (ça dépend du nombre de parties décidé par l'IA), donc un vrai compte à rebours serait
+  // trompeur : on affiche le temps déjà écoulé, pour au moins rassurer que ça travaille toujours.
+  // S'auto-arrête dès que l'élément disparaît (navigation ailleurs), même schéma que le lecteur audio.
+  function podcastEnsureProcessingTimer(startedAt) {
+    if (podcastProcessingInterval) clearInterval(podcastProcessingInterval);
+    podcastProcessingInterval = setInterval(function () {
+      var el = document.getElementById("podcast-processing-timer");
+      if (!el) { clearInterval(podcastProcessingInterval); podcastProcessingInterval = null; return; }
+      el.textContent = "⏱️ " + dpFormatCountdown(Date.now() - startedAt);
+    }, 1000);
   }
   // Rien à voir avec render() : un re-rendu complet recréerait l'élément <audio> et couperait la
   // lecture en cours. On met donc à jour la barre de progression, le chrono, les sous-titres et la
@@ -7223,7 +7251,7 @@
         subjectId: subj.id, subjectName: subj.name, scopeLevel: level, scopeId: scopeId, scopeName: scopeName,
         partIndex: 1, partCount: 1,
         status: "processing", error: null, errorStatus: null, errorDetail: null,
-        script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now()
+        script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now(), processingStartedAt: Date.now()
       };
       podcastData().push(pod);
       saveDB();
