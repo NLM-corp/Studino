@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1144,6 +1144,12 @@
     new Uint8Array(buffer, 44).set(pcm);
     return "data:audio/wav;base64," + bytesToBase64(new Uint8Array(buffer));
   }
+  // Reconstruit un data URL WAV à partir d'échantillons PCM déjà en mémoire (Int16Array) — utilisé pour
+  // recoller plusieurs morceaux de synthèse vocale générés séparément (voir generatePodcastAudio).
+  function pcm16ToWavDataUrl(samples, sampleRate) {
+    var bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.length * 2);
+    return pcmBase64ToWavDataUrl(bytesToBase64(bytes), sampleRate);
+  }
   function buildPodcastTtsBody(script, voiceName) {
     return JSON.stringify({
       contents: [{ role: "user", parts: [{ text: script }] }],
@@ -1190,7 +1196,7 @@
     }
     throw lastErr || new Error("Erreur inconnue lors de la génération audio.");
   }
-  async function generatePodcastAudio(script, voiceName) {
+  async function generatePodcastAudioChunk(script, voiceName) {
     var primaryKey = getApiKey();
     if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     try {
@@ -1201,6 +1207,44 @@
       try { return await attemptTtsWithKey(backupKey, script, voiceName); }
       catch (err2) { throw err1; }
     }
+  }
+  // Scinde le script sur la ponctuation forte (.!?) en morceaux d'au plus maxChars caractères, sans
+  // jamais couper au milieu d'une phrase — les morceaux sont envoyés à la synthèse vocale un par un,
+  // puis recollés (voir generatePodcastAudio).
+  function splitScriptIntoTtsChunks(script, maxChars) {
+    var raw = String(script || "").replace(/\s+/g, " ").trim();
+    var sentences = raw.match(/[^.!?]+[.!?]+(\s+|$)/g) || (raw ? [raw] : []);
+    var chunks = [], cur = "";
+    sentences.forEach(function (s) {
+      s = s.trim();
+      if (!s) return;
+      if (cur && (cur.length + 1 + s.length) > maxChars) { chunks.push(cur); cur = s; }
+      else cur = cur ? cur + " " + s : s;
+    });
+    if (cur) chunks.push(cur);
+    return chunks.length ? chunks : [raw];
+  }
+  // La synthèse vocale Gemini tronque silencieusement l'audio au-delà d'une certaine longueur par appel
+  // (constaté : des parties de script bien plus longues ressortaient systématiquement avec ~3 minutes
+  // d'audio, sans la moindre erreur) — contrairement à la génération de texte, il n'y a aucun signal
+  // d'échec à détecter ici, donc aucun garde-fou possible après coup. La seule solution fiable est de
+  // ne JAMAIS envoyer un texte assez long pour risquer d'atteindre cette limite : on découpe le script
+  // en morceaux surs, on génère l'audio de chacun séparément, puis on recolle le PCM avant un seul
+  // encodage WAV final — invisible pour l'élève, qui reçoit un unique fichier audio continu.
+  async function generatePodcastAudio(script, voiceName) {
+    var chunks = splitScriptIntoTtsChunks(script, 1800);
+    var wavs = [];
+    for (var i = 0; i < chunks.length; i++) {
+      var url = await generatePodcastAudioChunk(chunks[i], voiceName);
+      wavs.push(parseWavPcm16(url));
+    }
+    if (wavs.length === 1) return pcm16ToWavDataUrl(wavs[0].samples, wavs[0].sampleRate);
+    var sampleRate = wavs[0].sampleRate;
+    var totalLen = wavs.reduce(function (sum, w) { return sum + w.samples.length; }, 0);
+    var merged = new Int16Array(totalLen);
+    var offset = 0;
+    wavs.forEach(function (w) { merged.set(w.samples, offset); offset += w.samples.length; });
+    return pcm16ToWavDataUrl(merged, sampleRate);
   }
   // Découpe sur la ponctuation forte (.!?) ET sur les virgules/points-virgules/deux-points : des
   // segments plus courts et plus nombreux limitent l'accumulation de dérive sur un long podcast (une
@@ -4670,8 +4714,11 @@
       // pod.script n'est rempli qu'une fois le texte généré (voir runPodcastGeneration/retryPodcastPartAudio)
       // : ça permet de distinguer les deux étapes (texte, puis voix) pour donner une estimation honnête
       // plutôt qu'un seul message vague pendant tout le temps de génération.
+      // La voix se génère maintenant par petits morceaux recollés ensuite (voir generatePodcastAudio),
+      // ce qui prend plus longtemps qu'un seul appel mais évite la troncature silencieuse — ça vaut le
+      // coup d'attendre un peu plus pour avoir l'intégralité de la partie, pas un podcast coupé net.
       var procLabel = pod.script
-        ? "Le vieux conteur enregistre sa voix pour « " + pod.title + " »… généralement 1 à 2 minutes par partie."
+        ? "Le vieux conteur enregistre sa voix pour « " + pod.title + " », morceau par morceau pour ne rien couper… généralement 3 à 8 minutes par partie."
         : "Le vieux conteur prépare son texte sur « " + pod.title + " »… généralement 1 à 3 minutes, un peu plus pour un cours très riche en plusieurs parties.";
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
