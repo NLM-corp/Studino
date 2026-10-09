@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1161,6 +1161,7 @@
   }
   async function attemptTtsWithKey(apiKey, script, voiceName) {
     var lastErr = null;
+    var hadRateLimit = false;
     for (var i = 0; i < GEMINI_TTS_MODELS.length; i++) {
       var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_TTS_MODELS[i] + ":generateContent";
       var res;
@@ -1189,12 +1190,26 @@
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
       var retryable = res.status === 503 || res.status === 429 || res.status === 404;
+      if (res.status === 429) hadRateLimit = true;
       lastErr = new Error(msg);
       lastErr.status = res.status;
       lastErr.detail = "Modèle : " + GEMINI_TTS_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
-    throw lastErr || new Error("Erreur inconnue lors de la génération audio.");
+    var finalErr = lastErr || new Error("Erreur inconnue lors de la génération audio.");
+    finalErr.rateLimited = hadRateLimit;
+    throw finalErr;
+  }
+  // Le quota gratuit de la voix est beaucoup plus restrictif que celui du texte (quelques requêtes par
+  // JOUR, pas par minute) : un message générique "réessaie dans 1-2 minutes" serait trompeur ici, le
+  // vrai délai se compte souvent en heures.
+  function ttsRateLimitFallbackError(detail, triedBackup) {
+    var err = new Error(triedBackup
+      ? "Le quota gratuit de la voix (très limité, quelques requêtes par jour) est épuisé sur tes deux clés API. Il faut attendre le renouvellement du quota (parfois plusieurs heures)."
+      : "Le quota gratuit de la voix (très limité, quelques requêtes par jour) est épuisé. Il faut attendre le renouvellement du quota (parfois plusieurs heures), ou ajouter une clé API de secours dans les paramètres pour repartir sur un quota indépendant.");
+    err.status = 429;
+    err.detail = detail;
+    return err;
   }
   async function generatePodcastAudioChunk(script, voiceName) {
     var primaryKey = getApiKey();
@@ -1203,9 +1218,12 @@
       return await attemptTtsWithKey(primaryKey, script, voiceName);
     } catch (err1) {
       var backupKey = getBackupApiKey();
-      if (!backupKey) throw err1;
-      try { return await attemptTtsWithKey(backupKey, script, voiceName); }
-      catch (err2) { throw err1; }
+      if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? ttsRateLimitFallbackError(err1.detail, false) : err1);
+      try {
+        return await attemptTtsWithKey(backupKey, script, voiceName);
+      } catch (err2) {
+        throw (err2.rateLimited ? ttsRateLimitFallbackError(err2.detail, true) : err2);
+      }
     }
   }
   // Scinde le script sur la ponctuation forte (.!?) en morceaux d'au plus maxChars caractères, sans
@@ -1231,8 +1249,12 @@
   // ne JAMAIS envoyer un texte assez long pour risquer d'atteindre cette limite : on découpe le script
   // en morceaux surs, on génère l'audio de chacun séparément, puis on recolle le PCM avant un seul
   // encodage WAV final — invisible pour l'élève, qui reçoit un unique fichier audio continu.
+  // Taille des morceaux : le plus GRAND possible tout en restant sous le seuil de troncature observé
+  // (~2900 caractères ≈ 3 min) — le quota gratuit de la voix est très limité (10 requêtes/jour pour le
+  // modèle lite), donc chaque morceau en moins compte vraiment, pas la peine d'être plus prudent que
+  // nécessaire.
   async function generatePodcastAudio(script, voiceName) {
-    var chunks = splitScriptIntoTtsChunks(script, 1800);
+    var chunks = splitScriptIntoTtsChunks(script, 2600);
     var wavs = [];
     for (var i = 0; i < chunks.length; i++) {
       var url = await generatePodcastAudioChunk(chunks[i], voiceName);
