@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -6171,11 +6171,19 @@
       '<div class="print-fiche-body">' + mdToHtml(methodo.structure) + '</div>' +
       '</div>';
   }
-  function printAndDownload(html) {
+  // Le nom de fichier suggéré par "Imprimer > Enregistrer en PDF" du navigateur vient du <title> de la
+  // page, pas du contenu affiché — sans ça, tout export (fiche, cours, exercice...) se sauvegardait sous
+  // le même nom générique "Studino" quel que soit son contenu réel. On change temporairement le titre de
+  // la page le temps de l'impression, puis on le restaure une fois la boîte de dialogue fermée.
+  function printAndDownload(html, filename) {
     var area = document.getElementById("print-area");
     if (!area) { area = document.createElement("div"); area.id = "print-area"; document.body.appendChild(area); }
     area.innerHTML = html;
     renderMath();
+    var originalTitle = document.title;
+    if (filename) document.title = String(filename).replace(/[\\/:*?"<>|]/g, "_");
+    var restore = function () { document.title = originalTitle; window.removeEventListener("afterprint", restore); };
+    window.addEventListener("afterprint", restore);
     setTimeout(function () { window.print(); }, 60);
   }
 
@@ -7640,12 +7648,12 @@
       var subj = findSubject(sheet.subjectId);
       var theme = subj && findTheme(subj, sheet.themeId);
       var chap = theme && findChapter(theme, sheet.chapterId);
-      printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""));
+      printAndDownload(buildRevisionSheetPrintHtml(sheet, subj ? subj.name : "", chap ? chap.name : ""), sheet.title);
     },
     downloadMethodologyPdf: function (id) {
       var methodo = methodoFind(id);
       if (!methodo || methodo.status !== "ready") return;
-      printAndDownload(buildMethodologyPrintHtml(methodo));
+      printAndDownload(buildMethodologyPrintHtml(methodo), methodo.title);
     },
     openDownloadCourseModal: function (courseId) {
       var loc = locateCourse(courseId);
@@ -7656,7 +7664,7 @@
     confirmDownloadCoursePdf: function (courseId, includeExplanation) {
       var loc = locateCourse(courseId);
       if (!loc) return;
-      printAndDownload(buildCoursePrintHtml(loc.course, loc.subject.name, loc.chapter.name, includeExplanation));
+      printAndDownload(buildCoursePrintHtml(loc.course, loc.subject.name, loc.chapter.name, includeExplanation), loc.course.title);
       modal = null;
       render();
     },
@@ -8068,7 +8076,7 @@
       var html = entry.exercises.map(function (ex, i) {
         return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.level || (ex.correct ? "correct" : "wrong"), ex.feedback, mdToHtml(ex.solution), ex.mistakes);
       }).join("");
-      printAndDownload(html);
+      printAndDownload(html, entry.title);
     },
     openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
     openSettingsModal: function () { modal = { type: "settings" }; refreshStorageEstimate(); render(); },
@@ -8605,7 +8613,7 @@
       var loc = locateCourse(qz.courseId);
       var title = loc ? loc.course.title : "Exercice";
       var html = buildExercisePrintHtml(title, "", mdToHtml(ex.prompt), qz.answerHtml, qz.level || (qz.correct ? "correct" : "wrong"), qz.feedback, mdToHtml(ex.solution), qz.mistakes);
-      printAndDownload(html);
+      printAndDownload(html, title);
     },
 
     startEditCourseField: function (courseId, field) {

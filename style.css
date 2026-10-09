@@ -1003,7 +1003,7 @@
     .print-doc th { background: #eee; font-weight: 700; }
 
     .print-doc-fiche, .print-doc-fiche * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .print-doc-fiche { font-family: 'Public Sans', Arial, sans-serif; }
+    .print-doc-fiche { font-family: 'Public Sans', Arial, sans-serif; overflow-wrap: break-word; word-break: break-word; }
     .print-fiche-header { background: linear-gradient(135deg, var(--fiche-strong, #2c6e3f), var(--fiche-accent, #3E7A3F)); margin: -14px -14px 24px; padding: 20px 22px 16px; border-radius: 0 0 14px 14px; }
     .print-fiche-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.85); font-weight: 700; margin-bottom: 6px; }
     .print-doc-fiche h1 { font-size: 27px; margin: 0 0 4px; color: #fff; }
