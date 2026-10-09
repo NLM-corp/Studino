@@ -301,6 +301,9 @@
   .tile-rename { position: absolute; top: 10px; right: 70px; background: none; border: none; color: var(--text-muted); opacity: 0; cursor: pointer; padding: 5px; border-radius: 6px; font-size: 14px; }
   .tile:hover .tile-rename, .tile:focus-within .tile-rename { opacity: 1; }
   .tile-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
+  .tile-dup { position: absolute; top: 10px; right: 100px; background: none; border: none; color: var(--text-muted); opacity: 0; cursor: pointer; padding: 5px; border-radius: 6px; font-size: 14px; }
+  .tile:hover .tile-dup, .tile:focus-within .tile-dup { opacity: 1; }
+  .tile-dup:hover { color: var(--accent-strong); background: var(--accent-soft); }
 
   .card-grid-signs-short { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px 16px; align-items: start; }
   .card-grid-signs-long { display: flex; flex-direction: column; gap: 14px; }
@@ -319,6 +322,8 @@
   .tile-sign .tile-move:hover { color: var(--accent-strong); background: rgba(255,255,255,0.4); }
   .tile-sign .tile-rename { color: #000; }
   .tile-sign .tile-rename:hover { color: var(--accent-strong); background: rgba(255,255,255,0.4); }
+  .tile-sign .tile-dup { color: #000; }
+  .tile-sign .tile-dup:hover { color: var(--accent-strong); background: rgba(255,255,255,0.4); }
   .tile-sign-short { background-image: url('assets/objects/decor/pancarte courte.png'); aspect-ratio: 140 / 64; }
   .tile-sign-long { background-image: url('assets/objects/decor/Pancarte longue.png'); aspect-ratio: 260 / 76; }
   .tile-sign-metal { background-image: url('assets/objects/decor/plaque en metal.png'); aspect-ratio: 140 / 64; }
@@ -331,6 +336,8 @@
   .tile-sign-metal .tile-move:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
   .tile-sign-metal .tile-rename { color: #EDEDED; }
   .tile-sign-metal .tile-rename:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
+  .tile-sign-metal .tile-dup { color: #EDEDED; }
+  .tile-sign-metal .tile-dup:hover { color: var(--accent-strong); background: rgba(255,255,255,0.2); }
   .ep-tile-tall { aspect-ratio: auto; min-height: 168px; }
   .tile-sign-metal .ep-readiness-head { color: #EDEDED; }
   .tile-sign-metal .ep-readiness-bar { border-color: rgba(255,255,255,0.25); background: rgba(0,0,0,0.25); }

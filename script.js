@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4490,7 +4490,8 @@
       grid = '<div class="card-grid-signs-short">' + s.themes.map(function (t) {
         var courseCount = t.chapters.reduce(function (n, c) { return n + c.courses.length; }, 0);
         return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/theme/' + t.id + '\'">' +
-          '<button class="tile-rename" style="right:40px" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'theme\',\'' + s.id + '\',\'' + t.id + '\')">✏️</button>' +
+          '<button class="tile-rename" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'theme\',\'' + s.id + '\',\'' + t.id + '\')">✏️</button>' +
+          '<button class="tile-move" title="Dupliquer" onclick="event.stopPropagation();App.duplicateTheme(\'' + s.id + '\',\'' + t.id + '\')">📋</button>' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'theme\',\'' + s.id + '\',\'' + t.id + '\')">' + icon("trash") + '</button>' +
           '<div class="tile-icon">' + icon("book") + '</div>' +
           '<div class="tile-title">' + esc(t.name) + '</div>' +
@@ -4514,6 +4515,7 @@
     } else {
       grid = '<div class="card-grid-signs-short">' + th.chapters.map(function (c) {
         return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/subject/' + s.id + '/theme/' + th.id + '/chapter/' + c.id + '\'">' +
+          '<button class="tile-dup" title="Dupliquer" onclick="event.stopPropagation();App.duplicateChapter(\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">📋</button>' +
           '<button class="tile-rename" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'chapter\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">✏️</button>' +
           '<button class="tile-move" title="Déplacer" onclick="event.stopPropagation();App.openMoveChapterModal(\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">🔀</button>' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'chapter\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\')">' + icon("trash") + '</button>' +
@@ -6835,6 +6837,32 @@
     document.body.appendChild(overlay);
   }
 
+  // Duplication de thème/chapitre : copie profonde avec de nouveaux id pour tout ce qui est référencé
+  // par id ailleurs (cours, flashcards, questions, exercices), sinon le doublon et l'original
+  // partageraient le même id et deviendraient indiscernables/introuvables individuellement. Les id des
+  // figures restent INCHANGÉS exprès : ils sont référencés par des jetons "![légende](figure:ID)" DANS
+  // le texte de transcription/explication copié avec le reste — les régénérer casserait ces références.
+  function cloneCourseWithNewIds(co) {
+    var clone = JSON.parse(JSON.stringify(co));
+    clone.id = uid();
+    (clone.flashcards || []).forEach(function (f) { f.id = uid(); });
+    (clone.quizQuestions || []).forEach(function (q) { q.id = uid(); });
+    (clone.exercises || []).forEach(function (e) { e.id = uid(); });
+    return clone;
+  }
+  function cloneChapterWithNewIds(c) {
+    var clone = JSON.parse(JSON.stringify(c));
+    clone.id = uid();
+    clone.courses = (c.courses || []).map(cloneCourseWithNewIds);
+    return clone;
+  }
+  function cloneThemeWithNewIds(t) {
+    var clone = JSON.parse(JSON.stringify(t));
+    clone.id = uid();
+    clone.chapters = (t.chapters || []).map(cloneChapterWithNewIds);
+    return clone;
+  }
+
   /* ---------------- App controller ---------------- */
   window.App = {
     switchAuth: function (mode) { authError = ""; navigate("#/" + mode); },
@@ -8135,6 +8163,31 @@
       else if (kind === "course") item = findCourse(findChapter(findTheme(findSubject(subjectId), themeId), chapterId), courseId);
       if (!item) return;
       modal = { type: "renameItem", kind: kind, subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId, currentName: kind === "course" ? item.title : item.name };
+      render();
+    },
+    duplicateTheme: function (subjectId, themeId) {
+      var s = findSubject(subjectId);
+      var t = findTheme(s, themeId);
+      if (!s || !t) return;
+      var clone = cloneThemeWithNewIds(t);
+      clone.name = t.name + " (copie)";
+      var idx = s.themes.indexOf(t);
+      s.themes.splice(idx + 1, 0, clone);
+      saveDB();
+      toast("Thème dupliqué");
+      render();
+    },
+    duplicateChapter: function (subjectId, themeId, chapterId) {
+      var s = findSubject(subjectId);
+      var t = findTheme(s, themeId);
+      var c = findChapter(t, chapterId);
+      if (!s || !t || !c) return;
+      var clone = cloneChapterWithNewIds(c);
+      clone.name = c.name + " (copie)";
+      var idx = t.chapters.indexOf(c);
+      t.chapters.splice(idx + 1, 0, clone);
+      saveDB();
+      toast("Chapitre dupliqué");
       render();
     },
     confirmRename: function (e) {
