@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1366,6 +1366,35 @@
       podcast.errorDetail = err.detail || null;
       saveDB();
       toast("Échec de la génération du podcast : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
+      render();
+    });
+  }
+  // Une partie peut échouer uniquement à l'étape audio (le script, lui, a déjà été généré avec succès
+  // et vit dans pod.script) : relancer toute la génération depuis runPodcastGeneration redécouperait le
+  // script à neuf avec un nombre de parties potentiellement différent et écraserait l'index de CETTE
+  // partie à 1, créant des doublons/conflits avec les autres parties déjà prêtes du même groupe. On ne
+  // relance donc QUE l'audio, à partir du script déjà existant, sans toucher au reste du groupe.
+  function retryPodcastPartAudio(pod) {
+    pod.status = "processing";
+    pod.error = null; pod.errorStatus = null; pod.errorDetail = null;
+    saveDB(); render();
+    generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
+      return audioDurationFromDataUrl(audioUrl).then(function (duration) {
+        pod.audioUrl = audioUrl;
+        pod.durationSec = duration;
+        pod.segments = buildPodcastSegments(pod.script, duration);
+        pod.status = "ready";
+        saveDB();
+        toast("🎙️ " + pod.title + " est prêt");
+        render();
+      });
+    }).catch(function (err) {
+      pod.status = "error";
+      pod.error = err.message || "Erreur inconnue";
+      pod.errorStatus = err.status || null;
+      pod.errorDetail = err.detail || null;
+      saveDB();
+      toast("Échec de la génération audio : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
       render();
     });
   }
@@ -7205,12 +7234,13 @@
     retryPodcastGeneration: function (id) {
       var pod = podcastFind(id);
       if (!pod) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      // Le script de cette partie a déjà été généré avec succès (seule la voix a échoué) : on ne
+      // relance que l'audio, jamais tout le podcast — sinon l'IA redécoupe le script à neuf avec un
+      // nombre de parties potentiellement différent, créant des doublons avec les parties déjà prêtes.
+      if (pod.script) { retryPodcastPartAudio(pod); return; }
       var subj = findSubject(pod.subjectId);
       if (!subj) return;
-      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      // Repart de zéro pour CETTE partie uniquement (nouveau texte + nouvel audio) : l'IA peut même
-      // décider de la redécouper différemment, les éventuelles nouvelles parties s'ajoutent alors à
-      // côté sans toucher aux autres parties déjà existantes du même podcast.
       var content = pod.scopeLevel === "theme" ? themeContentText(subj, pod.scopeId) : chapterContentText(subj, pod.scopeId);
       runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
