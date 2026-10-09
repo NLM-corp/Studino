@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "6.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "6.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1036,9 +1036,11 @@
   var PODCAST_SCRIPT_SCHEMA = {
     type: "object",
     properties: {
+      notionCount: { type: "integer", description: "Compte D'ABORD, une par une, le nombre de notions/sous-thèmes distincts du cours qu'il faut couvrir en profondeur. Ce chiffre doit être rempli AVANT de décider du nombre de parties — ne décide jamais le nombre de parties avant d'avoir fait ce compte." },
+      estimatedTotalWords: { type: "integer", description: "Estimation du nombre total de mots nécessaires pour couvrir TOUTES ces notions en vraie profondeur (repère : une notion correctement expliquée avec contexte + exemple + lien avec les autres prend typiquement 150 à 400 mots à elle seule, parfois bien plus pour une formule/méthode). Calcule ce total AVANT de décider du nombre de parties : c'est ce chiffre, pas une intuition, qui détermine combien de parties il faut (voir consigne sur le nombre de parties)." },
       parts: {
         type: "array",
-        description: "Toi seul décides du nombre d'éléments (voir consigne : un seul si le contenu est raisonnable, plusieurs si le contenu est riche) — jamais imposé par l'élève.",
+        description: "Toi seul décides du nombre d'éléments, et ce nombre doit être arithmétiquement cohérent avec estimatedTotalWords (environ estimatedTotalWords / 3000 parties, arrondi au-dessus) — jamais imposé par l'élève, et jamais une habitude comme \"2 parties\" sans rapport avec le calcul fait ci-dessus.",
         items: {
           type: "object",
           properties: {
@@ -1049,9 +1051,9 @@
         }
       }
     },
-    required: ["parts"]
+    required: ["notionCount", "estimatedTotalWords", "parts"]
   };
-  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, tooShortRetry) {
+  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) {
     var gender = getUserGender();
     var genderNote = gender === "m"
       ? "L'élève qui t'écoute est un garçon : si tu t'adresses directement à lui (une interpellation affectueuse, pas à chaque phrase), utilise des formulations masculines (\"mon petit\", \"mon grand\", \"jeune homme\"), jamais féminines."
@@ -1068,12 +1070,13 @@
       "- PRÉCISION CONCRÈTE OBLIGATOIRE, règle à prendre très au sérieux : dès que le cours mentionne un élément nommé et identifiable — une expérience scientifique, un événement historique, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — tu dois TOUJOURS raconter CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemples de ce qu'il NE FAUT JAMAIS faire : dire \"une expérience a permis de démontrer que...\" sans raconter en quoi consistait cette expérience (qui l'a menée, sur quoi, comment, ce qui a été observé) ; dire \"tel événement a marqué un tournant...\" sans raconter ce qui s'est concrètement passé pendant cet événement. Si le cours source donne ce détail concret, raconte-le fidèlement et en profondeur ; si le cours source NE donne PAS ce détail (juste le nom et la conclusion), dis-le explicitement à l'élève plutôt que de glisser dessus en silence comme si de rien n'était (ex. \"le cours ne détaille pas comment cette expérience a été menée, mais on sait qu'elle a montré que...\") — n'invente JAMAIS un détail qui ne figure pas dans le cours. La précision prime toujours sur la longueur : mieux vaut une partie plus longue mais qui explique vraiment chaque élément cité, qu'une partie qui enchaîne des noms et des conclusions sans jamais s'arrêter dessus.\n" +
       "- MATIÈRES AVEC FORMULES/MÉTHODES DE CALCUL (maths, physique-chimie, et toute matière avec des démarches techniques) : c'est le cas où un conteur a le plus tendance à bâcler, parce qu'une formule semble \"aride\" à raconter — c'est une erreur, le raisonnement EST le récit. Pour CHAQUE formule/méthode du cours : raconte D'OÙ elle vient (sa logique, sa démonstration si le cours la donne, sinon au moins l'intuition de pourquoi elle marche), explique CE QUE représente concrètement chaque terme/symbole, QUAND et POURQUOI on s'en sert plutôt que d'une autre, puis déroule à voix haute UN SEUL exemple d'application chiffré, pas à pas, bien choisi et détaillé du début à la fin. Un seul exemple bien expliqué vaut infiniment mieux que plusieurs exemples expédiés — ne multiplie JAMAIS les exemples juste pour faire du volume, ce serait du remplissage inutile, pas de la pédagogie. L'objectif est que l'élève ressorte capable de réellement APPLIQUER la méthode lui-même à un contrôle, pas d'avoir juste entendu son nom passer.\n" +
       "- DURÉE par partie : entre 1600 et 3500 mots (à l'oral, environ 10 à 22 minutes) — c'est un PLANCHER STRICT, pas un objectif approximatif : une partie de moins de 1600 mots (par exemple une partie d'1 minute) est un ÉCHEC CRITIQUE, quelle que soit la matière, y compris en maths/physique-chimie où le réflexe fautif est d'aller trop vite sur les formules. Pas de plafond strict non plus : si vraiment détailler précisément chaque élément du cours (voir règles de précision et de formules ci-dessus) demande d'aller au-delà de 3500 mots pour une partie donnée, ne sacrifie JAMAIS la précision pour respecter ce chiffre. Si le contenu du cours semble court, ne raccourcis JAMAIS le podcast pour autant : développe chaque notion bien plus en profondeur (contexte, exemples, implications, reformulations, liens entre les notions) plutôt que de rester en surface — mais sans padding artificiel ni exemples répétés juste pour gonfler le compte de mots, la profondeur doit rester utile à la compréhension. Avant de répondre, vérifie mentalement : est-ce que CHAQUE partie dépasse bien 1600 mots ? Si une partie est clairement plus courte que les autres, c'est le signe qu'elle a été bâclée — reprends-la. Un podcast de 2-3 minutes qui survole le cours est un ÉCHEC total, même s'il est exact et complet sur le papier — l'élève doit ressortir prêt pour un contrôle sur cette matière, pas avec un simple aperçu.\n" +
-      "- NOMBRE DE PARTIES : C'EST TOI QUI DÉCIDES, pas l'élève, et il N'Y A AUCUNE LIMITE HAUTE — ni 2, ni 3, ni 5 : le seul critère est la quantité réelle de contenu à couvrir EN PROFONDEUR. Regarde CHAQUE grande section/notion du cours et demande-toi si elle peut vraiment être expliquée en profondeur (contexte, exemples, implications) dans le temps qui lui reste disponible ; si non, c'est qu'il faut une partie de plus. Repère concret : si le cours a 3 grands thèmes, ça fera souvent 3 parties ; s'il en a 7, ça peut très bien faire 7 parties (ou plus) — ne te bride JAMAIS en te disant qu'un podcast \"a déjà assez de parties\", ce nombre n'existe pas. Si tout tient confortablement dans UNE SEULE partie de 1600 à 3500 mots en couvrant vraiment tout en profondeur, fais UNE SEULE partie — ne découpe JAMAIS artificiellement juste pour faire plusieurs parties. Si en revanche le contenu est si riche qu'une seule partie dépasserait largement 3500 mots pour tout couvrir en profondeur, découpe en plusieurs parties cohérentes (par grands thèmes/sections), chacune respectant elle-même la fourchette de 1600 à 3500 mots, sans aucun chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global sur l'ensemble des parties réunies — même si ça fait beaucoup de parties au total, ce n'est jamais un problème.\n" +
+      "- NOMBRE DE PARTIES — PROCÉDURE OBLIGATOIRE, ne saute aucune étape : un biais fréquent est de retomber par habitude sur un nombre \"qui sonne bien\" (souvent 2) sans vraiment calculer, même avec la consigne \"aucune limite\" — pour éviter ça, tu DOIS calculer avant de décider. Étape 1 : remplis \"notionCount\" en comptant une par une les notions/sous-thèmes distincts du cours. Étape 2 : remplis \"estimatedTotalWords\" en estimant le nombre de mots nécessaires pour toutes les couvrir en vraie profondeur (150 à 400 mots par notion simple, bien plus pour une formule/méthode à expliquer avec un exemple). Étape 3 : SEULEMENT APRÈS avoir rempli ces deux chiffres, déduis le nombre de parties par le calcul estimatedTotalWords / 3000 (arrondi au-dessus) — PAS par intuition. Il N'Y A AUCUNE LIMITE HAUTE — ni 2, ni 3, ni 5 : si le calcul donne 7 parties, fais 7 parties, ne te bride jamais en pensant qu'un podcast \"a déjà assez de parties\". Si le calcul donne 1 (tout tient dans 1600-3500 mots en profondeur), fais UNE SEULE partie — ne découpe JAMAIS artificiellement. Chaque partie respecte elle-même la fourchette de 1600 à 3500 mots, sans chevauchement ni répétition d'une partie à l'autre, et sans rien oublier au global.\n" +
       "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
       "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie (ou du podcast entier s'il n'y a qu'une seule partie).\n" +
       "- INTERDIT ABSOLU : aucune notation LaTeX, aucun symbole mathématique brut ($, ^, _, \\frac, °, %, =, ×...) ni aucune abréviation qui se prononcerait mal lue telle quelle — une synthèse vocale va lire ce texte MOT POUR MOT. Écris TOUT en toutes lettres, exactement comme un professeur le dirait à voix haute : \"2^3\" devient \"deux puissance trois\", \"H2O\" devient \"H deux O\" dit \"aitch deux o\" ou plus naturellement \"eau\", \"50%\" devient \"cinquante pour cent\", \"20°C\" devient \"vingt degrés Celsius\", \"=\" devient \"égale\", une fraction \"3/4\" devient \"trois quarts\". Fais cette conversion pour CHAQUE formule, unité ou nombre technique du cours, sans exception.\n" +
       "- Respecte une orthographe française irréprochable, avec tous les accents nécessaires (é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal accentué.\n\n" +
-      (tooShortRetry ? "[Note système — IMPORTANT : ta tentative précédente a produit au moins une partie BEAUCOUP trop courte (loin en dessous de 1600 mots, parfois à peine 1 minute à l'oral) — c'est un échec strict de la consigne de durée. Cette fois, développe réellement CHAQUE notion en profondeur (surtout les formules/méthodes si la matière en a) jusqu'à dépasser 1600 mots sur CHAQUE partie, quitte à prendre plus de temps par explication. Ne recommence pas la même erreur.]\n\n" : "") +
+      (retryReason === "short" ? "[Note système — IMPORTANT : ta tentative précédente a produit au moins une partie BEAUCOUP trop courte (loin en dessous de 1600 mots, parfois à peine 1 minute à l'oral) — c'est un échec strict de la consigne de durée. Cette fois, développe réellement CHAQUE notion en profondeur (surtout les formules/méthodes si la matière en a) jusqu'à dépasser 1600 mots sur CHAQUE partie, quitte à prendre plus de temps par explication. Ne recommence pas la même erreur.]\n\n" : "") +
+      (retryReason === "partcount" ? "[Note système — IMPORTANT : ta tentative précédente a toi-même estimé qu'il fallait plus de mots au total que ce que tu as réellement écrit dans \"parts\" — autrement dit tu as sous-estimé le nombre de parties nécessaires par rapport à ton propre calcul. Cette fois, suis VRAIMENT la procédure : compte notionCount, calcule estimatedTotalWords, puis fixe le nombre de parties sur ce calcul (estimatedTotalWords / 3000, arrondi au-dessus) sans te brider par habitude. Ne recommence pas la même erreur.]\n\n" : "") +
       "Voici le cours :\n\n" + content + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
@@ -1081,18 +1084,27 @@
     return String(script || "").trim().split(/\s+/).filter(Boolean).length;
   }
   // Filet de sécurité côté code, pas seulement une consigne de prompt : si au moins une partie générée
-  // est manifestement trop courte (bien en dessous du plancher de 1600 mots demandé), on retente une
-  // fois avec une note d'échec explicite, plutôt que d'accepter silencieusement une partie d'1 minute.
-  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt) {
+  // est manifestement trop courte (bien en dessous du plancher de 1600 mots demandé), OU si l'IA a
+  // elle-même estimé qu'il fallait plus de mots que ce qu'elle a réellement écrit (donc qu'elle s'est
+  // bridée sur le nombre de parties malgré son propre calcul), on retente une fois avec une note d'échec
+  // explicite plutôt que d'accepter silencieusement un podcast trop court.
+  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt, retryReason) {
     attempt = attempt || 1;
-    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, attempt > 1) }];
+    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) }];
     // Un cours très riche peut légitimement nécessiter de nombreuses parties de plusieurs milliers de
     // mots chacune : une limite de sortie par défaut trop basse tronquerait la réponse en silence avant
     // que l'IA ait fini, donnant l'impression d'un plafond artificiel sur le nombre de parties.
     return callGemini(parts, PODCAST_SCRIPT_SCHEMA, 65536).then(function (data) {
       var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
       var tooShort = scriptParts.some(function (p) { return podcastScriptWordCount(p.script) < 900; });
-      if (tooShort && attempt < 2) return generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt + 1);
+      var actualWords = scriptParts.reduce(function (sum, p) { return sum + podcastScriptWordCount(p.script); }, 0);
+      var estimated = data.estimatedTotalWords || 0;
+      // Marge large (60%) : on ne veut retenter que sur un écart franc, jamais sur un simple flou
+      // d'estimation — le but est d'attraper le cas "l'IA a sous-livré par rapport à son propre calcul".
+      var underDelivered = estimated > 3500 && actualWords < estimated * 0.6;
+      if ((tooShort || underDelivered) && attempt < 2) {
+        return generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt + 1, tooShort ? "short" : "partcount");
+      }
       return data;
     });
   }
