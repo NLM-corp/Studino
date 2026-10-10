@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1062,7 +1062,7 @@
       : gender === "f"
       ? "L'élève qui t'écoute est une fille : si tu t'adresses directement à elle (une interpellation affectueuse, pas à chaque phrase), utilise des formulations féminines (\"ma petite\", \"ma grande\", \"jeune demoiselle\"), jamais masculines."
       : "Tu ne connais pas le genre de l'élève qui t'écoute : si tu t'adresses directement à lui/elle, utilise des formulations neutres (\"mon enfant\", \"jeune ami\", \"toi qui m'écoutes\") plutôt qu'un terme genré.";
-    return "Tu es un vieux conteur chevronné : un ancien professeur devenu archéologue sur le tard, aussi chaleureux et bienveillant qu'un grand-père mais PAS un grand-père de famille — un vieux savant plein d'anecdotes de terrain qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + (scopeLevel === "theme" ? "thème" : "chapitre") + " : " + scopeName + ") à partir duquel tu dois créer ce podcast.\n\n" +
+    return "Tu es un vieux conteur chevronné : un ancien professeur devenu archéologue sur le tard, aussi chaleureux et bienveillant qu'un grand-père mais PAS un grand-père de famille — un vieux savant plein d'anecdotes de terrain qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + podcastScopeLabel(scopeLevel) + " : " + scopeName + ") à partir duquel tu dois créer ce podcast.\n\n" +
       "Règles absolues :\n" +
       "- " + genderNote + "\n" +
       "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
@@ -1452,11 +1452,24 @@
       (th ? th.chapters : []).forEach(function (c) {
         (c.courses || []).filter(dpCourseHasContent).forEach(function (co) { out.push({ course: co, chapterName: c.name }); });
       });
+    } else if (pod.scopeLevel === "course") {
+      var loc = locateCourse(pod.scopeId);
+      if (loc && dpCourseHasContent(loc.course)) out.push({ course: loc.course, chapterName: loc.chapter.name });
     } else {
       var ch = findChapterAnywhere(subj, pod.scopeId);
       (ch ? ch.courses : []).filter(dpCourseHasContent).forEach(function (co) { out.push({ course: co, chapterName: ch.name }); });
     }
     return out;
+  }
+  // Un podcast peut porter sur tout un thème, un chapitre ou un seul cours.
+  function podcastScopeLabel(level) { return level === "theme" ? "thème" : level === "course" ? "cours" : "chapitre"; }
+  function podcastScopeContentText(subj, level, scopeId) {
+    if (level === "theme") return themeContentText(subj, scopeId);
+    if (level === "course") {
+      var loc = locateCourse(scopeId);
+      return loc && dpCourseHasContent(loc.course) ? "### " + loc.course.title + "\n" + stripFigureMarkdown(loc.course.transcription || "") : "";
+    }
+    return chapterContentText(subj, scopeId);
   }
   function podcastScopeSnapshot(pod) {
     return podcastScopeCourses(pod).map(function (x) { return { id: x.course.id, title: x.course.title, hash: courseContentHash(x.course) }; });
@@ -5051,13 +5064,7 @@
       return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
   }
-  // Pour choisir la portée d'un podcast ("tout un thème" plutôt qu'un seul chapitre) : mêmes helpers
-  // que ci-dessus, mais agrégeant tous les chapitres d'un thème au lieu d'un seul chapitre.
-  function subjectThemesWithContent(subj) {
-    return (subj.themes || []).filter(function (t) {
-      return (t.chapters || []).some(function (c) { return (c.courses || []).some(dpCourseHasContent); });
-    }).map(function (t) { return { id: t.id, name: t.name }; });
-  }
+  // Pour un podcast portant sur "tout un thème" : agrège tous les chapitres du thème.
   function themeContentText(subj, themeId) {
     var theme = findTheme(subj, themeId);
     if (!theme) return "";
@@ -6573,26 +6580,36 @@
       var ppSubj = findSubject(modal.subjectId) || ppSubs[0];
       if (ppSubj) modal.subjectId = ppSubj.id;
       var ppLevel = modal.level || "chapter";
-      var ppThemes = ppSubj ? subjectThemesWithContent(ppSubj) : [];
-      var ppChapters = ppSubj ? subjectChaptersWithContent(ppSubj) : [];
-      if (!ppThemes.some(function (t) { return t.id === modal.themeId; })) modal.themeId = ppThemes[0] ? ppThemes[0].id : "";
-      if (!ppChapters.some(function (c) { return c.id === modal.chapterId; })) modal.chapterId = ppChapters[0] ? ppChapters[0].id : "";
-      var ppSubjOptions = ppSubs.map(function (s) { return '<option value="' + s.id + '" ' + (s.id === modal.subjectId ? "selected" : "") + '>' + esc(s.name) + '</option>'; }).join("");
-      var ppThemeOptions = ppThemes.map(function (t) { return '<option value="' + t.id + '" ' + (t.id === modal.themeId ? "selected" : "") + '>' + esc(t.name) + '</option>'; }).join("");
-      var ppChapOptions = ppChapters.map(function (c) { return '<option value="' + c.id + '" ' + (c.id === modal.chapterId ? "selected" : "") + '>' + esc(c.themeName + " / " + c.name) + '</option>'; }).join("");
-      var ppHasAny = ppLevel === "theme" ? ppThemes.length : ppChapters.length;
+      // Sélection en cascade (thème → chapitre → cours) plutôt qu'une seule liste de TOUS les chapitres
+      // de tous les thèmes mélangés : on choisit d'abord le thème, puis on ne voit que ses chapitres, etc.
+      var ppThemes = ppSubj ? dpThemesWithContent(ppSubj) : [];
+      var ppTheme = ppThemes.find(function (t) { return t.id === modal.themeId; }) || ppThemes[0];
+      modal.themeId = ppTheme ? ppTheme.id : "";
+      var ppChapters = ppTheme ? dpChaptersWithContent(ppTheme) : [];
+      var ppChap = ppChapters.find(function (c) { return c.id === modal.chapterId; }) || ppChapters[0];
+      modal.chapterId = ppChap ? ppChap.id : "";
+      var ppCourses = ppChap ? dpCoursesWithContent(ppChap) : [];
+      var ppCourse = ppCourses.find(function (co) { return co.id === modal.courseId; }) || ppCourses[0];
+      modal.courseId = ppCourse ? ppCourse.id : "";
+      var ppOptions = function (items, selectedId, labelKey) {
+        return items.map(function (x) { return '<option value="' + x.id + '" ' + (x.id === selectedId ? "selected" : "") + '>' + esc(x[labelKey]) + '</option>'; }).join("");
+      };
+      var ppSubjOptions = ppOptions(ppSubs, modal.subjectId, "name");
+      var ppLevelBtn = function (level, label) {
+        return '<button type="button" class="btn btn-sm ' + (ppLevel === level ? "btn-primary" : "btn-ghost") + '" style="width:auto" onclick="App.setPodcastLevel(\'' + level + '\')">' + label + '</button>';
+      };
+      var ppHasAny = ppThemes.length > 0;
       inner = '<h3>🎙️ Nouveau podcast</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Le vieux conteur raconte la portée choisie, fidèlement et en entier — pas une récitation, un vrai récit.</p>' +
         (ppSubs.length ? (
           '<div class="field"><label>Matière</label><select onchange="App.changePodcastSubject(this.value)">' + ppSubjOptions + '</select></div>' +
-          '<div class="field"><label>Portée</label><div style="display:flex;gap:8px">' +
-          '<button type="button" class="btn btn-sm ' + (ppLevel === "chapter" ? "btn-primary" : "btn-ghost") + '" style="width:auto" onclick="App.setPodcastLevel(\'chapter\')">Un chapitre</button>' +
-          '<button type="button" class="btn btn-sm ' + (ppLevel === "theme" ? "btn-primary" : "btn-ghost") + '" style="width:auto" onclick="App.setPodcastLevel(\'theme\')">Tout un thème</button>' +
+          '<div class="field"><label>Portée</label><div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          ppLevelBtn("theme", "Tout un thème") + ppLevelBtn("chapter", "Un chapitre") + ppLevelBtn("course", "Un seul cours") +
           '</div></div>' +
           (ppHasAny ? (
-            (ppLevel === "theme"
-              ? '<div class="field"><label>Thème</label><select onchange="App.changePodcastTheme(this.value)">' + ppThemeOptions + '</select></div>'
-              : '<div class="field"><label>Chapitre</label><select onchange="App.changePodcastChapter(this.value)">' + ppChapOptions + '</select></div>') +
+            '<div class="field"><label>Thème</label><select onchange="App.changePodcastTheme(this.value)">' + ppOptions(ppThemes, modal.themeId, "name") + '</select></div>' +
+            (ppLevel !== "theme" ? '<div class="field"><label>Chapitre</label><select onchange="App.changePodcastChapter(this.value)">' + ppOptions(ppChapters, modal.chapterId, "name") + '</select></div>' : "") +
+            (ppLevel === "course" ? '<div class="field"><label>Cours</label><select onchange="App.changePodcastCourse(this.value)">' + ppOptions(ppCourses, modal.courseId, "title") + '</select></div>' : "") +
             '<p style="font-size:12px;color:var(--text-muted);margin:-4px 0 14px">Le vieux conteur décide lui-même s\'il faut une ou plusieurs parties, selon la quantité réelle de contenu à couvrir.</p>' +
             '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.createPodcast()">Générer</button></div>'
           ) : '<p class="modal-warn">Cette matière n\'a encore aucun cours généré — génère au moins un cours avant de créer un podcast.</p>')
@@ -7499,34 +7516,39 @@
     togglePodcastFolder: function (gid) { podcastFolderOpen[gid] = !podcastFolderOpen[gid]; render(); },
     openPodcastModal: function () {
       var firstSubj = userData().subjects[0];
-      modal = { type: "podcastGen", subjectId: firstSubj && firstSubj.id, level: "chapter", chapterId: null, themeId: null };
+      modal = { type: "podcastGen", subjectId: firstSubj && firstSubj.id, level: "chapter", themeId: null, chapterId: null, courseId: null };
       render();
     },
-    changePodcastSubject: function (subjectId) { modal.subjectId = subjectId; modal.chapterId = null; modal.themeId = null; render(); },
+    changePodcastSubject: function (subjectId) { modal.subjectId = subjectId; modal.themeId = null; modal.chapterId = null; modal.courseId = null; render(); },
     setPodcastLevel: function (level) { modal.level = level; render(); },
-    changePodcastChapter: function (chapterId) { modal.chapterId = chapterId; render(); },
-    changePodcastTheme: function (themeId) { modal.themeId = themeId; render(); },
+    changePodcastTheme: function (themeId) { modal.themeId = themeId; modal.chapterId = null; modal.courseId = null; render(); },
+    changePodcastChapter: function (chapterId) { modal.chapterId = chapterId; modal.courseId = null; render(); },
+    changePodcastCourse: function (courseId) { modal.courseId = courseId; render(); },
     createPodcast: function () {
       var m = modal;
       var subj = findSubject(m.subjectId);
       if (!subj) { toast("Choisis une matière"); return; }
       var level = m.level || "chapter";
-      var content, scopeName, scopeId;
+      var scopeName, scopeId;
       if (level === "theme") {
         var theme = findTheme(subj, m.themeId);
         if (!theme) { toast("Choisis un thème"); return; }
-        content = themeContentText(subj, theme.id);
         scopeName = theme.name;
         scopeId = theme.id;
+      } else if (level === "course") {
+        var loc = locateCourse(m.courseId);
+        if (!loc || loc.subject.id !== subj.id) { toast("Choisis un cours"); return; }
+        scopeName = loc.course.title;
+        scopeId = loc.course.id;
       } else {
         var chap = findChapterAnywhere(subj, m.chapterId);
         if (!chap) { toast("Choisis un chapitre"); return; }
-        content = chapterContentText(subj, m.chapterId);
         scopeName = chap.name;
         scopeId = chap.id;
       }
+      var content = podcastScopeContentText(subj, level, scopeId);
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
-      if (!content) { toast(level === "theme" ? "Ce thème n'a aucun cours généré" : "Ce chapitre n'a aucun cours généré"); return; }
+      if (!content) { toast(level === "course" ? "Ce cours n'a pas encore été généré" : "Ce " + podcastScopeLabel(level) + " n'a aucun cours généré"); return; }
       // Le nombre de parties n'est PAS choisi ici : c'est l'IA qui décide selon la richesse réelle du
       // contenu (voir runPodcastGeneration). On crée une seule entrée pour l'instant, les parties
       // suivantes (s'il y en a) seront ajoutées dynamiquement une fois la réponse connue.
@@ -7553,7 +7575,7 @@
       if (pod.script) { retryPodcastPartAudio(pod); return; }
       var subj = findSubject(pod.subjectId);
       if (!subj) return;
-      var content = pod.scopeLevel === "theme" ? themeContentText(subj, pod.scopeId) : chapterContentText(subj, pod.scopeId);
+      var content = podcastScopeContentText(subj, pod.scopeLevel, pod.scopeId);
       runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
     // Actualiser = refaire TOUT le podcast à partir des cours actuels (pas ajouter des parties à la
@@ -7570,8 +7592,8 @@
       var first = parts[0];
       var subj = findSubject(first.subjectId);
       if (!subj) { toast("La matière de ce podcast n'existe plus."); return; }
-      var content = first.scopeLevel === "theme" ? themeContentText(subj, first.scopeId) : chapterContentText(subj, first.scopeId);
-      if (!content) { toast("Ce " + (first.scopeLevel === "theme" ? "thème" : "chapitre") + " n'a plus aucun cours généré."); return; }
+      var content = podcastScopeContentText(subj, first.scopeLevel, first.scopeId);
+      if (!content) { toast(first.scopeLevel === "course" ? "Ce cours n'existe plus ou n'est plus généré." : "Ce " + podcastScopeLabel(first.scopeLevel) + " n'a plus aucun cours généré."); return; }
       var pod = {
         id: uid(), groupId: uid(), title: first.scopeName, pendingReplace: gid,
         subjectId: first.subjectId, subjectName: first.subjectName,
@@ -7596,7 +7618,7 @@
       if (!first.script) {
         var subj = findSubject(first.subjectId);
         if (!subj) { toast("La matière de ce podcast n'existe plus."); return; }
-        var content = first.scopeLevel === "theme" ? themeContentText(subj, first.scopeId) : chapterContentText(subj, first.scopeId);
+        var content = podcastScopeContentText(subj, first.scopeLevel, first.scopeId);
         runPodcastGeneration(first, subj.name, first.scopeName, content);
         return;
       }
