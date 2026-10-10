@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1432,6 +1432,32 @@
     var ch = podcastGroupChanges(parts);
     return ch.known && (ch.added.length > 0 || ch.modified.length > 0);
   }
+  // Actualisation silencieuse (voir App.refreshPodcast) : les parties du nouveau podcast portent
+  // pendingReplace = groupe de l'ancien podcast et restent CACHÉES tant qu'elles n'ont pas TOUTES leur
+  // voix. L'élève continue d'écouter l'ancien pendant ce temps ; s'il manque une voix (quota épuisé...),
+  // l'ancien reste en place. Si l'ancien a été supprimé entre-temps, le nouveau redevient visible.
+  function podcastPendingFor(oldGid) {
+    return podcastData().filter(function (p) { return p.pendingReplace === oldGid; })
+      .sort(function (a, b) { return (a.partIndex || 1) - (b.partIndex || 1); });
+  }
+  function isHiddenPendingPodcast(p) {
+    if (!p.pendingReplace) return false;
+    return podcastData().some(function (q) { return !q.pendingReplace && podcastGroupKey(q) === p.pendingReplace; });
+  }
+  function finalizePodcastReplacement(oldGid) {
+    var pending = podcastPendingFor(oldGid);
+    if (!pending.length || pending.some(function (p) { return p.status !== "ready"; })) return;
+    var hashParts = location.hash.replace(/^#\//, "").split("/");
+    var viewed = hashParts[0] === "podcasts" && hashParts[1] ? podcastFind(hashParts[1]) : null;
+    var viewingOld = !!(viewed && !viewed.pendingReplace && podcastGroupKey(viewed) === oldGid);
+    var d = userData();
+    d.podcasts = d.podcasts.filter(function (p) { return p.pendingReplace || podcastGroupKey(p) !== oldGid; });
+    pending.forEach(function (p) { delete p.pendingReplace; });
+    saveDB();
+    toast("🎙️ Podcast actualisé : « " + pending[0].scopeName + " »");
+    if (viewingOld) navigate("#/podcasts/" + pending[0].id);
+    else render();
+  }
   function runPodcastGeneration(podcast, subjectName, scopeName, content) {
     podcast.status = "processing";
     podcast.processingStartedAt = Date.now();
@@ -1448,15 +1474,6 @@
         saveDB(); render();
         return;
       }
-      // Actualisation d'un podcast existant (voir App.refreshPodcast) : l'ancien n'est supprimé
-      // qu'ICI, une fois le nouveau texte bien obtenu — si la génération échoue avant, l'élève garde
-      // son ancien podcast intact au lieu de se retrouver sans rien.
-      if (podcast.replacesGroup) {
-        var oldGid = podcast.replacesGroup;
-        var d = userData();
-        d.podcasts = d.podcasts.filter(function (p) { return p === podcast || podcastGroupKey(p) !== oldGid; });
-        delete podcast.replacesGroup;
-      }
       var total = scriptParts.length;
       var pods = [podcast];
       for (var k = 1; k < total; k++) {
@@ -1468,6 +1485,7 @@
           status: "processing", error: null, errorStatus: null, errorDetail: null,
           script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k, processingStartedAt: Date.now()
         };
+        if (podcast.pendingReplace) extra.pendingReplace = podcast.pendingReplace;
         podcastData().push(extra);
         pods.push(extra);
       }
@@ -1485,6 +1503,8 @@
       var runOne = function (i) {
         if (i >= pods.length) return;
         var pod = pods[i];
+        if (podcastData().indexOf(pod) === -1) return; // supprimé ou actualisation annulée en route : inutile de consommer du quota voix
+
         generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
           return audioDurationFromDataUrl(audioUrl).then(function (duration) {
             pod.audioUrl = audioUrl;
@@ -1492,6 +1512,7 @@
             pod.segments = buildPodcastSegments(pod.script, duration);
             pod.status = "ready";
             saveDB();
+            if (pod.pendingReplace) { finalizePodcastReplacement(pod.pendingReplace); return; }
             toast("🎙️ " + pod.title + " est prêt");
             render();
           });
@@ -1524,13 +1545,14 @@
     pod.processingStartedAt = Date.now();
     pod.error = null; pod.errorStatus = null; pod.errorDetail = null;
     saveDB(); render();
-    generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
+    return generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
       return audioDurationFromDataUrl(audioUrl).then(function (duration) {
         pod.audioUrl = audioUrl;
         pod.durationSec = duration;
         pod.segments = buildPodcastSegments(pod.script, duration);
         pod.status = "ready";
         saveDB();
+        if (pod.pendingReplace) { finalizePodcastReplacement(pod.pendingReplace); return; }
         toast("🎙️ " + pod.title + " est prêt");
         render();
       });
@@ -1543,6 +1565,19 @@
       toast("Échec de la génération audio : " + (err.message || "erreur inconnue"), { status: err.status, detail: err.detail });
       render();
     });
+  }
+  // Bandeau d'état d'une actualisation silencieuse, affiché sur l'ANCIEN podcast (le nouveau est caché).
+  function podcastRefreshStatusHtml(oldGid) {
+    var pending = podcastPendingFor(oldGid);
+    if (!pending.length) return "";
+    if (pending.some(function (p) { return p.status === "processing"; })) {
+      var ready = pending.filter(function (p) { return p.status === "ready"; }).length;
+      var withScript = pending.some(function (p) { return p.script; });
+      return '<span class="status-pill status-processing"><span class="dotpulse"></span>Actualisation en cours' + (withScript ? " (" + ready + "/" + pending.length + " voix prêtes)" : "") + '…</span>';
+    }
+    return '<span class="status-pill status-processing" title="' + esc((pending.find(function (p) { return p.error; }) || {}).error || "") + '">⚠️ Actualisation interrompue</span>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="event.stopPropagation();App.retryPodcastRefresh(\'' + oldGid + '\')">Réessayer</button>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="event.stopPropagation();App.cancelPodcastRefresh(\'' + oldGid + '\')">Annuler</button>';
   }
   /* ---------------- Méthodologies (dissertation, commentaire, étude de document...) ----------------
      Contrairement à un cours "de connaissances", une méthodologie n'est pas un contenu à mémoriser
@@ -4737,13 +4772,15 @@
   }
   var PODCAST_NEW_CONTENT_BADGE = '<span class="status-pill status-processing" title="Des cours ont été ajoutés ou modifiés depuis ce podcast">🆕 Nouveau contenu</span>';
   function podcastTileHtml(p) {
-    var hasNew = p.status === "ready" && podcastGroupHasNewContent([p]);
+    var refreshHtml = podcastRefreshStatusHtml(podcastGroupKey(p));
+    var hasNew = !refreshHtml && p.status === "ready" && podcastGroupHasNewContent([p]);
     return '<div class="tile" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
       '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
       '<div class="tile-icon">🎙️</div>' +
       '<div class="tile-title">' + esc(p.title) + '</div>' +
       podcastStatusBadge(p) +
       (hasNew ? PODCAST_NEW_CONTENT_BADGE : "") +
+      refreshHtml +
       '</div>';
   }
   // Plusieurs parties du même podcast (même groupId) prennent un seul emplacement sous forme de
@@ -4752,13 +4789,15 @@
     var chapterName = parts[0].scopeName || parts[0].title;
     var open = !!podcastFolderOpen[gid];
     var busy = parts.some(function (p) { return p.status === "processing"; });
-    var hasNew = !busy && podcastGroupHasNewContent(parts);
+    var refreshHtml = podcastRefreshStatusHtml(gid);
+    var hasNew = !busy && !refreshHtml && podcastGroupHasNewContent(parts);
     if (!open) {
       return '<div class="tile" onclick="App.togglePodcastFolder(\'' + gid + '\')">' +
         '<div class="tile-icon">📁</div>' +
         '<div class="tile-title">' + esc(chapterName) + '</div>' +
         '<span class="demo-badge">' + parts.length + ' parties</span>' +
         (hasNew ? PODCAST_NEW_CONTENT_BADGE : "") +
+        refreshHtml +
         '</div>';
     }
     var anyReady = parts.some(function (p) { return p.status === "ready"; });
@@ -4767,6 +4806,7 @@
       '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
       (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">⬇️ Tout télécharger en un seul MP3</button>' : "") +
       (hasNew ? '<button class="btn btn-primary btn-sm" style="width:auto;margin:0 0 8px 8px" onclick="event.stopPropagation();App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser avec le nouveau contenu</button>' : "") +
+      (refreshHtml ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' + refreshHtml + '</div>' : "") +
       '<div class="podcast-folder-items">' + parts.map(function (p) {
         return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
           '<span>🎙️ ' + esc(p.title || ("Partie " + p.partIndex)) + '</span>' + podcastStatusBadge(p) +
@@ -4775,7 +4815,7 @@
       }).join("") + '</div></div>';
   }
   function renderPodcastListPage() {
-    var list = podcastData().slice().sort(function (a, b) { return b.createdAt - a.createdAt; });
+    var list = podcastData().filter(function (p) { return !isHiddenPendingPodcast(p); }).sort(function (a, b) { return b.createdAt - a.createdAt; });
     if (!podcastIdleImgCache) podcastIdleImgCache = PODCAST_ATTEND_IMGS[Math.floor(Math.random() * PODCAST_ATTEND_IMGS.length)];
     var libraryHtml;
     if (!list.length) {
@@ -4825,8 +4865,8 @@
       // coup d'attendre un peu plus pour avoir l'intégralité de la partie, pas un podcast coupé net.
       var procLabel = pod.script
         ? "Le vieux conteur enregistre sa voix pour « " + pod.title + " », morceau par morceau pour ne rien couper… généralement 3 à 8 minutes par partie."
-        : pod.replacesGroup
-        ? "Le vieux conteur refait tout le podcast « " + pod.scopeName + " » avec tes cours à jour… généralement 1 à 3 minutes pour le texte. Ton ancien podcast reste disponible jusqu'à ce que le nouveau texte soit prêt."
+        : pod.pendingReplace
+        ?"Le vieux conteur refait tout le podcast « " + pod.scopeName + " » avec tes cours à jour… généralement 1 à 3 minutes pour le texte. Ton ancien podcast reste disponible jusqu'à ce que le nouveau texte soit prêt."
         : "Le vieux conteur prépare son texte sur « " + pod.title + " »… généralement 1 à 3 minutes, un peu plus pour un cours très riche en plusieurs parties.";
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
@@ -4851,6 +4891,8 @@
         (pod.partCount > 1 ? '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastGroupMp3(\'' + pod.groupId + '\')" title="Télécharger toutes les parties en un seul MP3">⬇️ Tout en 1 MP3</button>' : "") +
         (function () {
           var gid = podcastGroupKey(pod);
+          var refreshHtml = podcastRefreshStatusHtml(gid);
+          if (refreshHtml) return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + refreshHtml + '</div>';
           var hasNew = podcastGroupHasNewContent(podcastGroupParts(gid));
           return '<button class="btn btn-ghost btn-sm" style="width:auto;background:' + (hasNew ? "rgba(255,200,60,0.35)" : "rgba(255,255,255,0.14)") + ';border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser' + (hasNew ? " (nouveau contenu)" : "") + '</button>';
         })() +
@@ -7467,13 +7509,13 @@
       runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
     // Actualiser = refaire TOUT le podcast à partir des cours actuels (pas ajouter des parties à la
-    // fin). Le nouveau podcast se prépare à côté ; l'ancien n'est supprimé qu'une fois le nouveau texte
-    // obtenu (voir runPodcastGeneration), pour ne jamais laisser l'élève sans rien si ça échoue.
+    // fin), en silence : le nouveau reste caché jusqu'à ce que TOUTES ses parties aient leur voix, puis
+    // remplace l'ancien d'un coup (voir finalizePodcastReplacement).
     refreshPodcast: function (gid) {
-      var parts = podcastGroupParts(gid);
+      var parts = podcastGroupParts(gid).filter(function (p) { return !p.pendingReplace; });
       if (!parts.length) return;
       if (parts.some(function (p) { return p.status === "processing"; })) { toast("Attends que la génération en cours de ce podcast soit terminée."); return; }
-      if (podcastData().some(function (p) { return p.replacesGroup === gid; })) { toast("Une actualisation de ce podcast est déjà en cours."); return; }
+      if (podcastPendingFor(gid).length) { toast("Une actualisation de ce podcast est déjà en cours."); return; }
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var ch = podcastGroupChanges(parts);
       if (ch.known && !ch.added.length && !ch.modified.length) { toast("Aucun cours ajouté ou modifié depuis ce podcast — il est déjà à jour."); return; }
@@ -7483,7 +7525,7 @@
       var content = first.scopeLevel === "theme" ? themeContentText(subj, first.scopeId) : chapterContentText(subj, first.scopeId);
       if (!content) { toast("Ce " + (first.scopeLevel === "theme" ? "thème" : "chapitre") + " n'a plus aucun cours généré."); return; }
       var pod = {
-        id: uid(), groupId: uid(), title: first.scopeName, replacesGroup: gid,
+        id: uid(), groupId: uid(), title: first.scopeName, pendingReplace: gid,
         subjectId: first.subjectId, subjectName: first.subjectName,
         scopeLevel: first.scopeLevel, scopeId: first.scopeId, scopeName: first.scopeName,
         partIndex: 1, partCount: 1,
@@ -7492,8 +7534,35 @@
       };
       podcastData().push(pod);
       saveDB();
-      navigate("#/podcasts/" + pod.id);
+      toast("Actualisation lancée — tu peux continuer à écouter l'ancien podcast, il sera remplacé une fois le nouveau entièrement prêt.");
       runPodcastGeneration(pod, subj.name, first.scopeName, content);
+    },
+    // Reprend une actualisation interrompue : voix manquantes (texte déjà là) une par une, ou texte
+    // entier s'il n'avait pas pu être écrit. Les voix sont refaites à la suite, pas en parallèle,
+    // pour ne pas épuiser le quota d'un coup.
+    retryPodcastRefresh: function (oldGid) {
+      var pending = podcastPendingFor(oldGid);
+      if (!pending.length) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var first = pending[0];
+      if (!first.script) {
+        var subj = findSubject(first.subjectId);
+        if (!subj) { toast("La matière de ce podcast n'existe plus."); return; }
+        var content = first.scopeLevel === "theme" ? themeContentText(subj, first.scopeId) : chapterContentText(subj, first.scopeId);
+        runPodcastGeneration(first, subj.name, first.scopeName, content);
+        return;
+      }
+      var failed = pending.filter(function (p) { return p.status === "error"; });
+      failed.reduce(function (chain, p) {
+        return chain.then(function () { return retryPodcastPartAudio(p); });
+      }, Promise.resolve());
+    },
+    cancelPodcastRefresh: function (oldGid) {
+      var d = userData();
+      d.podcasts = d.podcasts.filter(function (p) { return p.pendingReplace !== oldGid; });
+      saveDB();
+      toast("Actualisation annulée — ton podcast actuel est conservé.");
+      render();
     },
     // Fin de l'audio d'une partie : si une partie suivante existe déjà et est prête, enchaîne
     // directement dessus (lecture automatique) plutôt que de laisser l'élève devoir la chercher.
@@ -8637,7 +8706,7 @@
     dpStartCourseQuiz: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc) return;
-      var pnnool = (loc.course.quizQuestions || []).slice();
+      var pool = (loc.course.quizQuestions || []).slice();
       for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
       dpView.quiz = { mode: "questions", courseId: courseId, questions: pool, idx: 0, answer: null, answerHtml: "", status: "answering", aiFeedback: "", revealed: false, wasCorrect: null, correct: 0, wrong: 0, totalEarned: 0, answeredCount: 0, history: [], done: false };
       render();
