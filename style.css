@@ -903,6 +903,8 @@
   .podcast-folder-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 7px 9px; border-radius: 8px; background: var(--surface-2); cursor: pointer; }
   .podcast-folder-item:hover { background: var(--accent-soft); }
   .podcast-folder-item .tile-del { position: static; margin-left: auto; opacity: 1; }
+  .podcast-folder-item .tile-rename { position: static; margin-left: auto; opacity: 1; }
+  .podcast-folder-item .tile-rename + .tile-del { margin-left: 0; }
   .podcast-subtitle { min-height: 44px; text-align: center; font-size: 15px; font-weight: 600; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.7); padding: 10px 16px; margin: 0 0 16px; }
   .podcast-player { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
   .podcast-player-row { display: flex; align-items: center; justify-content: center; gap: 18px; }

@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1429,6 +1429,11 @@
     return podcastData().filter(function (p) { return podcastGroupKey(p) === gid; })
       .sort(function (a, b) { return (a.partIndex || 1) - (b.partIndex || 1); });
   }
+  // Nom affiché d'un podcast entier : le nom choisi par l'élève (groupName, via Renommer) s'il existe,
+  // sinon le nom du chapitre/thème/cours couvert.
+  function podcastGroupDisplayName(parts) {
+    return parts[0].groupName || parts[0].scopeName || parts[0].title;
+  }
   function hashText(s) {
     var h = 5381;
     for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
@@ -1515,7 +1520,7 @@
     d.podcasts = d.podcasts.filter(function (p) { return p.pendingReplace || podcastGroupKey(p) !== oldGid; });
     pending.forEach(function (p) { delete p.pendingReplace; });
     saveDB();
-    toast("🎙️ Podcast actualisé : « " + pending[0].scopeName + " »");
+    toast("🎙️ Podcast actualisé : « " + podcastGroupDisplayName(pending) + " »");
     if (viewingOld) navigate("#/podcasts/" + pending[0].id);
     else render();
   }
@@ -1547,6 +1552,7 @@
           script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k, processingStartedAt: Date.now()
         };
         if (podcast.pendingReplace) extra.pendingReplace = podcast.pendingReplace;
+        if (podcast.groupName) extra.groupName = podcast.groupName;
         podcastData().push(extra);
         pods.push(extra);
       }
@@ -1555,7 +1561,8 @@
       // Titres et scripts posés tout de suite sur toutes les parties : si la voix d'une partie échoue
       // (ou si l'onglet est fermé en route), son texte est déjà sauvegardé et seule la voix sera à refaire.
       pods.forEach(function (pod, i) {
-        pod.title = scriptParts[i].title || scopeName;
+        // Podcast renommé par l'élève puis actualisé en une seule partie : on garde son nom à lui.
+        pod.title = total === 1 && podcast.groupName ? podcast.groupName : (scriptParts[i].title || scopeName);
         pod.script = scriptParts[i].script;
         pod.partCount = total;
         pod.sourceSnapshot = snapshot;
@@ -4836,6 +4843,7 @@
     var refreshHtml = podcastRefreshStatusHtml(podcastGroupKey(p));
     var hasNew = !refreshHtml && p.status === "ready" && podcastGroupHasNewContent([p]);
     return '<div class="tile" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
+      '<button class="tile-rename" style="right:40px" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'podcast\',null,null,null,\'' + p.id + '\')">✏️</button>' +
       '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
       '<div class="tile-icon">🎙️</div>' +
       '<div class="tile-title">' + esc(p.title) + '</div>' +
@@ -4847,13 +4855,14 @@
   // Plusieurs parties du même podcast (même groupId) prennent un seul emplacement sous forme de
   // dossier repliable, plutôt qu'une tuile pleine par partie — beaucoup plus compact.
   function podcastFolderTileHtml(gid, parts) {
-    var chapterName = parts[0].scopeName || parts[0].title;
+    var chapterName = podcastGroupDisplayName(parts);
     var open = !!podcastFolderOpen[gid];
     var busy = parts.some(function (p) { return p.status === "processing"; });
     var refreshHtml = podcastRefreshStatusHtml(gid);
     var hasNew = !busy && !refreshHtml && podcastGroupHasNewContent(parts);
     if (!open) {
       return '<div class="tile" onclick="App.togglePodcastFolder(\'' + gid + '\')">' +
+        '<button class="tile-rename" style="right:10px" title="Renommer le podcast" onclick="event.stopPropagation();App.openRenameModal(\'podcastGroup\',null,null,null,\'' + gid + '\')">✏️</button>' +
         '<div class="tile-icon">📁</div>' +
         '<div class="tile-title">' + esc(chapterName) + '</div>' +
         '<span class="demo-badge">' + parts.length + ' parties</span>' +
@@ -4864,6 +4873,7 @@
     var anyReady = parts.some(function (p) { return p.status === "ready"; });
     return '<div class="tile podcast-folder-open">' +
       '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div>' +
+      '<button class="tile-rename" style="right:40px" title="Renommer le podcast" onclick="event.stopPropagation();App.openRenameModal(\'podcastGroup\',null,null,null,\'' + gid + '\')">✏️</button>' +
       '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
       (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" ' + mp3ButtonAttrs("g:" + gid, "⬇️ Tout télécharger en un seul MP3") + ' onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">' + mp3ButtonInner("g:" + gid, "⬇️ Tout télécharger en un seul MP3") + '</button>' : "") +
       (hasNew ? '<button class="btn btn-primary btn-sm" style="width:auto;margin:0 0 8px 8px" onclick="event.stopPropagation();App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser avec le nouveau contenu</button>' : "") +
@@ -4871,6 +4881,7 @@
       '<div class="podcast-folder-items">' + parts.map(function (p) {
         return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
           '<span>🎙️ ' + esc(p.title || ("Partie " + p.partIndex)) + '</span>' + podcastStatusBadge(p) +
+          '<button class="tile-rename" title="Renommer cette partie" onclick="event.stopPropagation();App.openRenameModal(\'podcast\',null,null,null,\'' + p.id + '\')">✏️</button>' +
           '<button class="tile-del" title="Supprimer" onclick="event.stopPropagation();App.askDelete(\'podcast\',null,null,null,\'' + p.id + '\')">' + icon("trash") + '</button>' +
           '</div>';
       }).join("") + '</div></div>';
@@ -4957,6 +4968,7 @@
           var hasNew = podcastGroupHasNewContent(podcastGroupParts(gid));
           return '<button class="btn btn-ghost btn-sm" style="width:auto;background:' + (hasNew ? "rgba(255,200,60,0.35)" : "rgba(255,255,255,0.14)") + ';border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser' + (hasNew ? " (nouveau contenu)" : "") + '</button>';
         })() +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.openRenameModal(\'podcast\',null,null,null,\'' + pod.id + '\')" title="Renommer">✏️</button>' +
         '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.askDelete(\'podcast\',null,null,null,\'' + pod.id + '\')" title="Supprimer">' + icon("trash") + '</button>' +
         '</div>' +
         '<div class="podcast-fs-bottom">' +
@@ -7595,7 +7607,7 @@
       var content = podcastScopeContentText(subj, first.scopeLevel, first.scopeId);
       if (!content) { toast(first.scopeLevel === "course" ? "Ce cours n'existe plus ou n'est plus généré." : "Ce " + podcastScopeLabel(first.scopeLevel) + " n'a plus aucun cours généré."); return; }
       var pod = {
-        id: uid(), groupId: uid(), title: first.scopeName, pendingReplace: gid,
+        id: uid(), groupId: uid(), title: first.scopeName, pendingReplace: gid, groupName: first.groupName,
         subjectId: first.subjectId, subjectName: first.subjectName,
         scopeLevel: first.scopeLevel, scopeId: first.scopeId, scopeName: first.scopeName,
         partIndex: 1, partCount: 1,
@@ -7668,7 +7680,7 @@
       var parts = podcastData().filter(function (p) { return p.groupId === groupId && p.status === "ready" && p.audioUrl; })
         .sort(function (a, b) { return a.partIndex - b.partIndex; });
       if (!parts.length) return;
-      var filename = String(parts[0].scopeName || parts[0].title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
+      var filename = String(podcastGroupDisplayName(parts) || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
       runMp3Job("g:" + groupId, function (onProgress) { return mergePodcastPartsToMp3Blob(parts, onProgress); }, filename);
     },
     podcastToggleAudio: function () {
@@ -8409,8 +8421,14 @@
       else if (kind === "theme") item = findTheme(findSubject(subjectId), themeId);
       else if (kind === "chapter") item = findChapter(findTheme(findSubject(subjectId), themeId), chapterId);
       else if (kind === "course") item = findCourse(findChapter(findTheme(findSubject(subjectId), themeId), chapterId), courseId);
+      else if (kind === "podcast") item = podcastFind(courseId);
+      else if (kind === "podcastGroup") {
+        var gp = podcastGroupParts(courseId);
+        item = gp.length ? { title: podcastGroupDisplayName(gp) } : null;
+      }
       if (!item) return;
-      modal = { type: "renameItem", kind: kind, subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId, currentName: kind === "course" ? item.title : item.name };
+      var usesTitle = kind === "course" || kind === "podcast" || kind === "podcastGroup";
+      modal = { type: "renameItem", kind: kind, subjectId: subjectId, themeId: themeId, chapterId: chapterId, courseId: courseId, currentName: usesTitle ? item.title : item.name };
       render();
     },
     duplicateTheme: function (subjectId, themeId) {
@@ -8443,6 +8461,21 @@
       var name = e.target.name.value.trim();
       if (!name) return;
       var m = modal;
+      if (m.kind === "podcast" || m.kind === "podcastGroup") {
+        if (m.kind === "podcast") {
+          var rp = podcastFind(m.courseId);
+          if (!rp) { App.closeModal(); return; }
+          rp.title = name;
+          if ((rp.partCount || 1) <= 1) rp.groupName = name; // podcast en une seule partie : son nom EST le nom du podcast
+        } else {
+          podcastGroupParts(m.courseId).forEach(function (p) { p.groupName = name; });
+        }
+        saveDB();
+        modal = null;
+        toast("Nom modifié");
+        render();
+        return;
+      }
       var item = null;
       if (m.kind === "subject") item = findSubject(m.subjectId);
       else if (m.kind === "theme") item = findTheme(findSubject(m.subjectId), m.themeId);
