@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1258,7 +1258,7 @@
     var wavs = [];
     for (var i = 0; i < chunks.length; i++) {
       var url = await generatePodcastAudioChunk(chunks[i], voiceName);
-      wavs.push(parseWavPcm16(url));
+      wavs.push(await parseWavPcm16(url));
     }
     if (wavs.length === 1) return pcm16ToWavDataUrl(wavs[0].samples, wavs[0].sampleRate);
     var sampleRate = wavs[0].sampleRate;
@@ -1316,34 +1316,43 @@
   // pèse des dizaines de Mo), peu pratique à garder/partager hors de l'appli. On relit nous-mêmes les
   // chunks du conteneur WAV qu'on a construit (cf. pcmBase64ToWavDataUrl) pour en extraire le PCM 16
   // bits brut, puis on l'encode en MP3 entièrement côté navigateur avec lamejs (aucun serveur).
+  // Tout est asynchrone et découpé : un podcast de 20 min, c'est des dizaines de millions d'échantillons.
+  // Traité d'un seul bloc, la page restait complètement figée plusieurs secondes (impossible de savoir
+  // si ça travaillait ou si ça avait planté). fetch() décode le data URL nativement, sans bloquer.
   function parseWavPcm16(dataUrl) {
-    var base64 = (dataUrl.split(",")[1] || "");
-    var binary = atob(base64);
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    var view = new DataView(bytes.buffer);
-    var sampleRate = 24000, numChannels = 1, dataOffset = -1, dataLength = 0;
-    var pos = 12; // passe "RIFF" + taille (4) + "WAVE"
-    while (pos + 8 <= bytes.length) {
-      var id = String.fromCharCode(bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]);
-      var size = view.getUint32(pos + 4, true);
-      if (id === "fmt ") { numChannels = view.getUint16(pos + 10, true); sampleRate = view.getUint32(pos + 12, true); }
-      else if (id === "data") { dataOffset = pos + 8; dataLength = size; }
-      pos += 8 + size + (size % 2);
-    }
-    if (dataOffset < 0) throw new Error("Fichier audio invalide (chunk WAV introuvable).");
-    var sampleCount = Math.floor(dataLength / 2);
-    var samples = new Int16Array(sampleCount);
-    for (var s = 0; s < sampleCount; s++) samples[s] = view.getInt16(dataOffset + s * 2, true);
-    return { sampleRate: sampleRate, numChannels: numChannels || 1, samples: samples };
+    return fetch(dataUrl).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+      var bytes = new Uint8Array(buf);
+      var view = new DataView(buf);
+      var sampleRate = 24000, numChannels = 1, dataOffset = -1, dataLength = 0;
+      var pos = 12; // passe "RIFF" + taille (4) + "WAVE"
+      while (pos + 8 <= bytes.length) {
+        var id = String.fromCharCode(bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]);
+        var size = view.getUint32(pos + 4, true);
+        if (id === "fmt ") { numChannels = view.getUint16(pos + 10, true); sampleRate = view.getUint32(pos + 12, true); }
+        else if (id === "data") { dataOffset = pos + 8; dataLength = size; }
+        pos += 8 + size + (size % 2);
+      }
+      if (dataOffset < 0) throw new Error("Fichier audio invalide (chunk WAV introuvable).");
+      var sampleCount = Math.floor(Math.min(dataLength, bytes.length - dataOffset) / 2);
+      // Copie native (rapide) des octets PCM dans un Int16Array : le WAV est en little-endian, comme
+      // tous les appareils qui font tourner un navigateur aujourd'hui.
+      var samples = new Int16Array(buf.slice(dataOffset, dataOffset + sampleCount * 2));
+      return { sampleRate: sampleRate, numChannels: numChannels || 1, samples: samples };
+    });
   }
-  function pcm16ToMp3Blob(samples, sampleRate, numChannels) {
+  function yieldToUi() { return new Promise(function (r) { setTimeout(r, 0); }); }
+  async function pcm16ToMp3Blob(samples, sampleRate, numChannels, onProgress) {
     var encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, 128);
     var chunkSize = 1152;
+    var perTick = chunkSize * 200; // rend la main au navigateur régulièrement (animation, clics)
     var chunks = [];
     for (var i = 0; i < samples.length; i += chunkSize) {
       var buf = encoder.encodeBuffer(samples.subarray(i, i + chunkSize));
       if (buf.length > 0) chunks.push(buf);
+      if (i > 0 && i % perTick === 0) {
+        if (onProgress) onProgress(i / samples.length);
+        await yieldToUi();
+      }
     }
     var end = encoder.flush();
     if (end.length > 0) chunks.push(end);
@@ -1358,14 +1367,53 @@
   }
   // Fusionne le PCM de plusieurs parties (déjà triées par partIndex) bout à bout avant un seul encodage
   // MP3 — un podcast en 3 parties de 3 min donne ainsi un unique fichier de 9 min, pas 3 fichiers séparés.
-  function mergePodcastPartsToMp3Blob(parts) {
-    var wavs = parts.map(function (p) { return parseWavPcm16(p.audioUrl); });
+  async function mergePodcastPartsToMp3Blob(parts, onProgress) {
+    var wavs = [];
+    for (var i = 0; i < parts.length; i++) wavs.push(await parseWavPcm16(parts[i].audioUrl));
     var sampleRate = wavs[0].sampleRate, numChannels = wavs[0].numChannels;
     var totalLen = wavs.reduce(function (sum, w) { return sum + w.samples.length; }, 0);
     var merged = new Int16Array(totalLen);
     var offset = 0;
     wavs.forEach(function (w) { merged.set(w.samples, offset); offset += w.samples.length; });
-    return pcm16ToMp3Blob(merged, sampleRate, numChannels);
+    return pcm16ToMp3Blob(merged, sampleRate, numChannels, onProgress);
+  }
+  // État des téléchargements MP3 en cours, mis à jour directement dans le DOM (jamais via render() :
+  // sur la page du lecteur, un rendu complet recréerait l'élément <audio> et couperait la lecture).
+  // Chaque bouton porte data-mp3-key ("p:<id>" pour une partie, "g:<groupe>" pour tout le podcast).
+  var podcastMp3Jobs = {};
+  function mp3ButtonInner(key, label) {
+    var pct = podcastMp3Jobs[key];
+    return pct == null ? label : '<span class="mp3-spinner"></span> Conversion… ' + pct + ' %';
+  }
+  function mp3ButtonAttrs(key, label) {
+    return 'data-mp3-key="' + key + '" data-mp3-label="' + esc(label) + '"' + (podcastMp3Jobs[key] != null ? " disabled" : "");
+  }
+  function updateMp3Buttons(key) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mp3-key="' + key + '"]'), function (el) {
+      var busy = podcastMp3Jobs[key] != null;
+      el.innerHTML = mp3ButtonInner(key, el.getAttribute("data-mp3-label"));
+      el.disabled = busy;
+    });
+  }
+  async function runMp3Job(key, buildBlob, filename) {
+    if (podcastMp3Jobs[key] != null) return;
+    if (typeof lamejs === "undefined") { toast("Le convertisseur MP3 n'a pas pu se charger (vérifie ta connexion puis recharge la page)."); return; }
+    podcastMp3Jobs[key] = 0;
+    updateMp3Buttons(key);
+    await yieldToUi(); // laisse le navigateur afficher la roue avant de commencer à calculer
+    try {
+      var blob = await buildBlob(function (fraction) {
+        podcastMp3Jobs[key] = Math.min(99, Math.round(fraction * 100));
+        updateMp3Buttons(key);
+      });
+      triggerBlobDownload(blob, filename);
+      toast("⬇️ MP3 téléchargé");
+    } catch (e) {
+      toast("Échec de la conversion MP3 : " + (e.message || "erreur inconnue"));
+    } finally {
+      delete podcastMp3Jobs[key];
+      updateMp3Buttons(key);
+    }
   }
   // C'est l'IA qui décide du nombre de parties (voir buildPodcastScriptPrompt), pas l'élève — on ne
   // sait donc PAS combien il y en aura avant d'avoir la réponse. "podcast" est la SEULE entrée déjà
@@ -4804,7 +4852,7 @@
     return '<div class="tile podcast-folder-open">' +
       '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div>' +
       '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
-      (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">⬇️ Tout télécharger en un seul MP3</button>' : "") +
+      (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" ' + mp3ButtonAttrs("g:" + gid, "⬇️ Tout télécharger en un seul MP3") + ' onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">' + mp3ButtonInner("g:" + gid, "⬇️ Tout télécharger en un seul MP3") + '</button>' : "") +
       (hasNew ? '<button class="btn btn-primary btn-sm" style="width:auto;margin:0 0 8px 8px" onclick="event.stopPropagation();App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser avec le nouveau contenu</button>' : "") +
       (refreshHtml ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' + refreshHtml + '</div>' : "") +
       '<div class="podcast-folder-items">' + parts.map(function (p) {
@@ -4887,8 +4935,8 @@
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img id="podcast-papi-img" src="' + PODCAST_DIR + PODCAST_EXPLIQUE_IMGS[podcastExpliqueByPod[pod.id]] + '" class="podcast-bg-img" alt="">' +
         '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="podcast-fs-title">' + esc(pod.title) + (pod.partCount > 1 ? ' · Partie ' + pod.partIndex + '/' + pod.partCount : "") + '</div>' +
-        '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastMp3(\'' + pod.id + '\')" title="Télécharger cette partie en MP3">⬇️ MP3</button>' +
-        (pod.partCount > 1 ? '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.downloadPodcastGroupMp3(\'' + pod.groupId + '\')" title="Télécharger toutes les parties en un seul MP3">⬇️ Tout en 1 MP3</button>' : "") +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" ' + mp3ButtonAttrs("p:" + pod.id, "⬇️ MP3") + ' onclick="App.downloadPodcastMp3(\'' + pod.id + '\')" title="Télécharger cette partie en MP3">' + mp3ButtonInner("p:" + pod.id, "⬇️ MP3") + '</button>' +
+        (pod.partCount > 1 ? '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" ' + mp3ButtonAttrs("g:" + pod.groupId, "⬇️ Tout en 1 MP3") + ' onclick="App.downloadPodcastGroupMp3(\'' + pod.groupId + '\')" title="Télécharger toutes les parties en un seul MP3">' + mp3ButtonInner("g:" + pod.groupId, "⬇️ Tout en 1 MP3") + '</button>' : "") +
         (function () {
           var gid = podcastGroupKey(pod);
           var refreshHtml = podcastRefreshStatusHtml(gid);
@@ -7587,36 +7635,19 @@
     downloadPodcastMp3: function (id) {
       var pod = podcastFind(id);
       if (!pod || pod.status !== "ready" || !pod.audioUrl) return;
-      if (typeof lamejs === "undefined") { toast("Le convertisseur MP3 n'a pas pu se charger (vérifie ta connexion puis recharge la page)."); return; }
-      toast("🎙️ Conversion en MP3…");
-      setTimeout(function () {
-        try {
-          var wav = parseWavPcm16(pod.audioUrl);
-          var blob = pcm16ToMp3Blob(wav.samples, wav.sampleRate, wav.numChannels);
-          var filename = String(pod.title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
-          triggerBlobDownload(blob, filename);
-          toast("⬇️ MP3 téléchargé");
-        } catch (e) {
-          toast("Échec de la conversion MP3 : " + (e.message || "erreur inconnue"));
-        }
-      }, 30);
+      var filename = String(pod.title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
+      runMp3Job("p:" + id, function (onProgress) {
+        return parseWavPcm16(pod.audioUrl).then(function (wav) {
+          return pcm16ToMp3Blob(wav.samples, wav.sampleRate, wav.numChannels, onProgress);
+        });
+      }, filename);
     },
     downloadPodcastGroupMp3: function (groupId) {
       var parts = podcastData().filter(function (p) { return p.groupId === groupId && p.status === "ready" && p.audioUrl; })
         .sort(function (a, b) { return a.partIndex - b.partIndex; });
       if (!parts.length) return;
-      if (typeof lamejs === "undefined") { toast("Le convertisseur MP3 n'a pas pu se charger (vérifie ta connexion puis recharge la page)."); return; }
-      toast("🎙️ Fusion des " + parts.length + " parties et conversion en MP3…");
-      setTimeout(function () {
-        try {
-          var blob = mergePodcastPartsToMp3Blob(parts);
-          var filename = String(parts[0].scopeName || parts[0].title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
-          triggerBlobDownload(blob, filename);
-          toast("⬇️ MP3 téléchargé (" + parts.length + " parties fusionnées)");
-        } catch (e) {
-          toast("Échec de la conversion MP3 : " + (e.message || "erreur inconnue"));
-        }
-      }, 30);
+      var filename = String(parts[0].scopeName || parts[0].title || "podcast").replace(/[\\/:*?"<>|]/g, "_") + ".mp3";
+      runMp3Job("g:" + groupId, function (onProgress) { return mergePodcastPartsToMp3Blob(parts, onProgress); }, filename);
     },
     podcastToggleAudio: function () {
       var a = document.getElementById("podcast-audio");

@@ -353,6 +353,9 @@
   .status-processing { background: var(--surface-2); color: var(--text-muted); }
   .status-processing .dotpulse { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); animation: pulse 1s infinite ease-in-out; }
   @keyframes pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+  .mp3-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -2px; animation: mp3Spin .75s linear infinite; }
+  @keyframes mp3Spin { to { transform: rotate(360deg); } }
+  button[data-mp3-key]:disabled { opacity: 1; cursor: progress; }
 
   .empty-state { text-align: center; padding: 50px 20px 30px; color: var(--text-muted); }
   .empty-state h3 { color: var(--text); margin-bottom: 6px; font-size: 15px; }
