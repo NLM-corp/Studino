@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1055,7 +1055,7 @@
     },
     required: ["notionCount", "estimatedTotalWords", "parts"]
   };
-  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason, refresh) {
+  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) {
     var gender = getUserGender();
     var genderNote = gender === "m"
       ? "L'élève qui t'écoute est un garçon : si tu t'adresses directement à lui (une interpellation affectueuse, pas à chaque phrase), utilise des formulations masculines (\"mon petit\", \"mon grand\", \"jeune homme\"), jamais féminines."
@@ -1066,9 +1066,7 @@
       "Règles absolues :\n" +
       "- " + genderNote + "\n" +
       "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
-      (refresh
-        ? "- Couvre l'INTÉGRALITÉ de ce qui n'a PAS encore été raconté dans les parties existantes (voir section MISE À JOUR plus bas), sans rien oublier — mais ne re-raconte jamais ce qui l'a déjà été.\n"
-        : "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n") +
+      "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
       "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
       "- STRUCTURE NARRATIVE OBLIGATOIRE — le piège le plus fréquent, à éviter à tout prix : garder le même déroulé que le cours (les mêmes sections, dans le même ordre, juste reformulées avec un ton de conteur). Ça reste de la récitation déguisée même si chaque phrase individuelle est bien écrite, et c'est un ÉCHEC. Un vrai conteur NE SUIT PAS le plan du cours : il part d'une accroche, d'une question, d'une scène ou d'une énigme, puis tisse les notions ENSEMBLE au fil d'un vrai fil narratif (une enquête à résoudre, une question qui trouve sa réponse petit à petit, un voyage, un fil conducteur qui revient régulièrement), quitte à aller et venir entre les notions plutôt que de les aligner une par une dans l'ordre où le cours les présente. Teste-toi avant de répondre : si on pouvait reconnaître le sommaire du cours juste en lisant l'ordre de ton script, c'est raté, recommence la structure. Chaque passage d'une notion à une autre doit être un vrai lien de sens (parce que..., ce qui explique..., ce qui nous amène à...), jamais une simple transition d'étape du type \"passons maintenant à...\" ou \"ensuite, parlons de...\".\n" +
       "- PRÉCISION CONCRÈTE OBLIGATOIRE, règle à prendre très au sérieux : dès que le cours mentionne un élément nommé et identifiable — une expérience scientifique, un événement historique, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — tu dois TOUJOURS raconter CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemples de ce qu'il NE FAUT JAMAIS faire : dire \"une expérience a permis de démontrer que...\" sans raconter en quoi consistait cette expérience (qui l'a menée, sur quoi, comment, ce qui a été observé) ; dire \"tel événement a marqué un tournant...\" sans raconter ce qui s'est concrètement passé pendant cet événement. Si le cours source donne ce détail concret, raconte-le fidèlement et en profondeur ; si le cours source NE donne PAS ce détail (juste le nom et la conclusion), dis-le explicitement à l'élève plutôt que de glisser dessus en silence comme si de rien n'était (ex. \"le cours ne détaille pas comment cette expérience a été menée, mais on sait qu'elle a montré que...\") — n'invente JAMAIS un détail qui ne figure pas dans le cours. La précision prime toujours sur la longueur : mieux vaut une partie plus longue mais qui explique vraiment chaque élément cité, qu'une partie qui enchaîne des noms et des conclusions sans jamais s'arrêter dessus.\n" +
@@ -1081,17 +1079,7 @@
       "- Respecte une orthographe française irréprochable, avec tous les accents nécessaires (é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal accentué.\n\n" +
       (retryReason === "short" ? "[Note système — IMPORTANT : ta tentative précédente a produit au moins une partie BEAUCOUP trop courte (loin en dessous de 1600 mots, parfois à peine 1 minute à l'oral) — c'est un échec strict de la consigne de durée. Cette fois, développe réellement CHAQUE notion en profondeur (surtout les formules/méthodes si la matière en a) jusqu'à dépasser 1600 mots sur CHAQUE partie, quitte à prendre plus de temps par explication. Ne recommence pas la même erreur.]\n\n" : "") +
       (retryReason === "partcount" ? "[Note système — IMPORTANT : ta tentative précédente a toi-même estimé qu'il fallait plus de mots au total que ce que tu as réellement écrit dans \"parts\" — autrement dit tu as sous-estimé le nombre de parties nécessaires par rapport à ton propre calcul. Cette fois, suis VRAIMENT la procédure : compte notionCount, calcule estimatedTotalWords, puis fixe le nombre de parties sur ce calcul (estimatedTotalWords / 3000, arrondi au-dessus) sans te brider par habitude. Ne recommence pas la même erreur.]\n\n" : "") +
-      (refresh
-        ? "MISE À JOUR D'UN PODCAST EXISTANT — lis attentivement :\n" +
-          "Ce podcast existe déjà en " + refresh.existingCount + " partie(s), déjà écoutée(s) par l'élève. Depuis, l'élève a " + (refresh.knownChanges ? "ajouté de nouveaux cours et/ou modifié des cours existants (marqués [NOUVEAU COURS] ou [COURS MODIFIÉ] ci-dessous)" : "peut-être ajouté ou modifié des cours — on ne sait pas précisément lesquels, c'est à toi de comparer le contenu des cours ci-dessous avec ce qui a déjà été raconté") + ". Ton travail : produire UNIQUEMENT de NOUVELLES parties qui viendront s'ajouter À LA SUITE des parties existantes, pour couvrir ce qui n'a pas encore été raconté.\n" +
-          "- Ne répète PAS ce qui est déjà raconté dans les parties existantes (fournies ci-dessous).\n" +
-          "- Pour un cours modifié, repère précisément ce qui a changé ou été ajouté par rapport à ce que les parties existantes racontent, et ne traite QUE cela. Si une correction contredit ce qui a été dit avant, dis-le explicitement à l'élève (« dans une partie précédente je t'ai dit que..., en réalité... »).\n" +
-          "- Ouvre la première nouvelle partie en faisant le lien avec ce qui a déjà été raconté, au lieu de repartir de zéro comme si l'élève ne connaissait rien.\n" +
-          "- notionCount et estimatedTotalWords ne portent QUE sur ce qui reste à raconter.\n" +
-          "- Si, en comparant, tu constates que TOUT est déjà couvert, renvoie un tableau \"parts\" VIDE (notionCount 0, estimatedTotalWords 0) — n'invente jamais de partie de remplissage.\n\n" +
-          "Voici ce qui a DÉJÀ été raconté dans les parties existantes :\n\n" + refresh.alreadyTold + "\n\n" +
-          "Voici les cours " + (refresh.knownChanges ? "nouveaux ou modifiés à couvrir" : "actuels du " + (scopeLevel === "theme" ? "thème" : "chapitre")) + " :\n\n" + content + "\n\n"
-        : "Voici le cours :\n\n" + content + "\n\n") +
+      "Voici le cours :\n\n" + content + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   function podcastScriptWordCount(script) {
@@ -1102,9 +1090,9 @@
   // elle-même estimé qu'il fallait plus de mots que ce qu'elle a réellement écrit (donc qu'elle s'est
   // bridée sur le nombre de parties malgré son propre calcul), on retente une fois avec une note d'échec
   // explicite plutôt que d'accepter silencieusement un podcast trop court.
-  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt, retryReason, refresh) {
+  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt, retryReason) {
     attempt = attempt || 1;
-    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason, refresh) }];
+    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) }];
     // Un cours très riche peut légitimement nécessiter de nombreuses parties de plusieurs milliers de
     // mots chacune : une limite de sortie par défaut trop basse tronquerait la réponse en silence avant
     // que l'IA ait fini, donnant l'impression d'un plafond artificiel sur le nombre de parties.
@@ -1117,7 +1105,7 @@
       // d'estimation — le but est d'attraper le cas "l'IA a sous-livré par rapport à son propre calcul".
       var underDelivered = estimated > 3500 && actualWords < estimated * 0.6;
       if ((tooShort || underDelivered) && attempt < 2) {
-        return generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt + 1, tooShort ? "short" : "partcount", refresh);
+        return generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt + 1, tooShort ? "short" : "partcount");
       }
       return data;
     });
@@ -1386,8 +1374,8 @@
   // après l'autre (pas en parallèle, pour rester raisonnable côté quota) — chaque partie passe "ready"
   // dès que SON audio est prêt, sans attendre les autres.
   // Empreinte des cours couverts par un podcast, prise au moment où son script est généré : permet de
-  // savoir plus tard quels cours ont été ajoutés ou modifiés depuis, pour proposer une mise à jour du
-  // podcast qui ne raconte QUE ce qui est nouveau (voir startPodcastRefresh).
+  // savoir plus tard quels cours ont été ajoutés ou modifiés depuis, pour signaler que le podcast n'est
+  // plus à jour et proposer de le refaire (voir App.refreshPodcast).
   function podcastGroupKey(p) { return p.groupId || p.id; }
   function podcastGroupParts(gid) {
     return podcastData().filter(function (p) { return podcastGroupKey(p) === gid; })
@@ -1444,9 +1432,7 @@
     var ch = podcastGroupChanges(parts);
     return ch.known && (ch.added.length > 0 || ch.modified.length > 0);
   }
-  // refresh (optionnel) : mise à jour d'un podcast existant — "podcast" est alors une partie
-  // provisoire ajoutée à la suite du groupe, et les nouvelles parties sont numérotées après les anciennes.
-  function runPodcastGeneration(podcast, subjectName, scopeName, content, refresh) {
+  function runPodcastGeneration(podcast, subjectName, scopeName, content) {
     podcast.status = "processing";
     podcast.processingStartedAt = Date.now();
     podcast.error = null; podcast.errorStatus = null; podcast.errorDetail = null;
@@ -1454,26 +1440,22 @@
     var scopeLevel = podcast.scopeLevel || "chapter";
     var gid = podcastGroupKey(podcast);
     var snapshot = podcastScopeSnapshot(podcast);
-    var startIndex = refresh ? refresh.startIndex : 1;
-    generatePodcastScript(subjectName, scopeName, scopeLevel, content, 1, null, refresh).then(function (data) {
+    generatePodcastScript(subjectName, scopeName, scopeLevel, content).then(function (data) {
       var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
       if (!scriptParts.length) {
-        if (refresh) {
-          // L'IA a constaté que tout était déjà raconté : on retire la partie provisoire et on
-          // mémorise l'empreinte actuelle pour ne plus proposer cette mise à jour.
-          var d = userData();
-          d.podcasts = d.podcasts.filter(function (p) { return p !== podcast; });
-          podcastGroupParts(gid).forEach(function (p) { p.sourceSnapshot = snapshot; });
-          saveDB();
-          toast("Le podcast couvre déjà tout le contenu actuel — rien à ajouter.");
-          var remaining = podcastGroupParts(gid);
-          navigate(remaining.length ? "#/podcasts/" + remaining[remaining.length - 1].id : "#/podcasts");
-          return;
-        }
         podcast.status = "error";
         podcast.error = "Aucun script généré.";
         saveDB(); render();
         return;
+      }
+      // Actualisation d'un podcast existant (voir App.refreshPodcast) : l'ancien n'est supprimé
+      // qu'ICI, une fois le nouveau texte bien obtenu — si la génération échoue avant, l'élève garde
+      // son ancien podcast intact au lieu de se retrouver sans rien.
+      if (podcast.replacesGroup) {
+        var oldGid = podcast.replacesGroup;
+        var d = userData();
+        d.podcasts = d.podcasts.filter(function (p) { return p === podcast || podcastGroupKey(p) !== oldGid; });
+        delete podcast.replacesGroup;
       }
       var total = scriptParts.length;
       var pods = [podcast];
@@ -1482,7 +1464,7 @@
           id: uid(), groupId: gid, title: "",
           subjectId: podcast.subjectId, subjectName: podcast.subjectName,
           scopeLevel: podcast.scopeLevel, scopeId: podcast.scopeId, scopeName: podcast.scopeName,
-          partIndex: startIndex + k, partCount: startIndex - 1 + total,
+          partIndex: k + 1, partCount: total,
           status: "processing", error: null, errorStatus: null, errorDetail: null,
           script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k, processingStartedAt: Date.now()
         };
@@ -1490,15 +1472,15 @@
         pods.push(extra);
       }
       podcast.groupId = gid;
-      podcast.partIndex = startIndex;
+      podcast.partIndex = 1;
       // Titres et scripts posés tout de suite sur toutes les parties : si la voix d'une partie échoue
       // (ou si l'onglet est fermé en route), son texte est déjà sauvegardé et seule la voix sera à refaire.
       pods.forEach(function (pod, i) {
         pod.title = scriptParts[i].title || scopeName;
         pod.script = scriptParts[i].script;
+        pod.partCount = total;
+        pod.sourceSnapshot = snapshot;
       });
-      var groupTotal = startIndex - 1 + total;
-      podcastGroupParts(gid).forEach(function (p) { p.partCount = groupTotal; p.sourceSnapshot = snapshot; });
       saveDB(); render();
       var runOne = function (i) {
         if (i >= pods.length) return;
@@ -1562,32 +1544,6 @@
       render();
     });
   }
-  // Mise à jour d'un podcast existant : "placeholder" est une partie provisoire déjà ajoutée à la suite
-  // du groupe (affichée en cours de préparation). On n'envoie à l'IA que les cours ajoutés ou modifiés
-  // depuis la génération (ou tous les cours pour un ancien podcast sans empreinte), avec ce qui a déjà
-  // été raconté, pour qu'elle ne produise QUE des parties nouvelles à ajouter à la suite.
-  function startPodcastRefresh(placeholder) {
-    var gid = podcastGroupKey(placeholder);
-    var subj = findSubject(placeholder.subjectId);
-    var existing = podcastGroupParts(gid).filter(function (p) { return p !== placeholder && p.script; });
-    if (!subj || !existing.length) {
-      placeholder.status = "error";
-      placeholder.error = !subj ? "La matière de ce podcast n'existe plus." : "Aucune partie existante à compléter.";
-      saveDB(); render();
-      return;
-    }
-    var ch = podcastGroupChanges(existing);
-    var targets = ch.known ? ch.added.concat(ch.modified) : ch.courses;
-    var content = targets.map(function (x) {
-      var tag = !ch.known ? "" : ch.added.indexOf(x) !== -1 ? " [NOUVEAU COURS]" : " [COURS MODIFIÉ]";
-      return "### " + (placeholder.scopeLevel === "theme" ? x.chapterName + " — " : "") + x.course.title + tag + "\n" + stripFigureMarkdown(x.course.transcription || "");
-    }).join("\n\n");
-    var alreadyTold = existing.map(function (p) { return "Partie " + p.partIndex + " — " + p.title + " :\n" + p.script; }).join("\n\n");
-    runPodcastGeneration(placeholder, subj.name, placeholder.scopeName, content, {
-      alreadyTold: alreadyTold, existingCount: existing.length, knownChanges: ch.known, startIndex: placeholder.partIndex
-    });
-  }
-
   /* ---------------- Méthodologies (dissertation, commentaire, étude de document...) ----------------
      Contrairement à un cours "de connaissances", une méthodologie n'est pas un contenu à mémoriser
      question par question : c'est une PROCÉDURE à appliquer sur un sujet neuf à chaque fois. On la
@@ -4810,7 +4766,7 @@
       '<div class="podcast-folder-head" onclick="App.togglePodcastFolder(\'' + gid + '\')"><div class="tile-icon">📂</div><div class="tile-title">' + esc(chapterName) + '</div>' +
       '<button class="tile-del" title="Supprimer toutes les parties" onclick="event.stopPropagation();App.askDelete(\'podcastGroup\',null,null,null,\'' + gid + '\')">' + icon("trash") + '</button></div>' +
       (anyReady ? '<button class="btn btn-ghost btn-sm" style="width:auto;margin-bottom:8px" onclick="event.stopPropagation();App.downloadPodcastGroupMp3(\'' + gid + '\')">⬇️ Tout télécharger en un seul MP3</button>' : "") +
-      (hasNew ? '<button class="btn btn-primary btn-sm" style="width:auto;margin:0 0 8px 8px" onclick="event.stopPropagation();App.refreshPodcast(\'' + gid + '\')">🔄 Actualiser avec le nouveau contenu</button>' : "") +
+      (hasNew ? '<button class="btn btn-primary btn-sm" style="width:auto;margin:0 0 8px 8px" onclick="event.stopPropagation();App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser avec le nouveau contenu</button>' : "") +
       '<div class="podcast-folder-items">' + parts.map(function (p) {
         return '<div class="podcast-folder-item" onclick="location.hash=\'#/podcasts/' + p.id + '\'">' +
           '<span>🎙️ ' + esc(p.title || ("Partie " + p.partIndex)) + '</span>' + podcastStatusBadge(p) +
@@ -4869,8 +4825,8 @@
       // coup d'attendre un peu plus pour avoir l'intégralité de la partie, pas un podcast coupé net.
       var procLabel = pod.script
         ? "Le vieux conteur enregistre sa voix pour « " + pod.title + " », morceau par morceau pour ne rien couper… généralement 3 à 8 minutes par partie."
-        : pod.isUpdate
-        ? "Le vieux conteur relit tes cours ajoutés ou modifiés pour compléter « " + pod.scopeName + " »… généralement 1 à 3 minutes."
+        : pod.replacesGroup
+        ? "Le vieux conteur refait tout le podcast « " + pod.scopeName + " » avec tes cours à jour… généralement 1 à 3 minutes pour le texte. Ton ancien podcast reste disponible jusqu'à ce que le nouveau texte soit prêt."
         : "Le vieux conteur prépare son texte sur « " + pod.title + " »… généralement 1 à 3 minutes, un peu plus pour un cours très riche en plusieurs parties.";
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
@@ -4896,7 +4852,7 @@
         (function () {
           var gid = podcastGroupKey(pod);
           var hasNew = podcastGroupHasNewContent(podcastGroupParts(gid));
-          return '<button class="btn btn-ghost btn-sm" style="width:auto;background:' + (hasNew ? "rgba(255,200,60,0.35)" : "rgba(255,255,255,0.14)") + ';border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.refreshPodcast(\'' + gid + '\')" title="Ajouter des parties pour les cours ajoutés ou modifiés depuis ce podcast">🔄 Actualiser' + (hasNew ? " (nouveau contenu)" : "") + '</button>';
+          return '<button class="btn btn-ghost btn-sm" style="width:auto;background:' + (hasNew ? "rgba(255,200,60,0.35)" : "rgba(255,255,255,0.14)") + ';border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.refreshPodcast(\'' + gid + '\')" title="Refait tout le podcast avec les cours à jour (consomme autant de quota voix qu\'un nouveau podcast)">🔄 Actualiser' + (hasNew ? " (nouveau contenu)" : "") + '</button>';
         })() +
         '<button class="btn btn-ghost btn-sm" style="width:auto;background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.askDelete(\'podcast\',null,null,null,\'' + pod.id + '\')" title="Supprimer">' + icon("trash") + '</button>' +
         '</div>' +
@@ -7505,35 +7461,39 @@
       // relance que l'audio, jamais tout le podcast — sinon l'IA redécoupe le script à neuf avec un
       // nombre de parties potentiellement différent, créant des doublons avec les parties déjà prêtes.
       if (pod.script) { retryPodcastPartAudio(pod); return; }
-      // Partie provisoire d'une mise à jour dont le texte a échoué : on relance la MISE À JOUR (ajout à
-      // la suite), surtout pas une génération complète qui la renumérote en "partie 1".
-      if (pod.isUpdate) { startPodcastRefresh(pod); return; }
       var subj = findSubject(pod.subjectId);
       if (!subj) return;
       var content = pod.scopeLevel === "theme" ? themeContentText(subj, pod.scopeId) : chapterContentText(subj, pod.scopeId);
       runPodcastGeneration(pod, subj.name, pod.scopeName, content);
     },
+    // Actualiser = refaire TOUT le podcast à partir des cours actuels (pas ajouter des parties à la
+    // fin). Le nouveau podcast se prépare à côté ; l'ancien n'est supprimé qu'une fois le nouveau texte
+    // obtenu (voir runPodcastGeneration), pour ne jamais laisser l'élève sans rien si ça échoue.
     refreshPodcast: function (gid) {
       var parts = podcastGroupParts(gid);
       if (!parts.length) return;
       if (parts.some(function (p) { return p.status === "processing"; })) { toast("Attends que la génération en cours de ce podcast soit terminée."); return; }
+      if (podcastData().some(function (p) { return p.replacesGroup === gid; })) { toast("Une actualisation de ce podcast est déjà en cours."); return; }
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var ch = podcastGroupChanges(parts);
       if (ch.known && !ch.added.length && !ch.modified.length) { toast("Aucun cours ajouté ou modifié depuis ce podcast — il est déjà à jour."); return; }
       var first = parts[0];
-      var maxIndex = parts.reduce(function (m, p) { return Math.max(m, p.partIndex || 1); }, 0);
-      var placeholder = {
-        id: uid(), groupId: gid, title: "Mise à jour — " + first.scopeName, isUpdate: true,
+      var subj = findSubject(first.subjectId);
+      if (!subj) { toast("La matière de ce podcast n'existe plus."); return; }
+      var content = first.scopeLevel === "theme" ? themeContentText(subj, first.scopeId) : chapterContentText(subj, first.scopeId);
+      if (!content) { toast("Ce " + (first.scopeLevel === "theme" ? "thème" : "chapitre") + " n'a plus aucun cours généré."); return; }
+      var pod = {
+        id: uid(), groupId: uid(), title: first.scopeName, replacesGroup: gid,
         subjectId: first.subjectId, subjectName: first.subjectName,
         scopeLevel: first.scopeLevel, scopeId: first.scopeId, scopeName: first.scopeName,
-        partIndex: maxIndex + 1, partCount: maxIndex + 1,
+        partIndex: 1, partCount: 1,
         status: "processing", error: null, errorStatus: null, errorDetail: null,
         script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now(), processingStartedAt: Date.now()
       };
-      podcastData().push(placeholder);
+      podcastData().push(pod);
       saveDB();
-      navigate("#/podcasts/" + placeholder.id);
-      startPodcastRefresh(placeholder);
+      navigate("#/podcasts/" + pod.id);
+      runPodcastGeneration(pod, subj.name, first.scopeName, content);
     },
     // Fin de l'audio d'une partie : si une partie suivante existe déjà et est prête, enchaîne
     // directement dessus (lecture automatique) plutôt que de laisser l'élève devoir la chercher.
