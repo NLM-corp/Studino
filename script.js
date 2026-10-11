@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -38,8 +38,116 @@
     });
   }
 
+  function idbDelete(key) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).delete(key);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+  function idbKeys() {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).getAllKeys();
+        req.onsuccess = function () { resolve(req.result || []); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
   var DB = { users: {}, currentUser: null, data: {} };
   var dbUsesLocalStorageFallback = false;
+
+  /* ---------------- Audio des podcasts : rangé à part ----------------
+     Une partie de 17 min, c'est ~50 Mo de WAV, soit ~65 Mo en data URL. Gardé DANS l'objet DB, chaque
+     saveDB() (n'importe quel clic qui sauvegarde) recopiait tout ça dans IndexedDB : l'appli ramait et
+     ratait des clics. L'audio vit donc dans sa propre entrée IndexedDB ("pa:<id>", en Blob), et
+     pod.audioUrl n'est plus qu'une URL blob: valable pour la session, jamais sauvegardée. */
+  var PODCAST_AUDIO_PREFIX = "pa:";
+  var podcastLiveAudioUrls = {}; // id → URL blob: de cette session
+  function allPodcastsInDB() {
+    var out = [];
+    Object.keys(DB.data || {}).forEach(function (u) {
+      var d = DB.data[u];
+      if (d && Array.isArray(d.podcasts)) out = out.concat(d.podcasts);
+    });
+    return out;
+  }
+  // Copie de DB à sauvegarder/exporter sans les URL blob: (inutiles hors de cette session). Un data URL
+  // pas encore migré est gardé tel quel, pour ne jamais perdre un son.
+  function dbWithoutPodcastAudio() {
+    if (dbUsesLocalStorageFallback) return DB;
+    var data = {};
+    Object.keys(DB.data || {}).forEach(function (u) {
+      var d = DB.data[u];
+      if (d && Array.isArray(d.podcasts) && d.podcasts.length) {
+        data[u] = Object.assign({}, d, { podcasts: d.podcasts.map(function (p) {
+          return p.audioUrl && p.audioUrl.indexOf("data:") !== 0 ? Object.assign({}, p, { audioUrl: "" }) : p;
+        }) });
+      } else {
+        data[u] = d;
+      }
+    });
+    return Object.assign({}, DB, { data: data });
+  }
+  function storePodcastAudio(pod, dataUrl) {
+    if (dbUsesLocalStorageFallback) { pod.audioUrl = dataUrl; return Promise.resolve(); }
+    return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+      return idbSet(PODCAST_AUDIO_PREFIX + pod.id, blob).then(function () {
+        if (podcastLiveAudioUrls[pod.id]) URL.revokeObjectURL(podcastLiveAudioUrls[pod.id]);
+        pod.audioUrl = podcastLiveAudioUrls[pod.id] = URL.createObjectURL(blob);
+        pod.hasAudio = true;
+      });
+    });
+  }
+  // Au chargement (et après un import) : migre les anciens podcasts (son dans DB) vers le stockage à
+  // part, et redonne à chaque partie une URL jouable. Un son introuvable (sauvegarde importée depuis un
+  // autre appareil) passe la partie en erreur : son texte est gardé, « Réessayer » refait juste la voix.
+  function hydratePodcastAudio() {
+    if (dbUsesLocalStorageFallback) return Promise.resolve();
+    var changed = false;
+    // Une par une : migrer d'un coup plusieurs data URL de dizaines de Mo saturerait la mémoire.
+    return allPodcastsInDB().reduce(function (chain, p) {
+      return chain.then(function () {
+        if (p.audioUrl && p.audioUrl.indexOf("data:") === 0) {
+          changed = true;
+          return storePodcastAudio(p, p.audioUrl).catch(function (err) { console.error("Migration audio podcast :", err); });
+        }
+        if (podcastLiveAudioUrls[p.id]) { p.audioUrl = podcastLiveAudioUrls[p.id]; return; }
+        if (p.status !== "ready" && !p.hasAudio) return;
+        return idbGet(PODCAST_AUDIO_PREFIX + p.id).then(function (blob) {
+          if (blob) { p.audioUrl = podcastLiveAudioUrls[p.id] = URL.createObjectURL(blob); p.hasAudio = true; return; }
+          if (p.status === "ready") {
+            p.audioUrl = ""; p.hasAudio = false; p.status = "error";
+            p.error = "Le son de cette partie n'est pas sur cet appareil (sauvegarde importée sans l'audio) : relance juste la voix.";
+            changed = true;
+          }
+        }).catch(function () {});
+      });
+    }, Promise.resolve()).then(function () {
+      if (changed) saveDB();
+      return gcPodcastAudio();
+    });
+  }
+  // Supprime les sons des podcasts qui n'existent plus (supprimés, remplacés par une actualisation...).
+  function gcPodcastAudio() {
+    if (dbUsesLocalStorageFallback) return Promise.resolve();
+    var alive = {};
+    allPodcastsInDB().forEach(function (p) { alive[PODCAST_AUDIO_PREFIX + p.id] = 1; });
+    return idbKeys().then(function (keys) {
+      keys.forEach(function (k) {
+        if (typeof k === "string" && k.indexOf(PODCAST_AUDIO_PREFIX) === 0 && !alive[k]) {
+          var id = k.slice(PODCAST_AUDIO_PREFIX.length);
+          if (podcastLiveAudioUrls[id]) { URL.revokeObjectURL(podcastLiveAudioUrls[id]); delete podcastLiveAudioUrls[id]; }
+          idbDelete(k).catch(function () {});
+        }
+      });
+    }).catch(function () {});
+  }
+
   function saveDB() {
     // Horodatage de la dernière modification, par compte — c'est ce qui permet à l'import "Fusionner"
     // (cf. plus bas) de savoir, entre deux appareils, lequel des deux a le plus avancé récemment,
@@ -54,7 +162,7 @@
       }
       return;
     }
-    idbSet(IDB_ENTRY, DB).catch(function (err) {
+    idbSet(IDB_ENTRY, dbWithoutPodcastAudio()).catch(function (err) {
       console.error("Échec de la sauvegarde :", err);
       toast("⚠️ Sauvegarde impossible. " + (err && err.message ? err.message : "Réessaie."));
     });
@@ -96,7 +204,7 @@
       return { usedBytes: used, quotaBytes: quota, pct: Math.min(100, Math.round((used / quota) * 100)), estimating: false };
     }
     var fallbackUsed = 0;
-    try { fallbackUsed = new Blob([JSON.stringify(DB)]).size; } catch (e) {}
+    // Pas de JSON.stringify(DB) ici : avec beaucoup de cours/photos, ça figeait la page à l'ouverture des paramètres.
     return { usedBytes: fallbackUsed, quotaBytes: 0, pct: 0, estimating: true };
   }
   function formatBytes(n) {
@@ -1519,6 +1627,7 @@
     var d = userData();
     d.podcasts = d.podcasts.filter(function (p) { return p.pendingReplace || podcastGroupKey(p) !== oldGid; });
     pending.forEach(function (p) { delete p.pendingReplace; });
+    setTimeout(gcPodcastAudio, 0);
     saveDB();
     toast("🎙️ Podcast actualisé : « " + podcastGroupDisplayName(pending) + " »");
     if (viewingOld) navigate("#/podcasts/" + pending[0].id);
@@ -1575,7 +1684,8 @@
 
         generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
           return audioDurationFromDataUrl(audioUrl).then(function (duration) {
-            pod.audioUrl = audioUrl;
+            return storePodcastAudio(pod, audioUrl).then(function () { return duration; });
+          }).then(function (duration) {
             pod.durationSec = duration;
             pod.segments = buildPodcastSegments(pod.script, duration);
             pod.status = "ready";
@@ -1615,7 +1725,8 @@
     saveDB(); render();
     return generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
       return audioDurationFromDataUrl(audioUrl).then(function (duration) {
-        pod.audioUrl = audioUrl;
+        return storePodcastAudio(pod, audioUrl).then(function () { return duration; });
+      }).then(function (duration) {
         pod.durationSec = duration;
         pod.segments = buildPodcastSegments(pod.script, duration);
         pod.status = "ready";
@@ -7003,7 +7114,7 @@
       var storageInfo = storageUsageInfo();
       var storageBarHtml;
       if (storageInfo.estimating) {
-        storageBarHtml = '<div class="storage-bar-label">' + formatBytes(storageInfo.usedBytes) + ' utilisés — calcul de l\'espace disponible…</div>';
+        storageBarHtml = '<div class="storage-bar-label">Calcul de l\'espace utilisé…</div>';
       } else {
         var storageTier = storageInfo.pct < 60 ? "ok" : storageInfo.pct < 85 ? "warn" : "danger";
         storageBarHtml = '<div class="storage-bar"><div class="storage-bar-fill storage-bar-' + storageTier + '" style="width:' + storageInfo.pct + '%"></div></div>' +
@@ -8482,7 +8593,7 @@
     // donc rien automatiquement. Ce fichier de sauvegarde (le DB entier : comptes + données) permet de
     // le faire manuellement.
     exportBackup: function () {
-      var json = JSON.stringify(DB, null, 2);
+      var json = JSON.stringify(dbWithoutPodcastAudio(), null, 2);
       var blob = new Blob([json], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
@@ -8521,6 +8632,7 @@
       if (!DB.currentUser || !DB.users[DB.currentUser]) DB.currentUser = null;
       modal = null;
       saveDB();
+      hydratePodcastAudio().then(function () { render(); });
       toast("Sauvegarde importée !");
       navigate("#/");
     },
@@ -8531,6 +8643,7 @@
       DB = mergeDB(DB, imported);
       modal = null;
       saveDB();
+      hydratePodcastAudio().then(function () { render(); });
       toast("Sauvegardes fusionnées !");
       navigate("#/");
     },
@@ -8653,10 +8766,12 @@
       } else if (m.kind === "podcast") {
         var d6 = userData();
         d6.podcasts = d6.podcasts.filter(function (x) { return x.id !== m.courseId; });
+        setTimeout(gcPodcastAudio, 0);
         toast("Podcast supprimé");
       } else if (m.kind === "podcastGroup") {
         var d7 = userData();
         d7.podcasts = d7.podcasts.filter(function (x) { return x.groupId !== m.courseId; });
+        setTimeout(gcPodcastAudio, 0);
         toast("Podcast supprimé");
       }
       saveDB();
@@ -9186,7 +9301,7 @@
   // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
   var appEl = document.getElementById("app");
   if (appEl) appEl.innerHTML = '<div class="processing-box" style="min-height:100vh;justify-content:center">' + genLogo() + '<span>Chargement…</span></div>';
-  initDB().then(function () {
+  initDB().then(function () { return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }); }).then(function () {
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", syncTopbarHeightVar);
     render();
