@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4405,7 +4405,15 @@
       }
     } else if (parts[0] === "podcasts") {
       trail.push({ label: "Podcast", hash: "#/podcasts" });
-      if (parts[1]) {
+      if (parts[1] === "lib") {
+        trail.push({ label: "Mes podcasts", hash: "#/podcasts/lib" });
+        var ps = parts[2] ? findSubject(parts[2]) : null;
+        if (ps) trail.push({ label: ps.name, hash: "#/podcasts/lib/" + ps.id });
+        var pt = ps && parts[3] ? findTheme(ps, parts[3]) : null;
+        if (pt) trail.push({ label: pt.name, hash: "#/podcasts/lib/" + ps.id + "/" + pt.id });
+        var pc = pt && parts[4] ? findChapter(pt, parts[4]) : null;
+        if (pc) trail.push({ label: pc.name });
+      } else if (parts[1]) {
         var pod = podcastFind(parts[1]);
         if (pod) trail.push({ label: pod.title });
       }
@@ -4886,46 +4894,145 @@
           '</div>';
       }).join("") + '</div></div>';
   }
-  function renderPodcastListPage() {
-    var list = podcastData().filter(function (p) { return !isHiddenPendingPodcast(p); }).sort(function (a, b) { return b.createdAt - a.createdAt; });
-    if (!podcastIdleImgCache) podcastIdleImgCache = PODCAST_ATTEND_IMGS[Math.floor(Math.random() * PODCAST_ATTEND_IMGS.length)];
-    var libraryHtml;
-    if (!list.length) {
-      libraryHtml = '<p class="podcast-fs-empty">Choisis une matière et un chapitre, le vieux conteur s\'occupe du reste.</p>';
-    } else {
-      // Regroupe par matière (comme dans le Menu), puis par groupId à l'intérieur de chaque matière.
-      var bySubject = {}, subjectOrder = [];
-      list.forEach(function (p) {
-        var key = p.subjectId || "?";
-        if (!bySubject[key]) { bySubject[key] = { name: p.subjectName || "Sans matière", items: [] }; subjectOrder.push(key); }
-        bySubject[key].items.push(p);
-      });
-      libraryHtml = subjectOrder.map(function (key) {
-        var grp = bySubject[key];
-        var byGroup = {}, groupOrder = [];
-        grp.items.forEach(function (p) {
-          var gid = p.groupId || p.id;
-          if (!byGroup[gid]) { byGroup[gid] = []; groupOrder.push(gid); }
-          byGroup[gid].push(p);
-        });
-        var tilesHtml = groupOrder.map(function (gid) {
-          var parts = byGroup[gid].sort(function (a, b) { return a.partIndex - b.partIndex; });
-          return parts.length > 1 ? podcastFolderTileHtml(gid, parts) : podcastTileHtml(parts[0]);
-        }).join("");
-        return '<div class="podcast-fs-subject"><div class="podcast-fs-subject-name">' + esc(grp.name) + '</div><div class="podcast-fs-grid">' + tilesHtml + '</div></div>';
-      }).join("");
+  // Où ranger un podcast dans « Mes podcasts » : on suit l'arborescence actuelle du Menu
+  // (matière → thème → chapitre). Si son thème/chapitre/cours a disparu, il reste dans sa matière.
+  function podcastPlace(p) {
+    var subj = findSubject(p.subjectId);
+    if (!subj) return {};
+    var out = { subjectId: subj.id };
+    if (p.scopeLevel === "theme") {
+      if (findTheme(subj, p.scopeId)) out.themeId = p.scopeId;
+      return out;
     }
+    if (p.scopeLevel === "course") {
+      var loc = locateCourse(p.scopeId);
+      if (loc && loc.subject.id === subj.id) { out.themeId = loc.theme.id; out.chapterId = loc.chapter.id; out.courseId = loc.course.id; }
+      return out;
+    }
+    subj.themes.some(function (t) {
+      return t.chapters.some(function (c) { if (c.id === p.scopeId) { out.themeId = t.id; out.chapterId = c.id; return true; } return false; });
+    });
+    return out;
+  }
+  function podcastLibHash(p) {
+    var pl = podcastPlace(p);
+    return "#/podcasts/lib" + (pl.subjectId ? "/" + pl.subjectId + (pl.themeId ? "/" + pl.themeId + (pl.chapterId ? "/" + pl.chapterId : "") : "") : "");
+  }
+  function podcastVisibleList() { return podcastData().filter(function (p) { return !isHiddenPendingPodcast(p); }); }
+  function podcastGroupCount(items) {
+    var seen = {};
+    items.forEach(function (p) { seen[podcastGroupKey(p)] = 1; });
+    return Object.keys(seen).length;
+  }
+  function podcastCountLabel(items) {
+    var n = podcastGroupCount(items);
+    return n + " podcast" + (n !== 1 ? "s" : "");
+  }
+  // Tuiles des podcasts (un dossier par podcast en plusieurs parties), les plus récents d'abord.
+  function podcastGroupsGridHtml(items) {
+    var byGroup = {}, order = [];
+    items.slice().sort(function (a, b) { return b.createdAt - a.createdAt; }).forEach(function (p) {
+      var gid = podcastGroupKey(p);
+      if (!byGroup[gid]) { byGroup[gid] = []; order.push(gid); }
+      byGroup[gid].push(p);
+    });
+    return '<div class="card-grid">' + order.map(function (gid) {
+      var parts = byGroup[gid].sort(function (a, b) { return a.partIndex - b.partIndex; });
+      return parts.length > 1 ? podcastFolderTileHtml(gid, parts) : podcastTileHtml(parts[0]);
+    }).join("") + '</div>';
+  }
+  function podcastLibSection(label, items) {
+    if (!items.length) return "";
+    return '<div class="podcast-lib-section"><div class="podcast-lib-label">' + label + '</div>' + podcastGroupsGridHtml(items) + '</div>';
+  }
+  // Tuile « dossier » comme dans le Menu (matière / thème / chapitre), avec le nombre de podcasts dedans.
+  function podcastLibFolderTile(hash, iconHtml, name, items) {
+    var busy = items.some(function (p) { return p.status === "processing"; });
+    return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'' + hash + '\'">' +
+      '<div class="tile-icon">' + iconHtml + '</div>' +
+      '<div class="tile-title">' + esc(name) + '</div>' +
+      '<div class="tile-meta">🎙️ ' + podcastCountLabel(items) + (busy ? ' · en préparation…' : '') + '</div>' +
+      '</div>';
+  }
+
+  // Accueil Podcast : papi + deux gros boutons. La bibliothèque est rangée dans « Mes podcasts ».
+  function renderPodcastListPage() {
+    var list = podcastVisibleList();
+    if (!podcastIdleImgCache) podcastIdleImgCache = PODCAST_ATTEND_IMGS[Math.floor(Math.random() * PODCAST_ATTEND_IMGS.length)];
+    var busy = list.some(function (p) { return p.status === "processing"; });
+    var note = busy ? '🎙️ Un podcast est en préparation, tu le retrouveras dans « Mes podcasts ».'
+      : !list.length ? 'Choisis un thème, un chapitre ou un cours, le vieux prof s\'occupe du reste.' : '';
+    var count = podcastGroupCount(list);
     var body = '<div class="podcast-fullscreen">' +
       '<img src="' + PODCAST_DIR + podcastIdleImgCache + '" class="podcast-bg-img" alt="">' +
-      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><div class="podcast-fs-title">Podcast</div></div><button class="btn btn-metal" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>' +
-      '<div class="podcast-fs-library">' + libraryHtml + '</div>' +
-      '</div>';
+      '<div class="podcast-fs-header"><button class="mobile-nav-toggle" style="background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.4);color:#fff" onclick="App.toggleMobileNav()" aria-label="Menu">☰</button><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><div class="podcast-fs-title">Podcast</div></div></div>' +
+      '<div class="podcast-home-actions">' +
+      '<button class="btn btn-metal podcast-home-btn" onclick="location.hash=\'#/podcasts/lib\'">📚 Mes podcasts' + (count ? ' <span class="podcast-home-count">' + count + '</span>' : '') + '</button>' +
+      '<button class="btn btn-primary podcast-home-btn" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button>' +
+      (note ? '<div class="podcast-home-note">' + note + '</div>' : '') +
+      '</div></div>';
     renderShell(["podcasts"], body);
+  }
+
+  // « Mes podcasts » : rangés comme les cours dans le Menu (matière → thème → chapitre → cours).
+  function renderPodcastLibraryPage(subjectId, themeId, chapterId) {
+    var parts = ["podcasts", "lib"];
+    var all = podcastVisibleList().map(function (p) { return { p: p, pl: podcastPlace(p) }; });
+    var pick = function (fn) { return all.filter(function (x) { return fn(x.pl, x.p); }).map(function (x) { return x.p; }); };
+    var s = subjectId ? findSubject(subjectId) : null;
+    var th = s && themeId ? findTheme(s, themeId) : null;
+    var c = th && chapterId ? findChapter(th, chapterId) : null;
+    if ((subjectId && !s) || (themeId && !th) || (chapterId && !c)) { navigate("#/podcasts/lib"); return; }
+    var title, sub, content = "";
+    if (c) {
+      parts.push(s.id, th.id, c.id);
+      var inChap = pick(function (pl) { return pl.chapterId === c.id; });
+      title = c.name; sub = esc(s.name) + ' · ' + esc(th.name) + ' · ' + podcastCountLabel(inChap);
+      content = podcastLibSection("📂 Tout le chapitre", inChap.filter(function (p) { return p.scopeLevel !== "course"; }));
+      c.courses.forEach(function (co) {
+        content += podcastLibSection("📄 " + esc(co.title), inChap.filter(function (p) { return p.scopeLevel === "course" && p.scopeId === co.id; }));
+      });
+    } else if (th) {
+      parts.push(s.id, th.id);
+      var inTheme = pick(function (pl) { return pl.themeId === th.id; });
+      title = th.name; sub = esc(s.name) + ' · ' + podcastCountLabel(inTheme);
+      content = podcastLibSection("📚 Tout le thème", pick(function (pl, p) { return pl.themeId === th.id && !pl.chapterId; }));
+      var chapTiles = th.chapters.map(function (ch) {
+        var items = pick(function (pl) { return pl.chapterId === ch.id; });
+        return items.length ? podcastLibFolderTile("#/podcasts/lib/" + s.id + "/" + th.id + "/" + ch.id, icon("folder"), ch.name, items) : "";
+      }).join("");
+      if (chapTiles) content += '<div class="podcast-lib-section"><div class="podcast-lib-label">Chapitres</div><div class="card-grid-signs-short">' + chapTiles + '</div></div>';
+    } else if (s) {
+      parts.push(s.id);
+      var inSubj = pick(function (pl) { return pl.subjectId === s.id; });
+      title = s.name; sub = podcastCountLabel(inSubj);
+      var themeTiles = s.themes.map(function (t) {
+        var items = pick(function (pl) { return pl.themeId === t.id; });
+        return items.length ? podcastLibFolderTile("#/podcasts/lib/" + s.id + "/" + t.id, icon("book"), t.name, items) : "";
+      }).join("");
+      if (themeTiles) content += '<div class="podcast-lib-section"><div class="podcast-lib-label">Thèmes</div><div class="card-grid-signs-short">' + themeTiles + '</div></div>';
+      content += podcastLibSection("Cours supprimés ou déplacés", pick(function (pl) { return pl.subjectId === s.id && !pl.themeId; }));
+    } else {
+      title = "Mes podcasts"; sub = podcastCountLabel(all.map(function (x) { return x.p; }));
+      var subjTiles = userData().subjects.map(function (sj) {
+        var items = pick(function (pl) { return pl.subjectId === sj.id; });
+        return items.length ? podcastLibFolderTile("#/podcasts/lib/" + sj.id, icon("book"), sj.name, items) : "";
+      }).join("");
+      if (subjTiles) content += '<div class="podcast-lib-section"><div class="podcast-lib-label">Matières</div><div class="card-grid-signs-short">' + subjTiles + '</div></div>';
+      content += podcastLibSection("Matières supprimées", pick(function (pl) { return !pl.subjectId; }));
+    }
+    if (!content) {
+      content = '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Aucun podcast ici</h3><p>Crée un podcast sur un thème, un chapitre ou un seul cours : il sera rangé ici automatiquement.</p>' +
+        '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>';
+    }
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Podcast.png" alt=""><h1 class="page-title">' + esc(title) + '</h1></div><p class="page-sub">' + sub + '</p></div>' +
+      '<button class="btn btn-primary" style="width:auto" onclick="App.openPodcastModal()">' + icon("plus") + ' Nouveau podcast</button></div>';
+    renderShell(parts, head + content);
   }
   function renderPodcastDetailPage(id) {
     var pod = podcastFind(id);
     if (!pod) { navigate("#/podcasts"); return; }
-    var closeBtn = '<button class="podcast-fs-close" onclick="location.hash=\'#/podcasts\'" title="Retour">✕</button>';
+    var closeBtn = '<button class="podcast-fs-close" onclick="location.hash=\'' + podcastLibHash(pod) + '\'" title="Retour à mes podcasts">✕</button>';
     var body;
     if (pod.status === "processing") {
       var procStart = pod.processingStartedAt || pod.createdAt || Date.now();
@@ -9037,6 +9144,7 @@
       if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
       if (parts[0] === "methodologies" && parts[1]) { renderMethodologyDetailPage(parts[1]); return; }
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
+      if (parts[0] === "podcasts" && parts[1] === "lib") { renderPodcastLibraryPage(parts[2], parts[3], parts[4]); return; }
       if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
       if (parts[0] === "podcasts") { renderPodcastListPage(); return; }
       renderDashboard();
