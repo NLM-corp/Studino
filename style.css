@@ -914,6 +914,7 @@
   .podcast-ctrl-play { width: 58px; height: 58px; font-size: 22px; background: var(--accent); border-color: var(--accent-shadow); color: var(--accent-contrast); box-shadow: 0 3px 0 var(--accent-shadow); }
   #podcast-seek { width: 100%; accent-color: var(--accent); cursor: pointer; }
   .podcast-time-row { display: flex; justify-content: space-between; font-size: 12px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); font-family: 'Press Start 2P', monospace; }
+.podcast-rate-row { display: flex; justify-content: center; gap: 8px; }  .podcast-rate-btn { background: rgba(255,255,255,0.14); backdrop-filter: blur(4px); border: 2px solid rgba(255,255,255,0.4); border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; color: #fff; cursor: pointer; }  .podcast-rate-btn:hover { border-color: var(--accent); }  .podcast-rate-btn.active { background: var(--accent); border-color: var(--accent-shadow); color: var(--accent-contrast); }
 
   @media (max-width: 780px) {
     .exercise-layout { flex-direction: column-reverse; }

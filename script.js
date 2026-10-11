@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "7.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4835,6 +4835,11 @@
   var podcastIdleImgCache = null; // choisie une seule fois par session — ne doit pas changer à chaque clic
   var podcastExpliqueByPod = {}; // per podcast id: index courant — stable tant qu'on reste sur CE podcast, change seulement toutes les ~60s
   var podcastFolderOpen = {}; // per groupId: bool — dossier de parties replié par défaut
+  // Vitesse de lecture choisie (x0,5 à x2), gardée d'un podcast/partie à l'autre et entre les visites.
+  var PODCAST_RATES = [0.5, 1, 1.5, 2];
+  var podcastRate = 1;
+  try { var savedRate = parseFloat(localStorage.getItem("studino-podcast-rate")); if (PODCAST_RATES.indexOf(savedRate) >= 0) podcastRate = savedRate; } catch (e) {}
+  function podcastRateLabel(r) { return "x" + String(r).replace(".", ","); }
   var podcastAutoPlayNext = false; // mis à true juste avant de naviguer vers la partie suivante en fin de lecture
   function podcastFormatTime(sec) {
     sec = Math.max(0, Math.round(sec || 0));
@@ -5092,11 +5097,16 @@
         '</div>' +
         '<input id="podcast-seek" type="range" min="0" max="1000" value="0" oninput="App.podcastSeek(this.value)">' +
         '<div class="podcast-time-row"><span id="podcast-time-cur">0:00</span><span id="podcast-time-dur">' + podcastFormatTime(pod.durationSec) + '</span></div>' +
+        '<div class="podcast-rate-row">' + PODCAST_RATES.map(function (r) {
+          return '<button class="podcast-rate-btn' + (r === podcastRate ? ' active' : '') + '" data-rate="' + r + '" onclick="App.setPodcastRate(' + r + ')">' + podcastRateLabel(r) + '</button>';
+        }).join("") + '</div>' +
         '</div>' +
         '</div></div>';
     }
     renderShell(["podcasts", id], body);
     if (pod.status === "ready") {
+      var rateAudio = document.getElementById("podcast-audio");
+      if (rateAudio) { rateAudio.defaultPlaybackRate = podcastRate; rateAudio.playbackRate = podcastRate; }
       podcastEnsurePlayerInterval();
       if (podcastAutoPlayNext) {
         podcastAutoPlayNext = false;
@@ -7799,6 +7809,13 @@
       var a = document.getElementById("podcast-audio");
       if (!a || !a.duration) return;
       a.currentTime = (val / 1000) * a.duration;
+    },
+    setPodcastRate: function (r) {
+      podcastRate = r;
+      try { localStorage.setItem("studino-podcast-rate", String(r)); } catch (e) {}
+      var a = document.getElementById("podcast-audio");
+      if (a) { a.defaultPlaybackRate = r; a.playbackRate = r; }
+      document.querySelectorAll(".podcast-rate-btn").forEach(function (b) { b.classList.toggle("active", parseFloat(b.getAttribute("data-rate")) === r); });
     },
     podcastSkip: function (sec) {
       var a = document.getElementById("podcast-audio");
