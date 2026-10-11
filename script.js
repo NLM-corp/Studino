@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -7278,6 +7278,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Fermer</button></div>';
     } else if (modal.type === "downloadCourse") {
       inner = '<h3>Télécharger ce cours en PDF</h3>' +
+        '<div class="field"><label>Taille du texte</label><div class="print-scale-ctrl" title="Taille de la police à l\'impression"><button type="button" class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(-0.1)">−</button><span class="mono" style="min-width:42px;text-align:center;display:inline-block">' + Math.round(getPrintScale() * 100) + '%</span><button type="button" class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(0.1)">+</button></div></div>' +
         '<p class="modal-warn" style="margin-bottom:10px">Inclure aussi l\'explication en plus de la retranscription ?</p>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button>' +
         '<button type="button" class="btn btn-ghost" onclick="App.confirmDownloadCoursePdf(\'' + modal.courseId + '\', false)">Juste la retranscription</button>' +
