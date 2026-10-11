@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1167,21 +1167,23 @@
   };
   // Cours de langue (ou rédigé dans une langue étrangère) : la langue du cours dit ce que l'élève doit
   // savoir. Tout en anglais = le connaître EN anglais ; mélangé avec du français = le COMPRENDRE.
-  var PODCAST_LANG_MODES = [["auto", "Auto (selon la langue du cours)"], ["fr", "Français"], ["target", "Entièrement dans la langue du cours"], ["bilingual", "Bilingue (explications en français)"]];
+  var PODCAST_LANG_MODES = [["auto", "Auto (recommandé)"], ["fr", "Français"], ["target", "Entièrement dans la langue du cours"], ["bilingual", "Bilingue (explications en français)"]];
   var PODCAST_LANG_HINTS = {
-    auto: "Cours entièrement en anglais, espagnol, japonais… → podcast dans cette langue. Cours mélangé avec du français → podcast bilingue. Cours en français → en français.",
-    fr: "Tout en français. Les passages en langue étrangère sont cités tels quels puis expliqués.",
-    target: "Tout dans la langue du cours, avec un vocabulaire proche du tien, pour l'apprendre dans cette langue.",
-    bilingual: "Le conteur explique en français, mais lit et répète les textes, mots et expressions dans la langue du cours."
+    auto: "Le conteur choisit selon ton cours : cours entièrement en anglais, espagnol, japonais… → il te l'explique dans cette langue ; cours mélangé avec du français → bilingue ; cours en français → en français.",
+    fr: "Tout en français.",
+    target: "Le même podcast que d'habitude, mais entièrement dans la langue du cours.",
+    bilingual: "Le conteur explique en français, en disant les mots et expressions clés dans la langue du cours."
   };
+  // Pas d'analyse ligne par ligne : le conteur explique le cours EXACTEMENT comme d'habitude, juste dans
+  // la bonne langue.
   function podcastLanguageRule(mode) {
-    var target = "écris TOUT le script dans la langue du cours : l'élève doit maîtriser ce contenu DANS cette langue. Garde ta personnalité de vieux conteur, mais avec des phrases claires et un vocabulaire proche de celui du cours (pas beaucoup plus difficile), pour un élève qui apprend cette langue. Toutes les autres règles (fidélité, précision, profondeur, durée, rien en symboles) restent valables dans cette langue, y compris tes interpellations affectueuses (ex. en anglais \"my young friend\").";
-    var bilingual = "tu parles en français, mais TOUT ce que le cours donne dans la langue étrangère (textes, phrases, vocabulaire, dialogues, exemples) est dit DANS cette langue, tel quel. Pour chaque passage : dis-le dans la langue étrangère, explique en français ce qu'il veut dire (traduis les passages difficiles, sans mot-à-mot systématique), puis répète les mots et expressions clés dans la langue étrangère et réemploie-les dans une phrase simple pour que l'élève les retienne.";
-    var studyText = " Dans ce cas, si le cours contient un TEXTE à étudier (texte littéraire, article, discours, dialogue, poème, chanson...), c'est une exception à la règle de structure narrative : suis le texte dans son ordre, passage par passage, en le lisant fidèlement (mot pour mot, c'est ce que l'élève doit connaître) avant de l'expliquer (sens, contexte, idées, procédés, mots clés) — le récit vivant porte sur tes explications autour du texte. Termine chaque partie par un court récapitulatif oral des mots et expressions clés à retenir. Écris toute langue étrangère dans son orthographe et son écriture normales (japonais, chinois, arabe, russe, coréen... jamais en romanisation), sinon la voix la prononce mal. Les titres des parties peuvent être dans la langue du podcast.";
-    if (mode === "fr") return "LANGUE : le podcast est entièrement en français. Si le cours contient des passages dans une autre langue, cite-les tels quels dans leur langue, puis explique-les en français.";
-    if (mode === "target") return "LANGUE : " + target + studyText;
-    if (mode === "bilingual") return "LANGUE : " + bilingual + studyText;
-    return "LANGUE — détermine-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère (consignes, explications ou traductions en français + textes, vocabulaire ou exemples en langue étrangère) → " + bilingual + " (c) cours en français, même avec quelques mots ou citations étrangers isolés → podcast en français, normalement." + " Dans les cas (a) et (b) :" + studyText;
+    var target = "écris TOUT le script dans la langue du cours : c'est exactement le même podcast que d'habitude (même conteur, même façon de raconter et d'expliquer le cours, mêmes règles), simplement dans cette langue au lieu du français. N'analyse pas le cours phrase par phrase et ne le traduis pas : explique-le, comme tu le ferais en français. Phrases claires et vocabulaire proche de celui du cours, pour un élève qui apprend cette langue.";
+    var bilingual = "explique le cours exactement comme d'habitude, en français, mais dis dans la langue étrangère les mots, expressions et notions clés que le cours donne dans cette langue (avec leur sens), pour que l'élève les reconnaisse. N'analyse pas le cours phrase par phrase.";
+    var script = " Écris toute langue étrangère dans son orthographe et son écriture normales (japonais, chinois, arabe, russe, coréen... jamais en romanisation), sinon la voix la prononce mal.";
+    if (mode === "fr") return "LANGUE : le podcast est entièrement en français.";
+    if (mode === "target") return "LANGUE : " + target + script;
+    if (mode === "bilingual") return "LANGUE : " + bilingual + script;
+    return "LANGUE — choisis-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère → " + bilingual + " (c) cours en français, même avec quelques mots étrangers isolés → podcast en français, normalement." + script;
   }
   // Même règle pour la génération du cours (retranscription, explication, flashcards, contrôle) et des fiches.
   var COURSE_LANGUAGE_RULE = "RÈGLE DE LANGUE (prioritaire sur toute consigne « en français » de ce message) — regarde d'abord dans quelle langue est rédigé le contenu source : " +
