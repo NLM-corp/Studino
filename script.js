@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "7.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -616,6 +616,7 @@
       step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement et INTÉGRALEMENT en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. C'est une vraie retranscription, pas une synthèse : ne garde pas seulement les points importants, reprends aussi les détails, exemples et remarques annexes QUI SONT RÉELLEMENT ÉCRITS SUR LES PHOTOS (jamais un exemple ou un détail que tu inventerais toi-même pour illustrer — la transcription doit rester un reflet fidèle à 100% de ce que l'enseignant a écrit, rien de plus, rien de moins). Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
     }
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
+      COURSE_LANGUAGE_RULE +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
       "2. Rédige une VRAIE explication pédagogique approfondie, pas un résumé reformulé en plus simple. Pour CHAQUE notion du cours (pas seulement les principales) : explique le \"pourquoi\" avant/avec le \"quoi\" (d'où ça vient, à quoi ça sert, pourquoi c'est vrai ou pourquoi on en a besoin), donne au moins un exemple concret et chiffré/situé (jamais juste \"par exemple...\" vague), anticipe et lève explicitement la confusion ou l'erreur la plus fréquente sur cette notion précise (\"beaucoup d'élèves confondent X et Y, mais...\"), et relie la notion à celles qui précèdent/suivent dans le cours pour que l'ensemble forme un raisonnement cohérent plutôt qu'une liste de paragraphes indépendants. Structure-la en Markdown avec les mêmes ## et ### que la retranscription (une sous-section par grande notion), jamais un seul bloc de texte continu. Une explication qui se contente de reformuler la transcription avec des mots plus simples, sans profondeur ni exemple ni mise en garde, est un ÉCHEC — vise la longueur et la richesse qu'il faut pour que l'élève comprenne vraiment, pas un résumé expéditif.\n" +
@@ -633,7 +634,7 @@
       "| Valeur A | Valeur B |\n" +
       "| Valeur C | Valeur D |\n\n" +
       "Le site sait afficher de vrais tableaux, alors n'hésite pas à t'en servir dès que c'est pertinent (dans la retranscription comme dans l'explication) — mais respecte bien ce format ligne par ligne, sans jamais oublier la ligne de séparation |---|---|.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf ce que la RÈGLE DE LANGUE du début impose de garder ou d'écrire dans une autre langue.";
   }
 
   // Gemini écrit parfois une commande LaTeX (\text, \bullet, \frac, \forall...) avec un seul backslash
@@ -904,6 +905,7 @@
     }).join("\n\n");
     var scopeLabel = scope === "course" ? "le contenu retranscrit d'un cours" : scope === "theme" ? "le contenu retranscrit de tous les cours de tout un thème" : "le contenu retranscrit de tous les cours d'un chapitre";
     return "Tu es un assistant pédagogique pour un élève francophone. Voici " + scopeLabel + " intitulé « " + title + " » (matière : " + subjectName + ", " + (scope === "theme" ? "thème" : "chapitre") + " : " + chapterName + ").\n\n" +
+      COURSE_LANGUAGE_RULE +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article, site d'analyse littéraire, résumé de manuel, etc.), REFORMULE ce passage avec des mots différents en gardant strictement le même sens et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n\n" +
       "Génère une fiche de révision ULTRA COMPLÈTE en Markdown qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section, prête à réviser juste avant un contrôle.\n\n" +
       "PRÉCISION CONCRÈTE OBLIGATOIRE : dès que le contenu source mentionne un élément nommé et identifiable — une expérience, un événement, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — la fiche doit dire CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemple à ne jamais faire : écrire \"une expérience a montré que...\" sans préciser en quoi elle consistait (qui, sur quoi, comment, ce qui a été observé) si le cours source le précise. Si le cours source ne donne pas ce détail, ne l'invente jamais — dans ce cas, contente-toi de ce qui est donné plutôt que de meubler.\n\n" +
@@ -920,7 +922,7 @@
       "| Valeur A | Valeur B |\n\n" +
       "Le site sait afficher de vrais tableaux — respecte bien ce format ligne par ligne, sans oublier la ligne de séparation |---|---|.\n\n" +
       "Voici le contenu source :\n\n" + sourceBlocks + "\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf ce que la RÈGLE DE LANGUE du début impose de garder ou d'écrire dans une autre langue.";
   }
   function generateRevisionSheetContent(courses, title, subjectName, chapterName, scope) {
     var parts = [{ text: buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) }];
@@ -1155,7 +1157,7 @@
           type: "object",
           properties: {
             title: { type: "string", description: "Titre court et accrocheur de cette partie du podcast." },
-            script: { type: "string", description: "Texte intégral à lire à voix haute par le narrateur, en français courant, SANS aucune balise, markdown, puce ou didascalie entre parenthèses — uniquement les phrases parlées telles qu'elles doivent être prononcées, prêtes à être envoyées telles quelles à une synthèse vocale." }
+            script: { type: "string", description: "Texte intégral à lire à voix haute par le narrateur, dans la langue fixée par la consigne de LANGUE (français courant par défaut), SANS aucune balise, markdown, puce ou didascalie entre parenthèses — uniquement les phrases parlées telles qu'elles doivent être prononcées, prêtes à être envoyées telles quelles à une synthèse vocale." }
           },
           required: ["title", "script"]
         }
@@ -1163,7 +1165,31 @@
     },
     required: ["notionCount", "estimatedTotalWords", "parts"]
   };
-  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) {
+  // Cours de langue (ou rédigé dans une langue étrangère) : la langue du cours dit ce que l'élève doit
+  // savoir. Tout en anglais = le connaître EN anglais ; mélangé avec du français = le COMPRENDRE.
+  var PODCAST_LANG_MODES = [["auto", "Auto (selon la langue du cours)"], ["fr", "Français"], ["target", "Entièrement dans la langue du cours"], ["bilingual", "Bilingue (explications en français)"]];
+  var PODCAST_LANG_HINTS = {
+    auto: "Cours entièrement en anglais, espagnol, japonais… → podcast dans cette langue. Cours mélangé avec du français → podcast bilingue. Cours en français → en français.",
+    fr: "Tout en français. Les passages en langue étrangère sont cités tels quels puis expliqués.",
+    target: "Tout dans la langue du cours, avec un vocabulaire proche du tien, pour l'apprendre dans cette langue.",
+    bilingual: "Le conteur explique en français, mais lit et répète les textes, mots et expressions dans la langue du cours."
+  };
+  function podcastLanguageRule(mode) {
+    var target = "écris TOUT le script dans la langue du cours : l'élève doit maîtriser ce contenu DANS cette langue. Garde ta personnalité de vieux conteur, mais avec des phrases claires et un vocabulaire proche de celui du cours (pas beaucoup plus difficile), pour un élève qui apprend cette langue. Toutes les autres règles (fidélité, précision, profondeur, durée, rien en symboles) restent valables dans cette langue, y compris tes interpellations affectueuses (ex. en anglais \"my young friend\").";
+    var bilingual = "tu parles en français, mais TOUT ce que le cours donne dans la langue étrangère (textes, phrases, vocabulaire, dialogues, exemples) est dit DANS cette langue, tel quel. Pour chaque passage : dis-le dans la langue étrangère, explique en français ce qu'il veut dire (traduis les passages difficiles, sans mot-à-mot systématique), puis répète les mots et expressions clés dans la langue étrangère et réemploie-les dans une phrase simple pour que l'élève les retienne.";
+    var studyText = " Dans ce cas, si le cours contient un TEXTE à étudier (texte littéraire, article, discours, dialogue, poème, chanson...), c'est une exception à la règle de structure narrative : suis le texte dans son ordre, passage par passage, en le lisant fidèlement (mot pour mot, c'est ce que l'élève doit connaître) avant de l'expliquer (sens, contexte, idées, procédés, mots clés) — le récit vivant porte sur tes explications autour du texte. Termine chaque partie par un court récapitulatif oral des mots et expressions clés à retenir. Écris toute langue étrangère dans son orthographe et son écriture normales (japonais, chinois, arabe, russe, coréen... jamais en romanisation), sinon la voix la prononce mal. Les titres des parties peuvent être dans la langue du podcast.";
+    if (mode === "fr") return "LANGUE : le podcast est entièrement en français. Si le cours contient des passages dans une autre langue, cite-les tels quels dans leur langue, puis explique-les en français.";
+    if (mode === "target") return "LANGUE : " + target + studyText;
+    if (mode === "bilingual") return "LANGUE : " + bilingual + studyText;
+    return "LANGUE — détermine-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère (consignes, explications ou traductions en français + textes, vocabulaire ou exemples en langue étrangère) → " + bilingual + " (c) cours en français, même avec quelques mots ou citations étrangers isolés → podcast en français, normalement." + " Dans les cas (a) et (b) :" + studyText;
+  }
+  // Même règle pour la génération du cours (retranscription, explication, flashcards, contrôle) et des fiches.
+  var COURSE_LANGUAGE_RULE = "RÈGLE DE LANGUE (prioritaire sur toute consigne « en français » de ce message) — regarde d'abord dans quelle langue est rédigé le contenu source : " +
+    "(a) contenu ENTIÈREMENT (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) : l'élève doit le maîtriser DANS cette langue. Ne traduis rien : la retranscription reste dans la langue d'origine ; l'explication est rédigée dans cette langue (claire, vocabulaire proche de celui du cours), avec seulement la traduction française entre parenthèses des mots ou expressions difficiles ; flashcards, questions et exercices sont posés ET corrigés dans cette langue. " +
+    "(b) contenu MÉLANGÉ (consignes, explications ou traductions en français + textes, vocabulaire, dialogues ou exemples dans une langue étrangère) : l'élève doit COMPRENDRE la langue étrangère. Retranscription fidèle, chaque passage dans sa langue d'origine ; explication en français qui cite les passages, mots et expressions dans la langue étrangère avec leur sens ; flashcards et questions qui font passer d'une langue à l'autre dans les deux sens (sens d'une expression, comment dire une idée, compréhension d'un passage), sans jamais traduire le texte étudié lui-même. " +
+    "(c) contenu en français : tout en français, comme d'habitude. " +
+    "Dans les cas (a) et (b), un texte en langue étrangère à étudier (texte littéraire, article, discours, dialogue, poème, chanson...) est retranscrit MOT POUR MOT, sans le reformuler ni le corriger, même s'il existe déjà sur internet — la règle de reformulation des textes publics ne s'applique PAS à lui. Écris chaque langue dans son orthographe et son écriture normales. Les noms des champs JSON ne changent jamais.\n\n";
+  function buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason, langMode) {
     var gender = getUserGender();
     var genderNote = gender === "m"
       ? "L'élève qui t'écoute est un garçon : si tu t'adresses directement à lui (une interpellation affectueuse, pas à chaque phrase), utilise des formulations masculines (\"mon petit\", \"mon grand\", \"jeune homme\"), jamais féminines."
@@ -1173,6 +1199,7 @@
     return "Tu es un vieux conteur chevronné : un ancien professeur devenu archéologue sur le tard, aussi chaleureux et bienveillant qu'un grand-père mais PAS un grand-père de famille — un vieux savant plein d'anecdotes de terrain qui adore raconter des histoires pour transmettre son savoir à un jeune élève qui l'écoute en podcast. Voici le cours (matière : " + subjectName + ", " + podcastScopeLabel(scopeLevel) + " : " + scopeName + ") à partir duquel tu dois créer ce podcast.\n\n" +
       "Règles absolues :\n" +
       "- " + genderNote + "\n" +
+      "- " + podcastLanguageRule(langMode) + "\n" +
       "- Base-toi UNIQUEMENT sur le contenu du cours fourni ci-dessous : n'invente, ne déforme et n'ajoute AUCUN fait, date, chiffre, nom ou notion qui n'y figure pas. Tout ce que tu racontes doit rester rigoureusement exact par rapport à ce cours précis.\n" +
       "- Couvre l'INTÉGRALITÉ du contenu du cours, sans rien oublier ni laisser de côté — chaque notion, définition, date, formule ou règle du cours doit se retrouver quelque part dans le podcast.\n" +
       "- Ce n'est PAS une récitation : ne lis pas le cours tel quel et ne te contente pas de l'énoncer dans l'ordre. Transforme-le en un vrai récit engageant et vivant — raconte, pose des questions rhétoriques, utilise des images et des comparaisons parlantes, varie le ton, crée un peu de curiosité ou de suspense avant de révéler une notion — comme un grand-père passionnant qui sait captiver, jamais comme un robot qui réciterait une liste. Ne te contente JAMAIS de mentionner une notion en une seule phrase rapide : prends le temps de vraiment l'expliquer en profondeur — le contexte, le \"pourquoi\" et pas seulement le \"quoi\", un exemple concret, une comparaison parlante, le lien avec ce qui précède — avant de passer à la suivante.\n" +
@@ -1184,23 +1211,28 @@
       "- Le \"script\" de chaque partie est le texte EXACT à lire à voix haute : uniquement des phrases parlées naturelles, aucun titre, aucune puce, aucun markdown, aucune parenthèse de mise en scène — seulement ce que le narrateur dit, du début à la fin.\n" +
       "- Commence chaque partie par une accroche qui donne envie d'écouter, et termine par une petite conclusion qui boucle le sujet de cette partie (ou du podcast entier s'il n'y a qu'une seule partie).\n" +
       "- INTERDIT ABSOLU : aucune notation LaTeX, aucun symbole mathématique brut ($, ^, _, \\frac, °, %, =, ×...) ni aucune abréviation qui se prononcerait mal lue telle quelle — une synthèse vocale va lire ce texte MOT POUR MOT. Écris TOUT en toutes lettres, exactement comme un professeur le dirait à voix haute : \"2^3\" devient \"deux puissance trois\", \"H2O\" devient \"H deux O\" dit \"aitch deux o\" ou plus naturellement \"eau\", \"50%\" devient \"cinquante pour cent\", \"20°C\" devient \"vingt degrés Celsius\", \"=\" devient \"égale\", une fraction \"3/4\" devient \"trois quarts\". Fais cette conversion pour CHAQUE formule, unité ou nombre technique du cours, sans exception.\n" +
-      "- Respecte une orthographe française irréprochable, avec tous les accents nécessaires (é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal accentué.\n\n" +
+      "- Respecte une orthographe irréprochable dans chaque langue utilisée, avec tous les accents nécessaires (en français : é, è, ê, à, ç, etc.) — la synthèse vocale prononce mal un mot mal orthographié ou mal accentué. Les nombres et unités s'écrivent en toutes lettres dans la langue où ils sont prononcés.\n\n" +
       (retryReason === "short" ? "[Note système — IMPORTANT : ta tentative précédente a produit au moins une partie BEAUCOUP trop courte (loin en dessous de 1600 mots, parfois à peine 1 minute à l'oral) — c'est un échec strict de la consigne de durée. Cette fois, développe réellement CHAQUE notion en profondeur (surtout les formules/méthodes si la matière en a) jusqu'à dépasser 1600 mots sur CHAQUE partie, quitte à prendre plus de temps par explication. Ne recommence pas la même erreur.]\n\n" : "") +
       (retryReason === "partcount" ? "[Note système — IMPORTANT : ta tentative précédente a toi-même estimé qu'il fallait plus de mots au total que ce que tu as réellement écrit dans \"parts\" — autrement dit tu as sous-estimé le nombre de parties nécessaires par rapport à ton propre calcul. Cette fois, suis VRAIMENT la procédure : compte notionCount, calcule estimatedTotalWords, puis fixe le nombre de parties sur ce calcul (estimatedTotalWords / 3000, arrondi au-dessus) sans te brider par habitude. Ne recommence pas la même erreur.]\n\n" : "") +
       "Voici le cours :\n\n" + content + "\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, dans la ou les langues fixées par la règle de LANGUE ci-dessus (français par défaut).";
   }
   function podcastScriptWordCount(script) {
-    return String(script || "").trim().split(/\s+/).filter(Boolean).length;
+    // Japonais/chinois sans espaces : ~2 caractères par « mot », sinon une partie normale serait vue
+    // comme beaucoup trop courte et regénérée pour rien.
+    var s = String(script || "");
+    var cjk = (s.match(/[぀-ヿ㐀-鿿]/g) || []).length;
+    var words = s.replace(/[぀-ヿ㐀-鿿]/g, " ").trim().split(/\s+/).filter(Boolean).length;
+    return words + Math.round(cjk / 2);
   }
   // Filet de sécurité côté code, pas seulement une consigne de prompt : si au moins une partie générée
   // est manifestement trop courte (bien en dessous du plancher de 1600 mots demandé), OU si l'IA a
   // elle-même estimé qu'il fallait plus de mots que ce qu'elle a réellement écrit (donc qu'elle s'est
   // bridée sur le nombre de parties malgré son propre calcul), on retente une fois avec une note d'échec
   // explicite plutôt que d'accepter silencieusement un podcast trop court.
-  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt, retryReason) {
+  function generatePodcastScript(subjectName, scopeName, scopeLevel, content, langMode, attempt, retryReason) {
     attempt = attempt || 1;
-    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason) }];
+    var parts = [{ text: buildPodcastScriptPrompt(subjectName, scopeName, scopeLevel, content, retryReason, langMode) }];
     // Un cours très riche peut légitimement nécessiter de nombreuses parties de plusieurs milliers de
     // mots chacune : une limite de sortie par défaut trop basse tronquerait la réponse en silence avant
     // que l'IA ait fini, donnant l'impression d'un plafond artificiel sur le nombre de parties.
@@ -1213,7 +1245,7 @@
       // d'estimation — le but est d'attraper le cas "l'IA a sous-livré par rapport à son propre calcul".
       var underDelivered = estimated > 3500 && actualWords < estimated * 0.6;
       if ((tooShort || underDelivered) && attempt < 2) {
-        return generatePodcastScript(subjectName, scopeName, scopeLevel, content, attempt + 1, tooShort ? "short" : "partcount");
+        return generatePodcastScript(subjectName, scopeName, scopeLevel, content, langMode, attempt + 1, tooShort ? "short" : "partcount");
       }
       return data;
     });
@@ -1339,7 +1371,8 @@
   // puis recollés (voir generatePodcastAudio).
   function splitScriptIntoTtsChunks(script, maxChars) {
     var raw = String(script || "").replace(/\s+/g, " ").trim();
-    var sentences = raw.match(/[^.!?]+[.!?]+(\s+|$)/g) || (raw ? [raw] : []);
+    // 。！？ : ponctuation japonaise/chinoise, jamais suivie d'une espace.
+    var sentences = raw.match(/[^.!?。！？]+(?:[。！？]+\s*|[.!?]+(?:\s+|$))/g) || (raw ? [raw] : []);
     var chunks = [], cur = "";
     sentences.forEach(function (s) {
       s = s.trim();
@@ -1382,14 +1415,14 @@
   // segments, chaque erreur reste petite et le sous-titre "rattrape" son retard plus souvent).
   function splitScriptIntoSentences(script) {
     var raw = String(script || "").replace(/\s+/g, " ").trim();
-    var sentences = raw.match(/[^.!?,;:]+[.!?,;:]*(\s+|$)/g) || (raw ? [raw] : []);
+    var sentences = raw.match(/[^.!?,;:。！？、]+(?:[。！？、]+\s*|[.!?,;:]*(?:\s+|$))/g) || (raw ? [raw] : []);
     return sentences.map(function (s) { return s.trim(); }).filter(Boolean);
   }
   // Une pause après une virgule/un point-virgule est naturellement plus courte qu'une pause en fin de
   // phrase complète — distinguer les deux rapproche un peu plus l'estimation du rythme réel du narrateur.
   function podcastPauseAfter(s) {
     var last = s.charAt(s.length - 1);
-    return (last === "," || last === ";" || last === ":") ? 0.14 : 0.3;
+    return (last === "," || last === ";" || last === ":" || last === "、") ? 0.14 : 0.3;
   }
   // Pas d'horodatage mot-à-mot fourni par l'API TTS : on approxime le minutage de chaque segment sur la
   // durée réelle de l'audio généré, au NOMBRE DE MOTS plutôt qu'au nombre de caractères (une phrase
@@ -1398,7 +1431,7 @@
   function buildPodcastSegments(script, durationSec) {
     var sentences = splitScriptIntoSentences(script);
     if (!sentences.length || !durationSec) return [];
-    var wordCounts = sentences.map(function (s) { return (s.match(/\S+/g) || []).length || 1; });
+    var wordCounts = sentences.map(function (s) { return podcastScriptWordCount(s) || 1; });
     var totalWords = wordCounts.reduce(function (a, b) { return a + b; }, 0) || 1;
     var pauses = sentences.map(function (s, i) { return i < sentences.length - 1 ? podcastPauseAfter(s) : 0; });
     var totalPause = pauses.reduce(function (a, b) { return a + b; }, 0);
@@ -1641,7 +1674,7 @@
     var scopeLevel = podcast.scopeLevel || "chapter";
     var gid = podcastGroupKey(podcast);
     var snapshot = podcastScopeSnapshot(podcast);
-    generatePodcastScript(subjectName, scopeName, scopeLevel, content).then(function (data) {
+    generatePodcastScript(subjectName, scopeName, scopeLevel, content, podcast.langMode || "auto").then(function (data) {
       var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
       if (!scriptParts.length) {
         podcast.status = "error";
@@ -1656,6 +1689,7 @@
           id: uid(), groupId: gid, title: "",
           subjectId: podcast.subjectId, subjectName: podcast.subjectName,
           scopeLevel: podcast.scopeLevel, scopeId: podcast.scopeId, scopeName: podcast.scopeName,
+          langMode: podcast.langMode,
           partIndex: k + 1, partCount: total,
           status: "processing", error: null, errorStatus: null, errorDetail: null,
           script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now() + k, processingStartedAt: Date.now()
@@ -2384,7 +2418,7 @@
     }).join("\n\n");
     return "Un élève francophone a fait les erreurs suivantes pendant une séance de révision :\n\n" + lines + "\n\n" +
       "Pour CHAQUE erreur ci-dessus, crée exactement 2 flashcards de révision (une question courte au recto dans \"q\", une réponse courte et précise au verso dans \"a\") qui aident à retravailler la notion à l'origine de CETTE erreur précise. Les 2 flashcards d'une même erreur doivent aborder la notion sous deux angles différents (pas juste reformuler la même question), pour bien l'ancrer. Il y a " + wrongItems.length + " erreur(s) : renvoie EXACTEMENT " + (wrongItems.length * 2) + " flashcards, dans l'ordre des erreurs listées (les 2 premières pour l'erreur 1, les 2 suivantes pour l'erreur 2, etc.).\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si les éléments ci-dessus sont dans une langue étrangère (cours de langue), garde la même langue que ces éléments.";
   }
   function generateGapFlashcards(wrongItems) {
     var parts = [{ text: buildGapFlashcardsPrompt(wrongItems) }];
@@ -2428,7 +2462,7 @@
       "Items à varier :\n\n" + lines + "\n\n" +
       "Renvoie un tableau \"variants\", une entrée par item, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ ou $$...$$ — jamais de commande de couleur LaTeX.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si les éléments ci-dessus sont dans une langue étrangère (cours de langue), garde la même langue que ces éléments.";
   }
   function generateExamPrepVariants(items) {
     var parts = [{ text: buildExamPrepVariantPrompt(items) }];
@@ -6846,6 +6880,9 @@
           '<div class="field"><label>Portée</label><div style="display:flex;gap:8px;flex-wrap:wrap">' +
           ppLevelBtn("theme", "Tout un thème") + ppLevelBtn("chapter", "Un chapitre") + ppLevelBtn("course", "Un seul cours") +
           '</div></div>' +
+          '<div class="field"><label>Langue du podcast</label><select onchange="App.setPodcastLangMode(this.value)">' +
+          PODCAST_LANG_MODES.map(function (lm) { return '<option value="' + lm[0] + '" ' + ((modal.langMode || "auto") === lm[0] ? "selected" : "") + '>' + lm[1] + '</option>'; }).join("") +
+          '</select><p style="font-size:12px;color:var(--text-muted);margin:6px 0 0">' + PODCAST_LANG_HINTS[modal.langMode || "auto"] + '</p></div>' +
           (ppHasAny ? (
             '<div class="field"><label>Thème</label><select onchange="App.changePodcastTheme(this.value)">' + ppOptions(ppThemes, modal.themeId, "name") + '</select></div>' +
             (ppLevel !== "theme" ? '<div class="field"><label>Chapitre</label><select onchange="App.changePodcastChapter(this.value)">' + ppOptions(ppChapters, modal.chapterId, "name") + '</select></div>' : "") +
@@ -7761,6 +7798,7 @@
     },
     changePodcastSubject: function (subjectId) { modal.subjectId = subjectId; modal.themeId = null; modal.chapterId = null; modal.courseId = null; render(); },
     setPodcastLevel: function (level) { modal.level = level; render(); },
+    setPodcastLangMode: function (mode) { modal.langMode = mode; render(); },
     changePodcastTheme: function (themeId) { modal.themeId = themeId; modal.chapterId = null; modal.courseId = null; render(); },
     changePodcastChapter: function (chapterId) { modal.chapterId = chapterId; modal.courseId = null; render(); },
     changePodcastCourse: function (courseId) { modal.courseId = courseId; render(); },
@@ -7795,6 +7833,7 @@
       var pod = {
         id: uid(), groupId: uid(), title: scopeName,
         subjectId: subj.id, subjectName: subj.name, scopeLevel: level, scopeId: scopeId, scopeName: scopeName,
+        langMode: m.langMode || "auto",
         partIndex: 1, partCount: 1,
         status: "processing", error: null, errorStatus: null, errorDetail: null,
         script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now(), processingStartedAt: Date.now()
@@ -7838,6 +7877,7 @@
         id: uid(), groupId: uid(), title: first.scopeName, pendingReplace: gid, groupName: first.groupName,
         subjectId: first.subjectId, subjectName: first.subjectName,
         scopeLevel: first.scopeLevel, scopeId: first.scopeId, scopeName: first.scopeName,
+        langMode: first.langMode || "auto",
         partIndex: 1, partCount: 1,
         status: "processing", error: null, errorStatus: null, errorDetail: null,
         script: "", segments: [], audioUrl: "", durationSec: 0, createdAt: Date.now(), processingStartedAt: Date.now()
