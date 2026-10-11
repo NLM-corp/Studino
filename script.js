@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -476,7 +476,8 @@
     };
     var bySource = {}, srcOf = [];
     list.forEach(function (fig, i) { var k = sourceKey(fig); (bySource[k] = bySource[k] || []).push(i); });
-    var refinePerSource = Object.keys(bySource).map(function (k) {
+    // 3 pages à la fois maximum : 11 appels lancés d'un coup dépasseraient le quota de requêtes par minute.
+    var refineTasks = Object.keys(bySource).map(function (k) { return function () {
       var idxList = bySource[k];
       return sourceFor(list[idxList[0]]).then(function (src) {
         if (!src) return;
@@ -495,8 +496,19 @@
           });
         });
       });
-    });
-    return Promise.all(refinePerSource).then(function () {
+    }; });
+    var runPool = function (tasks, limit) {
+      var next = 0;
+      var worker = function () {
+        if (next >= tasks.length) return Promise.resolve();
+        var task = tasks[next++];
+        return Promise.resolve().then(task).catch(function () {}).then(worker);
+      };
+      var workers = [];
+      for (var w = 0; w < Math.min(limit, tasks.length); w++) workers.push(worker());
+      return Promise.all(workers);
+    };
+    return runPool(refineTasks, 3).then(function () {
       return Promise.all(list.map(function (fig, i) {
         var src = srcOf[i];
         if (!src || !isValidFigureBox(fig.box)) return Promise.resolve(null);
@@ -522,6 +534,77 @@
     var out = text || "";
     (subs || []).forEach(function (s) { if (s.placeholder) out = out.split(s.placeholder).join(s.replacement); });
     return out;
+  }
+  /* ---------------- Passe dédiée de détection des schémas ----------------
+     Avant, les schémas étaient repérés DANS le gros appel qui génère aussi la retranscription,
+     l'explication, les flashcards, le contrôle... Sur un document chargé (ex. 11 pages d'exercices),
+     l'IA sautait souvent cette étape : aucun schéma. Un appel qui ne fait QUE ça les repère tous ; ils
+     sont découpés avant la génération, qui n'a plus qu'à placer leurs jetons [[img:N]] dans le texte. */
+  var FIGURE_DETECT_SCHEMA = {
+    type: "object",
+    properties: {
+      figures: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            imageIndex: { type: "integer", description: "Index (à partir de 0) du fichier où se trouve ce visuel." },
+            pageIndex: { type: "integer", description: "Pour un PDF : numéro de la page (à partir de 1). Pour une photo : 1." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 qui contient TOUT ce visuel avec son titre et ses annotations (ex. « Doc. 1 Courbe d'étalonnage… », axes, graduations, lettres), mais pas le texte de l'énoncé autour." },
+            caption: { type: "string", description: "Légende distinctive : numéro de l'exercice/de la partie + ce que montre le visuel, ex. \"Exercice 26 — Doc. 1 : courbe d'étalonnage du dosage des ions fer (III)\"." }
+          },
+          required: ["imageIndex", "box", "caption"]
+        }
+      }
+    },
+    required: ["figures"]
+  };
+  function buildFigureDetectPrompt(fileCount) {
+    return "Voici " + fileCount + " fichier(s) (photos ou pages d'un document de cours/d'exercices), numérotés à partir de 0 dans l'ordre. Ta SEULE tâche : repérer TOUS les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre ou à résoudre le contenu.\n\n" +
+      "À repérer : graphiques, courbes, spectres, diagrammes, schémas, montages expérimentaux, figures géométriques, formules développées/structures chimiques dessinées, cartes, frises, pictogrammes, et photos qui apportent une information (couleur d'une solution, montage, objet ou expérience étudiés).\n" +
+      "À NE PAS repérer : les tableaux (ils seront retranscrits en texte), le texte encadré ou coloré, les numéros d'exercice, les badges et logos (« BAC », icônes de compétences...), les éléments purement décoratifs.\n\n" +
+      "Parcours CHAQUE fichier en entier, du haut en bas, sans t'arrêter : une même page contient souvent PLUSIEURS exercices, chacun avec ses propres visuels. Une entrée par visuel ou par document visuel (ex. un « Doc. 2 » qui regroupe une photo, ou deux pictogrammes côte à côte qui vont ensemble : une seule zone) ; deux visuels de deux exercices différents ne partagent jamais la même zone. La zone englobe le visuel en entier avec son titre et toutes ses annotations, sans couper un bord, mais sans le texte de l'énoncé autour.\n" +
+      "Si aucun visuel n'est présent, renvoie un tableau vide.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+  }
+  // Repère et découpe les visuels du document. Ne bloque jamais la génération : en cas d'échec on
+  // renvoie simplement une liste vide (la génération repère alors les schémas elle-même, comme avant).
+  function prepareDocumentFigures(images) {
+    var empty = { list: [], subs: [], figures: [] };
+    if (!images || !images.length) return Promise.resolve(empty);
+    var parts = geminiImageParts(images).concat([{ text: buildFigureDetectPrompt(images.length) }]);
+    return callGemini(parts, FIGURE_DETECT_SCHEMA).then(function (data) {
+      var detected = (data && data.figures || []).filter(function (f) {
+        return f && typeof f.imageIndex === "number" && images[f.imageIndex] && isValidFigureBox(f.box);
+      });
+      detected.forEach(function (f, i) { f.placeholder = "[[img:" + i + "]]"; });
+      if (!detected.length) return empty;
+      return resolveFigures(detected, images).then(function (resolved) {
+        var list = [], subs = [];
+        detected.forEach(function (f, i) {
+          if (!resolved.subs[i] || !resolved.subs[i].replacement) return;
+          list.push({ placeholder: f.placeholder, caption: f.caption || "", imageIndex: f.imageIndex });
+          subs.push(resolved.subs[i]);
+        });
+        return { list: list, subs: subs, figures: resolved.figures };
+      });
+    }).catch(function (err) {
+      console.error("Détection des schémas :", err);
+      return empty;
+    });
+  }
+  // Consigne donnée à la génération quand les schémas sont déjà découpés : elle n'a plus qu'à placer
+  // les jetons. Chaîne vide s'il n'y en a pas (la génération garde alors sa propre détection).
+  function preFiguresPromptText(pre, where) {
+    if (!pre || !pre.list || !pre.list.length) return "";
+    return "SCHÉMAS DÉJÀ DÉCOUPÉS — les visuels du document ont déjà été repérés et découpés :\n" +
+      pre.list.map(function (f) { return f.placeholder + " — fichier " + f.imageIndex + " — " + f.caption; }).join("\n") + "\n" +
+      "Insère CHAQUE jeton ci-dessus tel quel, seul sur sa ligne, " + where + ", à l'endroit exact où ce visuel apparaît dans le document. N'en oublie aucun, ne les décris pas en mots à la place, ne les modifie pas. Pour ces visuels-là, n'ajoute RIEN dans \"figures\" (\"figures\" ne sert plus qu'à un éventuel schéma nécessaire qui manquerait à cette liste).\n\n";
+  }
+  // Jetons que la génération n'a pas placés : on n'en perd aucun.
+  function unplacedPreFigures(pre, texts) {
+    var all = (texts || []).join("\n");
+    return (pre && pre.subs || []).filter(function (s) { return all.indexOf(s.placeholder) === -1; });
   }
   function stripFigureMarkdown(text) {
     return String(text || "").replace(/!\[[^\]]*\]\((?:data:[^)]+|figure:[^)]+|schema:[^)]+)\)/g, "");
@@ -681,7 +764,7 @@
     required: ["transcription", "explanation", "flashcards", "quizQuestions", "exercises", "figures"]
   };
 
-  function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription) {
+  function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription, pre) {
     var step1;
     if (priorTranscription) {
       step1 = imageCount > 0
@@ -702,6 +785,7 @@
     }
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
       COURSE_LANGUAGE_RULE +
+      preFiguresPromptText(pre, "dans \"transcription\" (et aussi dans \"explanation\" là où c'est utile)") +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
       "2. Rédige une VRAIE explication pédagogique approfondie, pas un résumé reformulé en plus simple. Pour CHAQUE notion du cours (pas seulement les principales) : explique le \"pourquoi\" avant/avec le \"quoi\" (d'où ça vient, à quoi ça sert, pourquoi c'est vrai ou pourquoi on en a besoin), donne au moins un exemple concret et chiffré/situé (jamais juste \"par exemple...\" vague), anticipe et lève explicitement la confusion ou l'erreur la plus fréquente sur cette notion précise (\"beaucoup d'élèves confondent X et Y, mais...\"), et relie la notion à celles qui précèdent/suivent dans le cours pour que l'ensemble forme un raisonnement cohérent plutôt qu'une liste de paragraphes indépendants. Structure-la en Markdown avec les mêmes ## et ### que la retranscription (une sous-section par grande notion), jamais un seul bloc de texte continu. Une explication qui se contente de reformuler la transcription avec des mots plus simples, sans profondeur ni exemple ni mise en garde, est un ÉCHEC — vise la longueur et la richesse qu'il faut pour que l'élève comprenne vraiment, pas un résumé expéditif.\n" +
@@ -955,12 +1039,12 @@
     }
   }
 
-  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription) {
+  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription, pre) {
     var images = (imageDataUrls || []).map(function (url) {
       var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
-    var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length, priorTranscription) }]);
+    var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length, priorTranscription, pre) }]);
     return callGemini(parts, COURSE_SCHEMA);
   }
 
@@ -2739,11 +2823,12 @@
     },
     required: ["subjectGuess", "exercises", "figures"]
   };
-  function buildImportedExercisePrompt(imageCount) {
+  function buildImportedExercisePrompt(imageCount, pre) {
     var step1 = imageCount === 1
       ? "Voici la photo ou le document d'un ou plusieurs exercices pris par un élève."
       : "Voici " + imageCount + " photos/pages qui font partie du même document d'exercices, dans l'ordre.";
     return step1 + " Ne réponds pas encore aux exercices ici : \n" +
+      preFiguresPromptText(pre, "dans le \"statement\" du BON exercice") +
       "Règle importante : si un énoncé correspond mot pour mot à un exercice déjà public sur internet (banque d'exercices en ligne, manuel, site de révision, etc.), REFORMULE légèrement sa formulation en gardant strictement le même sens, les mêmes données et la même difficulté, plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n" +
       "1. Repère CHAQUE exercice distinct présent dans le document (généralement numéroté \"Exercice 1\", \"Exercice 2\"... ou séparé visuellement) et crée une entrée dans \"exercises\" pour chacun, dans l'ordre d'apparition. S'il n'y a qu'un seul exercice, renvoie un tableau \"exercises\" avec un seul élément. S'il y en a 7 exercices distincts, renvoie exactement 7 éléments — ne fusionne jamais deux exercices ensemble et n'en invente aucun.\n" +
       "   ATTENTION, très important : les sous-questions ou étapes À L'INTÉRIEUR d'un même exercice (numérotées a, b, c, d... ou 1, 2, 3... ou 1), 2), 3)...) NE SONT PAS des exercices séparés — ce sont des questions qui font partie d'un seul et même exercice. Un exercice avec 5 sous-questions ou 5 étapes reste UN SEUL élément dans \"exercises\", avec toutes ses sous-questions rassemblées dans le même \"statement\" et une seule \"solution\" qui traite les 5. Ne crée une nouvelle entrée dans \"exercises\" QUE quand le document passe à un exercice numéroté différent (Exercice 1 → Exercice 2), jamais entre deux sous-questions du même exercice.\n" +
@@ -2755,12 +2840,12 @@
       "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  async function generateImportedExercise(imageDataUrls) {
+  async function generateImportedExercise(imageDataUrls, pre) {
     var images = (imageDataUrls || []).map(function (url) {
       var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
-    var parts = images.concat([{ text: buildImportedExercisePrompt(images.length) }]);
+    var parts = images.concat([{ text: buildImportedExercisePrompt(images.length, pre) }]);
     return callGemini(parts, IMPORTED_EXERCISE_SCHEMA);
   }
   function geminiImageParts(dataUrls) {
@@ -2833,11 +2918,27 @@
     entry.status = "processing";
     entry.error = null;
     saveDB(); render();
-    generateImportedExercise(entry.images).then(function (data) {
+    var pre = null;
+    prepareDocumentFigures(entry.images).then(function (p) {
+      pre = p;
+      return generateImportedExercise(entry.images, p);
+    }).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
       return resolveFigures(data.figures, entry.images).then(function (resolved) {
-        var exercises = (data.exercises || []).map(function (ex) {
-          return { statement: substituteFigures(ex.statement || "", resolved.subs), solution: ex.solution || "", figureSvg: "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
+        var allSubs = pre.subs.concat(resolved.subs);
+        var rawStatements = (data.exercises || []).map(function (ex) { return ex.statement || ""; });
+        // Schémas déjà découpés que la génération a oublié de placer : rangés dans l'exercice dont le
+        // numéro apparaît dans leur légende (ex. « Exercice 26 — ... »), sinon dans le dernier exercice.
+        unplacedPreFigures(pre, rawStatements).forEach(function (s) {
+          var f = pre.list.find(function (x) { return x.placeholder === s.placeholder; });
+          var num = f && /(\d+)/.exec(f.caption);
+          var target = -1;
+          if (num) rawStatements.forEach(function (st, k) { if (target < 0 && new RegExp("(^|\\D)" + num[1] + "(\\D|$)").test(st.slice(0, 80))) target = k; });
+          if (target < 0) target = rawStatements.length - 1;
+          if (target >= 0) rawStatements[target] += "\n\n" + s.placeholder;
+        });
+        var exercises = (data.exercises || []).map(function (ex, k) {
+          return { statement: substituteFigures(rawStatements[k], allSubs), solution: ex.solution || "", figureSvg: "", answerHtml: "", answerText: "", answerStatus: "unanswered", correct: null, feedback: "" };
         });
         var missedFigure = exercises.some(function (ex) { return statementMissesFigure(ex.statement); });
         // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
@@ -2856,7 +2957,7 @@
           function (ex, svg) { ex.figureSvg = svg; }
         ).then(function (stillMissing) {
           entry.exercises = exercises;
-          entry.figures = resolved.figures;
+          entry.figures = pre.figures.concat(resolved.figures);
           entry.status = "ready";
           // Tout ce qui a été détecté est déjà découpé/reconstruit et stocké à part : la photo complète
           // ne sert donc plus à rien dans le cas normal, et on la jette (coûteuse en stockage, comme
@@ -2911,14 +3012,22 @@
     course.error = null;
     saveDB(); render();
     var images = imagesOverride || course.images;
-    generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription).then(function (data) {
+    var pre = null;
+    prepareDocumentFigures(images).then(function (p) {
+      pre = p;
+      return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
+    }).then(function (data) {
       return resolveFigures(data.figures, images).then(function (resolved) {
-        var transcription = substituteFigures(data.transcription, resolved.subs);
+        // Schémas déjà découpés que la génération a oublié de placer : ajoutés à la fin, jamais perdus.
+        var lostPre = unplacedPreFigures(pre, [data.transcription, data.explanation]);
+        var allSubs = pre.subs.concat(resolved.subs);
+        var transcription = substituteFigures(data.transcription, allSubs);
+        if (lostPre.length) transcription += "\n\n## Schémas du document\n\n" + lostPre.map(function (s) { return s.replacement; }).join("\n\n");
         // Ajout de nouvelles photos à un cours existant : l'IA n'a retranscrit QUE le nouveau contenu
         // (voir buildCoursePrompt) — on recolle l'ancien texte tel quel, jamais retouché par l'IA, pour
         // garantir qu'aucun détail déjà transcrit ne puisse être perdu/compressé lors de l'ajout.
         if (priorTranscription && images && images.length) transcription = priorTranscription + "\n\n" + transcription;
-        var explanation = substituteFigures(data.explanation, resolved.subs);
+        var explanation = substituteFigures(data.explanation, allSubs);
         var missedFigure = [transcription, explanation].some(statementMissesFigure);
         // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
         // systématique : retenter une fois EN SILENCE (tant que les photos sont là) rattrape la
@@ -2955,7 +3064,7 @@
           // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
           // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
           // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
-          course.figures = resolved.figures;
+          course.figures = pre.figures.concat(resolved.figures);
           course.videos = course.videos || [];
           course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
           course.quizQuestions = quizQuestions;
