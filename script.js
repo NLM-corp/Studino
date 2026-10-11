@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -299,7 +299,9 @@
   }
 
   /* ---------------- Image import (JPEG/PNG/WebP/TIFF/HEIC) ---------------- */
-  var IMG_MAX_W = 700;
+  // 1400 px : à 700, une page pleine d'exercices devenait trop petite pour que l'IA lise bien et découpe
+  // précisément chaque schéma (et les schémas découpés étaient flous). Les photos sont effacées après la génération.
+  var IMG_MAX_W = 1400;
   function isHeicFile(file) {
     return /heic|heif/i.test(file.type || "") || /\.hei[cf]$/i.test(file.name || "");
   }
@@ -340,6 +342,59 @@
     canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.72);
   }
+  // Zone [ymin, xmin, ymax, xmax] sur 0-1000 : rejette les zones vides, inversées ou minuscules (un
+  // point, une ligne) qu'une détection ratée renvoie parfois.
+  function isValidFigureBox(box) {
+    if (!Array.isArray(box) || box.length !== 4) return false;
+    if (box.some(function (v) { return typeof v !== "number" || !isFinite(v); })) return false;
+    var h = Math.min(1000, box[2]) - Math.max(0, box[0]), w = Math.min(1000, box[3]) - Math.max(0, box[1]);
+    return h >= 20 && w >= 20;
+  }
+  // Petite marge autour du schéma : une zone au ras du dessin coupe souvent une lettre ou une graduation.
+  function padFigureBox(box) {
+    var pad = 12;
+    return [Math.max(0, box[0] - pad), Math.max(0, box[1] - pad), Math.min(1000, box[2] + pad), Math.min(1000, box[3] + pad)];
+  }
+  // pdf.js chargé à la demande (seulement quand un schéma doit être découpé dans un PDF).
+  var PDFJS_BASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  var pdfJsPromise = null;
+  function loadPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (!pdfJsPromise) {
+      pdfJsPromise = new Promise(function (resolve, reject) {
+        var s = document.createElement("script");
+        s.src = PDFJS_BASE + "pdf.min.js";
+        s.onload = function () {
+          if (!window.pdfjsLib) { reject(new Error("pdf.js indisponible")); return; }
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + "pdf.worker.min.js";
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = function () { pdfJsPromise = null; reject(new Error("Impossible de charger pdf.js")); };
+        document.head.appendChild(s);
+      });
+    }
+    return pdfJsPromise;
+  }
+  function renderPdfPageToJpeg(pdfDataUrl, pageNum) {
+    return Promise.all([loadPdfJs(), fetch(pdfDataUrl).then(function (r) { return r.arrayBuffer(); })]).then(function (res) {
+      return res[0].getDocument({ data: new Uint8Array(res[1]) }).promise;
+    }).then(function (doc) {
+      var n = Math.max(1, Math.min(doc.numPages, pageNum || 1));
+      return doc.getPage(n).then(function (page) {
+        var base = page.getViewport({ scale: 1 });
+        var viewport = page.getViewport({ scale: Math.min(3, 1800 / base.width) });
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.round(viewport.width); canvas.height = Math.round(viewport.height);
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        return page.render({ canvasContext: ctx, viewport: viewport }).promise.then(function () {
+          var url = canvas.toDataURL("image/jpeg", 0.9);
+          doc.destroy();
+          return url;
+        });
+      });
+    });
+  }
   function cropImageRegion(dataUrl, box) {
     // box: [ymin, xmin, ymax, xmax] normalisé sur 0-1000 (convention utilisée par Gemini pour les zones détectées)
     return loadImageEl(dataUrl).then(function (img) {
@@ -364,7 +419,7 @@
           properties: {
             index: { type: "integer", description: "Index du schéma dans la liste fournie (à partir de 0)." },
             found: { type: "boolean", description: "false si ce schéma n'est en réalité PAS présent sur cette image (erreur de la détection précédente) — dans ce cas ignore \"box\"." },
-            box: { type: "array", items: { type: "integer" }, description: "Zone rectangulaire CORRIGÉE [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000 (0,0 = coin haut-gauche de CETTE image, 1000,1000 = coin bas-droit), qui encadre EXACTEMENT ce schéma, sans texte alentour ni morceau d'un autre schéma/tableau voisin. Si found=false, renvoie [0,0,0,0]." }
+            box: { type: "array", items: { type: "integer" }, description: "Zone rectangulaire CORRIGÉE [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000 (0,0 = coin haut-gauche de CETTE image, 1000,1000 = coin bas-droit), qui encadre EXACTEMENT ce schéma EN ENTIER avec ses propres annotations (lettres des points, valeurs, axes, graduations, légende), sans le texte de l'énoncé autour ni aucun morceau d'un autre schéma/tableau voisin. Si found=false, renvoie [0,0,0,0]." }
           },
           required: ["index", "found", "box"]
         }
@@ -373,9 +428,13 @@
     required: ["boxes"]
   };
   function buildFigureRefinePrompt(figsOnThisImage) {
-    var list = figsOnThisImage.map(function (f, i) { return i + ". " + (f.caption || "(sans légende)"); }).join("\n");
-    return "Voici UNE SEULE image (une page/photo de cours). Une première passe moins précise pense qu'elle contient les schémas/graphiques suivants :\n" + list + "\n\n" +
-      "Pour CHAQUE schéma de cette liste, regarde attentivement CETTE image précise et donne la zone rectangulaire qui l'encadre le plus exactement possible, au format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant tout texte alentour et tout élément d'un AUTRE schéma ou tableau voisin — ne prends surtout pas un morceau de texte ou une zone vide par erreur. Si un schéma de la liste n'est en fait PAS présent sur cette image précise (erreur de la passe précédente), mets \"found\": false pour lui plutôt que d'inventer une zone approximative.\n\n" +
+    var list = figsOnThisImage.map(function (f, i) {
+      var b = Array.isArray(f.box) && f.box.length === 4 ? " — première estimation (peu fiable) : [" + f.box.join(", ") + "]" : "";
+      return i + ". " + (f.caption || "(sans légende)") + b;
+    }).join("\n");
+    return "Voici UNE SEULE image (une page/photo de cours ou d'exercices). Une première passe moins précise pense qu'elle contient les schémas/graphiques suivants :\n" + list + "\n\n" +
+      "Pour CHAQUE schéma de cette liste, regarde attentivement CETTE image précise et donne la zone rectangulaire qui l'encadre le plus exactement possible, au format [ymin, xmin, ymax, xmax] sur une échelle 0-1000. La zone doit contenir le schéma EN ENTIER avec tout ce qui lui appartient (lettres des points, valeurs, flèches, axes, graduations, légende, titre de la figure) — ne coupe jamais un bord ni une annotation. Elle doit exclure le texte de l'énoncé autour et tout élément d'un AUTRE schéma ou tableau voisin — ne prends surtout pas un morceau de texte ou une zone vide par erreur.\n" +
+      "Une même page peut contenir PLUSIEURS exercices, chacun avec son schéma : sers-toi de la légende (numéro d'exercice, ce que montre le schéma, lettres des points...) et de la position estimée pour associer chaque élément de la liste au BON schéma, et ne donne JAMAIS la même zone à deux éléments différents. Si un schéma de la liste n'est en fait PAS présent sur cette image précise (erreur de la passe précédente), mets \"found\": false pour lui plutôt que d'inventer une zone approximative.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni.";
   }
   // Seconde passe dédiée, UNE image à la fois : la détection initiale des schémas se fait en même
@@ -395,28 +454,53 @@
     // une image plus tard (bouton "Supprimer" dédié) sans devoir toucher au texte du cours/exercice :
     // la référence reste, elle affiche juste "schéma supprimé" une fois l'entrée retirée de la liste.
     var list = figures || [];
-    var byImage = {};
-    list.forEach(function (fig, i) { (byImage[fig.imageIndex] = byImage[fig.imageIndex] || []).push(i); });
-    var refinePerImage = Object.keys(byImage).map(function (idxStr) {
-      var idx = +idxStr;
-      var src = images[idx];
-      if (!src || isPdfDataUrl(src)) return Promise.resolve();
-      var idxList = byImage[idx];
-      return refineImageFigureBoxes(src, idxList.map(function (i) { return list[i]; })).then(function (data) {
-        if (!data || !data.boxes) return;
-        data.boxes.forEach(function (b) {
-          var fig = list[idxList[b.index]];
-          if (!fig) return;
-          if (!b.found) { fig.box = null; }
-          else if (Array.isArray(b.box) && b.box.length === 4) { fig.box = b.box; }
+    // Une « source » = une photo, ou UNE page d'un PDF (rendue en image pour pouvoir y découper le
+    // schéma — avant, les schémas d'un PDF n'étaient jamais découpés du tout).
+    var sourceKey = function (fig) {
+      var src = images[fig.imageIndex];
+      return fig.imageIndex + ":" + (isPdfDataUrl(src) ? (fig.pageIndex || 1) : 0);
+    };
+    var sourceCache = {};
+    var sourceFor = function (fig) {
+      var src = images[fig.imageIndex];
+      if (!src) return Promise.resolve(null);
+      if (!isPdfDataUrl(src)) return Promise.resolve(src);
+      var key = sourceKey(fig);
+      if (!sourceCache[key]) {
+        sourceCache[key] = renderPdfPageToJpeg(src, fig.pageIndex || 1).catch(function (err) {
+          console.error("Rendu de la page PDF impossible :", err);
+          return null;
+        });
+      }
+      return sourceCache[key];
+    };
+    var bySource = {}, srcOf = [];
+    list.forEach(function (fig, i) { var k = sourceKey(fig); (bySource[k] = bySource[k] || []).push(i); });
+    var refinePerSource = Object.keys(bySource).map(function (k) {
+      var idxList = bySource[k];
+      return sourceFor(list[idxList[0]]).then(function (src) {
+        if (!src) return;
+        idxList.forEach(function (i) { srcOf[i] = src; });
+        return refineImageFigureBoxes(src, idxList.map(function (i) { return list[i]; })).then(function (data) {
+          if (!data || !data.boxes) return;
+          var seen = {};
+          data.boxes.forEach(function (b) {
+            var fig = list[idxList[b.index]];
+            if (!fig) return;
+            if (!b.found) { fig.box = null; return; }
+            // Zone corrigée gardée seulement si elle est plausible et pas déjà donnée à un autre schéma
+            // de la même page — sinon on garde la première estimation plutôt qu'un doublon.
+            var sig = isValidFigureBox(b.box) ? b.box.join(",") : null;
+            if (sig && !seen[sig]) { seen[sig] = 1; fig.box = b.box; }
+          });
         });
       });
     });
-    return Promise.all(refinePerImage).then(function () {
-      return Promise.all(list.map(function (fig) {
-        var src = images[fig.imageIndex];
-        if (!src || isPdfDataUrl(src) || !Array.isArray(fig.box) || fig.box.length !== 4) return Promise.resolve(null);
-        return cropImageRegion(src, fig.box).catch(function () { return null; });
+    return Promise.all(refinePerSource).then(function () {
+      return Promise.all(list.map(function (fig, i) {
+        var src = srcOf[i];
+        if (!src || !isValidFigureBox(fig.box)) return Promise.resolve(null);
+        return cropImageRegion(src, padFigureBox(fig.box)).catch(function () { return null; });
       }));
     }).then(function (crops) {
       var subs = [], stored = [];
@@ -584,9 +668,10 @@
         items: {
           type: "object",
           properties: {
-            imageIndex: { type: "integer", description: "Index (à partir de 0) de la photo source où se trouve ce schéma." },
-            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo, sur une échelle 0-1000." },
-            caption: { type: "string", description: "Légende courte du schéma." },
+            imageIndex: { type: "integer", description: "Index (à partir de 0) du fichier source (photo ou PDF) où se trouve ce schéma." },
+            pageIndex: { type: "integer", description: "Si ce fichier est un PDF : numéro de la page (à partir de 1) où se trouve ce schéma. Pour une photo : 1." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo (ou dans cette page du PDF), sur une échelle 0-1000, qui contient TOUT le schéma avec ses propres annotations (lettres, valeurs, axes, graduations, légende) mais pas le texte de l'énoncé autour." },
+            caption: { type: "string", description: "Légende courte et DISTINCTIVE : à quel exercice/partie il appartient (ex. \"Exercice 3 — triangle ABC rectangle en B\") et ce qu'il montre, pour ne jamais le confondre avec un autre schéma de la même page." },
             placeholder: { type: "string", description: "Jeton unique au format [[figure:N]] (N = index de cette figure) à insérer tel quel dans \"transcription\" et/ou \"explanation\" à l'endroit exact où ce schéma doit apparaître." }
           },
           required: ["imageIndex", "box", "caption", "placeholder"]
@@ -624,7 +709,7 @@
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota. Qualité exigée pour chaque flashcard : \"q\" doit être une question PRÉCISE et autonome (compréhensible sans relire le cours, jamais une question vague type \"à quoi ça sert ?\" sans préciser de quoi on parle) ; \"a\" doit être une réponse COMPLÈTE et formulée en vraie phrase (jamais un mot ou un fragment télégraphique isolé, sauf si la réponse est authentiquement un seul mot/une seule valeur comme une date ou un nombre) — une flashcard doit se suffire à elle-même pour réviser sans le cours sous les yeux.\n" +
       "5. Génère des questions de révision qui couvrent DE FAÇON EXHAUSTIVE tout ce qu'il y a à savoir par cœur dans ce cours — tu ne choisis pas un sous-ensemble et tu n'en oublies aucune. Repère chaque définition, chaque date, chaque notion, chaque formule ou notation à connaître par cœur, et chaque ligne/case d'un tableau à mémoriser, puis crée une question pour CHACUN d'entre eux, un par un. S'il y a 40 définitions dans le cours, génère 40 questions de définition (une par définition) ; s'il y a 3 formules à connaître par cœur, génère 3 questions de formule ; si un tableau contient 15 cases à mémoriser, génère les 15 questions correspondantes. Il n'y a AUCUNE limite haute au nombre de questions : le nombre exact dépend uniquement de ce qu'il y a à mémoriser dans le cours, même si ça fait beaucoup plus que d'habitude — ce n'est pas à toi de trier ou de raccourcir la liste. La seule chose à éviter est la vraie redondance (ne pose pas deux fois la même question sur le même élément) ou les questions hors-sujet ; en dehors de ça, couvre tout, sans exception. Varie les catégories dans le champ \"category\" : \"definition\" (qu'est-ce que...), \"formule\" (formule ou notation à connaître par cœur) et \"application\" (mini-exercice rapide d'application directe). RÈGLE STRICTE sur le type : toute question de catégorie \"definition\" ou \"formule\" — donc tout ce qui se récite mot pour mot — DOIT être de type \"ouverte\" (l'élève réécrit lui-même la définition/formule ; JAMAIS de type \"qcm\" pour ces deux catégories, reconnaître une bonne réponse parmi 4 ne prouve pas qu'on la sait par cœur). Seule la catégorie \"application\" peut être en \"qcm\", et encore minoritairement : au global sur l'ensemble des questions, le type \"ouverte\" doit rester largement majoritaire (au moins deux tiers), le \"qcm\" n'est qu'un complément. Qualité exigée, sans exception : l'énoncé (\"prompt\") doit être précis et sans ambiguïté (une seule bonne réponse possible, jamais une formulation qui prête à interprétation) ; pour un \"qcm\", les 3 mauvaises réponses doivent être réellement plausibles (des erreurs ou confusions fréquentes sur cette notion précise), jamais des réponses absurdes ou évidemment fausses qui rendent le choix trivial sans connaître le cours ; \"explanation\" doit vraiment expliquer POURQUOI la bonne réponse est correcte (et implicitement pourquoi les autres ne le sont pas pour un qcm), pas se contenter de la répéter. Une question mal formulée, ambiguë ou avec des distracteurs ridicules est un ÉCHEC même si la bonne réponse elle-même est juste.\n" +
       "6. Génère un nombre d'exercices plus complets ADAPTÉ à la richesse du cours (au moins 4, et bien plus pour un cours dense qui s'y prête — pas de plafond artificiel), volontairement PLUS DIFFICILES que les questions ci-dessus : plusieurs étapes de raisonnement ou de calcul, une vraie difficulté à surmonter, quitte à être longs si besoin (un exercice qui prend 15-20 minutes de réflexion n'est pas un problème, l'objectif est que l'élève ait vraiment cherché et progressé, pas reconnu une réponse en 30 secondes). Chacun avec un énoncé clair dans \"prompt\" et une solution rédigée complète et détaillée (avec le résultat final) dans \"solution\".\n" +
-      (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. Signal à prendre TRÈS au sérieux : dès que le texte source dit \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma, c'est qu'un visuel est physiquement présent à cet endroit — cherche-le activement et capture-le, ne le laisse jamais de côté. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
+      (imageCount > 0 ? "7. Si une des photos sources contient un schéma, un graphique, une carte, un diagramme ou un dessin VISUEL réellement NÉCESSAIRE pour comprendre le cours (pas une simple photo décorative), repère-le et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index du fichier, à partir de 0), \"pageIndex\" (pour un PDF : numéro de la page où est le schéma, à partir de 1 ; pour une photo : 1), \"box\" (la zone rectangulaire exacte de ce schéma dans la photo, au format [ymin, xmin, ymax, xmax] sur une échelle de 0 à 1000, en excluant le texte autour), \"caption\" (légende courte et DISTINCTIVE : numéro de l'exercice ou de la partie + ce que montre le schéma, ex. \"Exercice 2 — circuit avec deux lampes en série\"), et \"placeholder\" (un jeton unique \"[[figure:N]]\" où N est l'index de cette figure dans le tableau \"figures\"). Insère ensuite ce jeton \"[[figure:N]]\" tel quel, seul sur sa ligne, exactement à l'endroit de \"transcription\" et/ou \"explanation\" où ce schéma doit apparaître — ne le décris jamais en mots à la place de l'insérer réellement. Signal à prendre TRÈS au sérieux : dès que le texte source dit \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma, c'est qu'un visuel est physiquement présent à cet endroit — cherche-le activement et capture-le, ne le laisse jamais de côté. Si le document contient PLUSIEURS exercices ou schémas sur une même page, crée une entrée séparée par schéma (jamais deux schémas dans une même zone, aucun oublié), avec une zone qui ne déborde pas sur le voisin, et place chaque jeton à côté du BON exercice/passage. INTERDIT : ne crée JAMAIS de figure pour du texte, même s'il apparaît visuellement dans un encadré, une bulle de citation, un fond coloré ou une police différente — une citation, un extrait de texte, une définition encadrée ou une légende écrite doivent TOUJOURS être retranscrits comme du texte normal (corrigé) dans \"transcription\"/\"explanation\", jamais capturés comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte (dessin, photo, graphique, carte, schéma). S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" : "\n") +
       "8. Pour CHAQUE question de révision et CHAQUE exercice (champ \"figureSvg\" de chacun) : dès qu'un support visuel est NÉCESSAIRE pour lire une DONNÉE externe du problème — même si l'énoncé ne le dit pas explicitement en mots (ex. donner des longueurs d'onde et demander une couleur suppose le spectre visible sous les yeux, même sans le mot \"spectre\" dans l'énoncé) —, tu DOIS dessiner toi-même ce support en SVG dans \"figureSvg\". ATTENTION, ne confonds jamais ça avec fournir la réponse : si la question teste une connaissance à savoir par cœur d'après le cours (une date/un événement d'histoire-géo, une formule de maths/physique à connaître, une définition, un résultat, un nom), \"figureSvg\" reste VIDE, un point c'est tout — par exemple jamais de frise chronologique pour une question de date, jamais la formule elle-même dessinée en image pour une question qui demande de connaître ou d'appliquer une formule du cours. " + FIGURE_SVG_FIELD_DESC + " Pour toutes les autres questions/exercices (la grande majorité, purement textuels ou calculatoires, ou testant une connaissance à savoir par cœur), laisse \"figureSvg\" vide.\n\n" +
       "Important — les flashcards, questions de révision et exercices doivent porter sur les notions, règles, définitions et méthodes du cours lui-même, jamais sur les exemples illustratifs qui les accompagnent. Interdit : des questions du type « quel exemple a été donné dans le cours pour... », « que valait X dans l'exemple », ou toute question qui ne teste que la mémorisation d'un détail d'exemple plutôt que la compréhension de la notion. Si le cours illustre une règle avec un exemple, interroge sur la règle elle-même (au besoin avec un cas ou des valeurs différents de ceux de l'exemple) — retenir un exemple par cœur n'apprend rien.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique (dans n'importe quel champ), utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée — jamais de simple texte brut pour une formule. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
@@ -2642,9 +2727,10 @@
         items: {
           type: "object",
           properties: {
-            imageIndex: { type: "integer", description: "Index (à partir de 0) de la photo source où se trouve ce schéma." },
-            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo, sur une échelle 0-1000." },
-            caption: { type: "string", description: "Légende courte du schéma." },
+            imageIndex: { type: "integer", description: "Index (à partir de 0) du fichier source (photo ou PDF) où se trouve ce schéma." },
+            pageIndex: { type: "integer", description: "Si ce fichier est un PDF : numéro de la page (à partir de 1) où se trouve ce schéma. Pour une photo : 1." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] du schéma dans cette photo (ou dans cette page du PDF), sur une échelle 0-1000, qui contient TOUT le schéma avec ses propres annotations (lettres, valeurs, axes, graduations, légende) mais pas le texte de l'énoncé autour." },
+            caption: { type: "string", description: "Légende courte et DISTINCTIVE : à quel exercice/partie il appartient (ex. \"Exercice 3 — triangle ABC rectangle en B\") et ce qu'il montre, pour ne jamais le confondre avec un autre schéma de la même page." },
             placeholder: { type: "string", description: "Jeton unique au format [[figure:N]] (N = index de cette figure) à insérer tel quel dans le \"statement\" de l'exercice concerné, à l'endroit exact où ce schéma doit apparaître." }
           },
           required: ["imageIndex", "box", "caption", "placeholder"]
@@ -2664,7 +2750,7 @@
       "2. Pour chaque exercice, retranscris fidèlement son énoncé complet dans \"statement\", en gardant toutes ses sous-questions (a, b, c... ou 1, 2, 3...) ensemble dans ce même \"statement\", chacune sur sa propre ligne (une ligne \"- \" par sous-question si elles sont nombreuses, sinon une ligne par ligne du document source). N'ajoute JAMAIS de titre du type \"## Exercice N\" ou \"### Énoncé\" en tête du \"statement\" : l'application affiche déjà le numéro de l'exercice ailleurs, ce serait redondant. Utilise ** pour le gras et $...$/$$...$$ pour les formules, mais pas de ## ni ### ici. Corrige les fautes évidentes mais garde le sens exact.\n" +
       "3. Devine la matière probable de l'ensemble des exercices (un seul \"subjectGuess\" pour tout le document).\n" +
       "4. Pour chaque exercice, rédige toi-même une solution de référence complète, détaillée et rigoureuse (avec le résultat final) dans \"solution\" — en traitant TOUTES les sous-questions de cet exercice (a, b, c... ou 1, 2, 3...) dans cette même solution. C'est cette solution qui servira ensuite à corriger la réponse de l'élève sur CET exercice précis (l'élève répond en une seule fois à toutes ses sous-questions).\n" +
-      "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou dessin VISUEL réellement NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index de la photo, à partir de 0), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte) et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. Signal à prendre TRÈS au sérieux : dès qu'un énoncé contient les mots \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma/d'une figure, c'est qu'un visuel est physiquement présent dans la photo à cet endroit — cherche-le activement et capture-le, ne le laisse JAMAIS de côté même si le document contient beaucoup d'exercices et que tu dois rester attentif jusqu'au dernier. INTERDIT : ne crée JAMAIS de figure pour du texte, même encadré ou stylisé (citation, définition, énoncé) — ce texte doit TOUJOURS être retranscrit normalement dans \"statement\", jamais capturé comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
+      "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou dessin VISUEL réellement NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index du fichier, à partir de 0), \"pageIndex\" (pour un PDF : numéro de la page où est le schéma, à partir de 1 ; pour une photo : 1), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte et DISTINCTIVE : numéro de l'exercice ou de la partie + ce que montre le schéma, ex. \"Exercice 2 — circuit avec deux lampes en série\") et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. Signal à prendre TRÈS au sérieux : dès qu'un énoncé contient les mots \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma/d'une figure, c'est qu'un visuel est physiquement présent dans la photo à cet endroit — cherche-le activement et capture-le, ne le laisse JAMAIS de côté même si le document contient beaucoup d'exercices et que tu dois rester attentif jusqu'au dernier. Une même page contient souvent PLUSIEURS exercices avec chacun son schéma : crée une entrée séparée par schéma (jamais deux schémas dans une même zone, jamais un schéma oublié parce qu'un autre a déjà été pris sur la page), avec une zone qui ne déborde pas sur l'exercice voisin, et place chaque jeton dans l'énoncé du BON exercice. INTERDIT : ne crée JAMAIS de figure pour du texte, même encadré ou stylisé (citation, définition, énoncé) — ce texte doit TOUJOURS être retranscrit normalement dans \"statement\", jamais capturé comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
