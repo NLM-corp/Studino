@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3607,8 +3607,33 @@
     { id: "torvosaure", name: "Torvosaure", zone: "volcanique", diet: "carnivore", weightKg: 4000, rarity: "legendaire" },
     { id: "saurophaganax", name: "Saurophaganax", zone: "volcanique", diet: "carnivore", weightKg: 3000, rarity: "legendaire" }
   ];
+  // 10 espèces par biome, les plus connues (4 communes, 3 rares, 2 épiques, 1 légendaire) : avec 30
+  // par biome, on tombait sans arrêt sur les mêmes petits dinos à plumes inconnus. Les autres restent
+  // définies (retired) uniquement pour que les dinos déjà possédés continuent de fonctionner : elles
+  // n'apparaissent plus dans les œufs, la boutique ni l'encyclopédie.
+  var DP_ACTIVE_SPECIES = {
+    foret: { commun: ["compsognathus", "iguanodon", "archaeopteryx", "coelophysis"], rare: ["velociraptor", "stegosaure", "deinonychus"], epique: ["diplodocus", "apatosaure"], legendaire: ["brachiosaure"] },
+    plaine: { commun: ["gallimimus", "pachycephalosaure", "styracosaure", "maiasaura"], rare: ["triceratops", "ankylosaure", "parasaurolophus"], epique: ["allosaure", "albertosaure"], legendaire: ["tyrannosaure"] },
+    desert: { commun: ["protoceratops", "oviraptor", "psittacosaure", "mononykus"], rare: ["carnotaurus", "pinacosaure", "pentaceratops"], epique: ["nigersaurus", "alioramus"], legendaire: ["spinosaure"] },
+    arctique: { commun: ["troodon", "pachyrhinosaure", "leaellynasaura", "minmi"], rare: ["edmontosaure", "muttaburrasaure", "nanuqsaurus"], epique: ["cryolophosaure", "antarctopelta"], legendaire: ["yutyrannus"] },
+    marine: { commun: ["ichtyosaure", "plesiosaure", "nothosaure", "pliosaure"], rare: ["elasmosaure", "kronosaure", "shonisaure"], epique: ["liopleurodon", "tylosaure"], legendaire: ["mosasaure"] },
+    volcanique: { commun: ["dilophosaure", "ceratosaure", "baryonyx", "suchomimus"], rare: ["majungasaure", "concavenator", "sinraptor"], epique: ["acrocanthosaure", "torvosaure"], legendaire: ["giganotosaure"] }
+  };
+  (function () {
+    var active = {};
+    Object.keys(DP_ACTIVE_SPECIES).forEach(function (zone) {
+      Object.keys(DP_ACTIVE_SPECIES[zone]).forEach(function (rarity) {
+        DP_ACTIVE_SPECIES[zone][rarity].forEach(function (id) { active[id] = rarity; });
+      });
+    });
+    DP_SPECIES.forEach(function (s) {
+      if (active[s.id]) s.rarity = active[s.id];
+      else s.retired = true;
+    });
+  })();
+  var DP_ACTIVE_SPECIES_LIST = DP_SPECIES.filter(function (s) { return !s.retired; });
   function dpSpecies(id) { return DP_SPECIES.find(function (s) { return s.id === id; }); }
-  function dpSpeciesByZone(zoneId) { return DP_SPECIES.filter(function (s) { return s.zone === zoneId; }); }
+  function dpSpeciesByZone(zoneId) { return DP_ACTIVE_SPECIES_LIST.filter(function (s) { return s.zone === zoneId; }); }
 
   function dpHashColor(str) {
     var h = 0;
@@ -4188,8 +4213,8 @@
   function renderDinoParkEncyclopedia() {
     var dp = dpData();
     var backBtn = '<button class="btn btn-ghost" style="width:auto;margin-bottom:20px" onclick="App.dpGoHub()">← Retour au spawn</button>';
-    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Encyclopédie</h1></div><p class="page-sub">' + Object.keys(dp.discovered).length + ' / ' + DP_SPECIES.length + ' espèces découvertes.</p></div></div>';
-    var grid = '<div class="dp-ency-grid">' + DP_SPECIES.map(function (sp, i) {
+    var head = '<div class="page-head"><div><div class="page-title-row">' + sprite("footprint", 4) + '<h1 class="page-title">Encyclopédie</h1></div><p class="page-sub">' + DP_ACTIVE_SPECIES_LIST.filter(function (s) { return dp.discovered[s.id]; }).length + ' / ' + DP_ACTIVE_SPECIES_LIST.length + ' espèces découvertes.</p></div></div>';
+    var grid = '<div class="dp-ency-grid">' + DP_ACTIVE_SPECIES_LIST.map(function (sp, i) {
       var found = !!dp.discovered[sp.id];
       var num = String(i + 1).padStart(3, "0");
       return '<div class="dp-ency-cell ' + (found ? "" : "locked") + '">' +
