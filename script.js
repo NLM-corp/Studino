@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -6045,13 +6045,20 @@
     }
     var pending = !!courseChatPending[course.id];
     var dis = pending ? " disabled" : "";
+    // Même éditeur que dans « Mes exos » (LaTeX, tableaux, tableau périodique, mise en forme). Ce qui est
+    // déjà tapé est relu dans la page juste avant de la redessiner, pour ne jamais le perdre.
+    var liveBox = document.getElementById("course-chat");
+    var liveEditor = document.getElementById("course-chat-input");
+    if (liveEditor && liveBox && liveBox.getAttribute("data-course") === course.id) courseChatDraft[course.id] = liveEditor.innerHTML;
+    var chatEditor = richEditorHtml("course-chat-input", "Pose ta question…", sanitizeRichHtml(courseChatDraft[course.id] || ""))
+      .replace('contenteditable="true"', 'contenteditable="' + (pending ? "false" : "true") + '" onkeydown="if(event.key===\'Enter\'&&(event.ctrlKey||event.metaKey)){event.preventDefault();App.sendCourseChat(\'' + course.id + '\')}"');
     var listHtml = msgs.length ? msgs.map(function (m) {
       return m.role === "user"
-        ? '<div class="chat-msg chat-msg-user">' + esc(m.text).replace(/\n/g, "<br>") + '</div>'
+        ? '<div class="chat-msg chat-msg-user">' + (m.html ? '<div class="rte-display">' + sanitizeRichHtml(m.html) + '</div>' : esc(m.text).replace(/\n/g, "<br>")) + '</div>'
         : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose">' + mdToHtml(m.text, course.figures) + '</div></div>';
     }).join("") : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body">Ah, te voilà ! Pose-moi n\'importe quelle question sur « ' + esc(course.title) + ' », je t\'explique tout ça.</div></div>';
     if (pending) listHtml += '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body chat-typing"><span class="dotpulse"></span> Le conteur réfléchit…</div></div>';
-    return '<div class="course-chat" id="course-chat">' +
+    return '<div class="course-chat" id="course-chat" data-course="' + course.id + '">' +
       '<div class="course-chat-head"><img src="' + avatar + '" alt=""><div style="flex:1;font-weight:700">Le vieux conteur</div>' +
       (msgs.length ? '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.resetCourseChat(\'' + course.id + '\')">🗑 Nouvelle conversation</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.closeCourseChat(\'' + course.id + '\')" title="Réduire">✕</button></div>' +
@@ -6059,10 +6066,8 @@
       '<div class="course-chat-quick">' + COURSE_CHAT_QUICK.map(function (q) {
         return '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.sendCourseChat(\'' + course.id + '\',\'' + q[0] + '\')">' + q[1] + '</button>';
       }).join("") + '</div>' +
-      '<form class="course-chat-form" onsubmit="event.preventDefault();App.sendCourseChat(\'' + course.id + '\')">' +
-      '<textarea id="course-chat-input" rows="2" placeholder="Pose ta question…"' + dis +
-      ' oninput="App.setCourseChatDraft(\'' + course.id + '\', this.value)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();App.sendCourseChat(\'' + course.id + '\')}">' + esc(courseChatDraft[course.id] || "") + '</textarea>' +
-      '<button type="submit" class="btn btn-primary" style="width:auto"' + dis + '>Envoyer</button></form>' +
+      '<div class="course-chat-form">' + chatEditor +
+      '<div class="course-chat-send"><span class="course-chat-hint">Ctrl + Entrée pour envoyer</span><button type="button" class="btn btn-primary" style="width:auto"' + dis + ' onclick="App.sendCourseChat(\'' + course.id + '\')">Envoyer</button></div></div>' +
       '</div>';
   }
   function renderCoursePage(courseId, tab) {
@@ -8326,13 +8331,21 @@
       var loc = locateCourse(courseId);
       if (!loc || courseChatPending[courseId]) return;
       var quick = quickId ? COURSE_CHAT_QUICK.find(function (q) { return q[0] === quickId; }) : null;
-      var text = quick ? quick[2] : String(courseChatDraft[courseId] || "").trim();
+      // Texte envoyé à l'IA : formules en $...$, tableaux en lignes/colonnes (comme pour « Mes exos ») ;
+      // le HTML sert juste à réafficher le message tel que l'élève l'a écrit.
+      var text = quick ? quick[2] : rteText("course-chat-input");
       if (!text) return;
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var course = loc.course;
       course.chat = course.chat || [];
-      course.chat.push({ role: "user", text: text, at: Date.now() });
-      if (!quick) courseChatDraft[courseId] = "";
+      var msg = { role: "user", text: text, at: Date.now() };
+      if (!quick) {
+        msg.html = rteValue("course-chat-input");
+        courseChatDraft[courseId] = "";
+        var ed = document.getElementById("course-chat-input");
+        if (ed) ed.innerHTML = "";
+      }
+      course.chat.push(msg);
       courseChatPending[courseId] = true;
       courseChatScrollIntoView = true;
       saveDB(); render();
