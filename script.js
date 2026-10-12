@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -5994,6 +5994,77 @@
     }).join("");
     return toggle + '<div class="course-figures-grid">' + grid + '</div>';
   }
+  /* ---------------- Chat avec le vieux conteur (dans chaque cours) ----------------
+     Rien n'est affiché tant que l'élève n'a pas cliqué sur « Parler au vieux conteur ». La conversation
+     est gardée dans le cours (course.chat) ; chaque question part avec le contenu du cours pour que les
+     réponses s'appuient dessus. Hors cours : il répond quand même, mais le signale clairement. */
+  var courseChatOpen = {};    // courseId → conversation dépliée
+  var courseChatPending = {}; // courseId → réponse en cours
+  var courseChatDraft = {};   // courseId → texte en cours de frappe (survit aux re-rendus)
+  var courseChatScrollIntoView = false;
+  var COURSE_CHAT_SCHEMA = {
+    type: "object",
+    properties: { reply: { type: "string", description: "Ta réponse à l'élève, en Markdown (LaTeX entre $...$ pour les formules)." } },
+    required: ["reply"]
+  };
+  var COURSE_CHAT_QUICK = [
+    ["simple", "🧸 Explique plus simplement", "Explique-moi ça plus simplement, comme si je n'avais rien compris."],
+    ["example", "💡 Donne-moi un exemple", "Donne-moi un exemple concret pour bien comprendre."],
+    ["quiz", "❓ Interroge-moi", "Interroge-moi sur le cours : pose-moi UNE question, attends ma réponse, puis corrige-moi avant de passer à la suivante."]
+  ];
+  function buildCourseChatPrompt(course, loc, history) {
+    var gender = getUserGender();
+    var genderNote = gender === "m" ? "L'élève est un garçon (formulations masculines si tu l'interpelles : \"mon grand\", \"jeune homme\")."
+      : gender === "f" ? "L'élève est une fille (formulations féminines si tu l'interpelles : \"ma grande\", \"jeune demoiselle\")."
+      : "Tu ne connais pas le genre de l'élève : interpellations neutres (\"jeune ami\", \"mon enfant\").";
+    var content = "## Retranscription du cours\n" + stripFigureMarkdown(course.transcription || "") +
+      (course.explanation ? "\n\n## Explication du cours\n" + stripFigureMarkdown(course.explanation) : "");
+    var convo = history.map(function (m) { return (m.role === "user" ? "ÉLÈVE : " : "CONTEUR : ") + m.text; }).join("\n\n");
+    return "Tu es le vieux conteur de Studino : un ancien professeur devenu archéologue sur le tard, chaleureux et bienveillant comme un grand-père (mais pas le grand-père de l'élève), plein d'anecdotes de terrain. Un élève te pose des questions sur SON cours, par écrit, pour mieux le comprendre.\n\n" +
+      "Cours : « " + course.title + " » (matière : " + loc.subject.name + ", chapitre : " + loc.chapter.name + ").\n\n" +
+      "Règles :\n" +
+      "- Appuie-toi D'ABORD sur le cours ci-dessous : tes explications doivent être cohérentes avec lui et ne jamais le contredire.\n" +
+      "- Si la question dépasse le cours (une notion, un fait ou un détail qui n'y figure pas), réponds quand même, correctement et honnêtement, MAIS signale-le clairement, par exemple « Attention, ça ce n'est pas dans ton cours : ... », pour que l'élève sache ce qui risque de tomber au contrôle et ce qui est en plus. Ne présente jamais une information hors cours comme si elle venait du cours.\n" +
+      "- Tu es un prof avant tout : explique le POURQUOI, avec des images et des exemples concrets, étape par étape pour une méthode ou un calcul. Si l'élève semble perdu, reformule plus simplement. Si sa question contient une erreur, corrige-la gentiment.\n" +
+      "- Réponds de façon vivante mais CONCISE : ce qui est utile pour répondre à la question, pas un nouveau cours entier (sauf s'il le demande). Paragraphes courts, listes si utile.\n" +
+      "- S'il te demande de l'interroger : pose UNE question à la fois sur le cours, attends sa réponse, puis corrige-la (ce qui est juste, ce qui manque) avant la question suivante.\n" +
+      "- " + genderNote + "\n" +
+      "- LANGUE : si le cours est entièrement dans une langue étrangère (anglais, espagnol, japonais...), réponds dans cette langue avec des phrases simples (l'élève doit maîtriser le cours dans cette langue), sauf s'il te demande explicitement une explication en français. Si le cours mélange français et langue étrangère, réponds en français en citant les mots et expressions dans la langue étrangère. Sinon, en français.\n" +
+      "- Formules en LaTeX entre $...$ (ou $$...$$ isolée), jamais de commande de couleur. Markdown simple autorisé (gras, listes, tableaux).\n\n" +
+      "Voici le cours :\n\n" + content + "\n\n" +
+      "Conversation jusqu'ici (le dernier message est celui auquel tu dois répondre maintenant) :\n\n" + convo + "\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni : \"reply\" contient ta réponse au dernier message de l'élève.";
+  }
+  function courseChatHtml(course) {
+    if (course.status !== "ready") return "";
+    var msgs = course.chat || [];
+    var avatar = PODCAST_DIR + PODCAST_ATTEND_IMGS[0];
+    if (!courseChatOpen[course.id]) {
+      return '<div class="course-chat-launch"><img src="' + avatar + '" alt=""><div style="flex:1;min-width:180px"><div class="course-chat-launch-title">Une question sur ce cours ?</div><div class="course-chat-launch-sub">Le vieux conteur du podcast te l\'explique, à partir de ton cours.</div></div>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.openCourseChat(\'' + course.id + '\')">💬 ' + (msgs.length ? "Reprendre la conversation" : "Parler au vieux conteur") + '</button></div>';
+    }
+    var pending = !!courseChatPending[course.id];
+    var dis = pending ? " disabled" : "";
+    var listHtml = msgs.length ? msgs.map(function (m) {
+      return m.role === "user"
+        ? '<div class="chat-msg chat-msg-user">' + esc(m.text).replace(/\n/g, "<br>") + '</div>'
+        : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose">' + mdToHtml(m.text, course.figures) + '</div></div>';
+    }).join("") : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body">Ah, te voilà ! Pose-moi n\'importe quelle question sur « ' + esc(course.title) + ' », je t\'explique tout ça.</div></div>';
+    if (pending) listHtml += '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body chat-typing"><span class="dotpulse"></span> Le conteur réfléchit…</div></div>';
+    return '<div class="course-chat" id="course-chat">' +
+      '<div class="course-chat-head"><img src="' + avatar + '" alt=""><div style="flex:1;font-weight:700">Le vieux conteur</div>' +
+      (msgs.length ? '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.resetCourseChat(\'' + course.id + '\')">🗑 Nouvelle conversation</button>' : "") +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.closeCourseChat(\'' + course.id + '\')" title="Réduire">✕</button></div>' +
+      '<div class="course-chat-list" id="course-chat-list">' + listHtml + '</div>' +
+      '<div class="course-chat-quick">' + COURSE_CHAT_QUICK.map(function (q) {
+        return '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.sendCourseChat(\'' + course.id + '\',\'' + q[0] + '\')">' + q[1] + '</button>';
+      }).join("") + '</div>' +
+      '<form class="course-chat-form" onsubmit="event.preventDefault();App.sendCourseChat(\'' + course.id + '\')">' +
+      '<textarea id="course-chat-input" rows="2" placeholder="Pose ta question…"' + dis +
+      ' oninput="App.setCourseChatDraft(\'' + course.id + '\', this.value)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();App.sendCourseChat(\'' + course.id + '\')}">' + esc(courseChatDraft[course.id] || "") + '</textarea>' +
+      '<button type="submit" class="btn btn-primary" style="width:auto"' + dis + '>Envoyer</button></form>' +
+      '</div>';
+  }
   function renderCoursePage(courseId, tab) {
     var loc = locateCourse(courseId);
     if (!loc) { navigate("#/"); return; }
@@ -6025,9 +6096,21 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryGeneration(\'' + course.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      body = renderTabBody(course, tab, loc) + figuresPanelHtml(course.figures, courseFiguresOpen, course.id, "toggleCourseFigures", "deleteCourseFigure");
+      body = renderTabBody(course, tab, loc) + figuresPanelHtml(course.figures, courseFiguresOpen, course.id, "toggleCourseFigures", "deleteCourseFigure") +
+        courseChatHtml(course);
     }
     renderShell(["course", courseId, null, tab], head + tabsHtml + body, { narrow: true });
+    if (courseChatOpen[course.id]) {
+      var chatList = document.getElementById("course-chat-list");
+      if (chatList) chatList.scrollTop = chatList.scrollHeight;
+      if (courseChatScrollIntoView) {
+        courseChatScrollIntoView = false;
+        var chatBox = document.getElementById("course-chat");
+        if (chatBox) chatBox.scrollIntoView({ block: "end", behavior: "smooth" });
+        var chatInput = document.getElementById("course-chat-input");
+        if (chatInput && !courseChatPending[course.id]) chatInput.focus();
+      }
+    }
   }
 
   function mdIsTableSep(line) {
@@ -8227,6 +8310,46 @@
         // exercices à partir de la retranscription déjà connue, plutôt que d'échouer ou de repartir de rien.
         runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, [], stripFigureMarkdown(loc.course.transcription));
       }
+    },
+    openCourseChat: function (courseId) { courseChatOpen[courseId] = true; courseChatScrollIntoView = true; render(); },
+    closeCourseChat: function (courseId) { courseChatOpen[courseId] = false; render(); },
+    setCourseChatDraft: function (courseId, value) { courseChatDraft[courseId] = value; },
+    resetCourseChat: function (courseId) {
+      var loc = locateCourse(courseId);
+      if (!loc || courseChatPending[courseId]) return;
+      loc.course.chat = [];
+      saveDB();
+      courseChatScrollIntoView = true;
+      render();
+    },
+    sendCourseChat: function (courseId, quickId) {
+      var loc = locateCourse(courseId);
+      if (!loc || courseChatPending[courseId]) return;
+      var quick = quickId ? COURSE_CHAT_QUICK.find(function (q) { return q[0] === quickId; }) : null;
+      var text = quick ? quick[2] : String(courseChatDraft[courseId] || "").trim();
+      if (!text) return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      var course = loc.course;
+      course.chat = course.chat || [];
+      course.chat.push({ role: "user", text: text, at: Date.now() });
+      if (!quick) courseChatDraft[courseId] = "";
+      courseChatPending[courseId] = true;
+      courseChatScrollIntoView = true;
+      saveDB(); render();
+      // Les 20 derniers messages suffisent comme contexte (le cours, lui, part en entier à chaque fois).
+      var history = course.chat.slice(-20);
+      callGemini([{ text: buildCourseChatPrompt(course, loc, history) }], COURSE_CHAT_SCHEMA, 4096, 90000).then(function (data) {
+        var reply = String(data && data.reply || "").trim();
+        course.chat.push({ role: "model", text: reply || "Hmm… je n'ai pas su quoi répondre, repose-moi ta question autrement.", at: Date.now() });
+      }).catch(function (err) {
+        course.chat.push({ role: "model", text: "⚠️ Je n'ai pas pu te répondre (" + (err && err.message || "erreur inconnue") + "). Réessaie dans un instant.", at: Date.now(), error: true });
+      }).then(function () {
+        courseChatPending[courseId] = false;
+        courseChatScrollIntoView = true;
+        saveDB();
+        var parts = parseHash();
+        if (parts[0] === "course" && parts[1] === courseId) render();
+      });
     },
     openAddCourseDocsModal: function (courseId) {
       var loc = locateCourse(courseId);
