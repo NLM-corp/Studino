@@ -1104,6 +1104,6 @@
   .chat-msg-user .rte-display td { border-color: rgba(255,255,255,0.5); }
   @media (max-width: 780px) {
     .chat-msg { max-width: 100%; }
-    .course-chat { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; border: none; }
+    .course-chat, .course-chat.course-chat-big { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; border: none; }
     .course-chat-fab { right: 14px; bottom: 14px; font-size: 13px; }
   }
