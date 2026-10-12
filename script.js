@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -6070,11 +6070,72 @@
   var courseChatPending = {}; // courseId → réponse en cours
   var courseChatDraft = {};   // courseId → texte en cours de frappe (survit aux re-rendus)
   var courseChatScrollIntoView = false;
-  var COURSE_CHAT_SCHEMA = {
-    type: "object",
-    properties: { reply: { type: "string", description: "Ta réponse à l'élève, en Markdown (LaTeX entre $...$ pour les formules)." } },
-    required: ["reply"]
-  };
+  var courseChatStream = {};  // courseId → texte de la réponse en train de s'écrire
+  // Chat : modèle le plus rapide d'abord (pas besoin du plus puissant pour expliquer un cours), les
+  // autres en secours si celui-ci est à quota ou indisponible.
+  var COURSE_CHAT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash"];
+  // Réponse en streaming (SSE) : onText reçoit le texte déjà écrit à chaque morceau qui arrive.
+  async function streamCourseChatWithKey(apiKey, prompt, onText) {
+    var lastErr = null;
+    for (var i = 0; i < COURSE_CHAT_MODELS.length; i++) {
+      var model = COURSE_CHAT_MODELS[i];
+      var url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":streamGenerateContent?alt=sse&key=" + encodeURIComponent(apiKey);
+      var body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { max_output_tokens: 4096 } });
+      var res;
+      try {
+        res = await fetchWithTimeout(url, { method: "POST", headers: { "content-type": "application/json" }, body: body }, 45000);
+      } catch (netErr) {
+        lastErr = new Error(netErr && netErr.name === "AbortError" ? "le conteur n'a pas répondu à temps" : "connexion impossible");
+        lastErr.detail = String(netErr);
+        continue;
+      }
+      if (!res.ok) {
+        var detail = "";
+        try { detail = await res.text(); } catch (e) {}
+        lastErr = new Error("erreur " + res.status + " de Gemini");
+        lastErr.status = res.status; lastErr.detail = detail; lastErr.rateLimited = res.status === 429;
+        if (res.status === 401 || res.status === 403) throw lastErr; // clé refusée : inutile d'essayer les autres modèles
+        continue;
+      }
+      var full = "", buf = "";
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var handleLine = function (line) {
+        line = line.trim();
+        if (line.indexOf("data:") !== 0) return;
+        try {
+          var json = JSON.parse(line.slice(5));
+          var cand = json.candidates && json.candidates[0];
+          ((cand && cand.content && cand.content.parts) || []).forEach(function (p) {
+            if (p.text && !p.thought) { full += p.text; onText(full); }
+          });
+        } catch (e) {}
+      };
+      for (;;) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buf += decoder.decode(chunk.value, { stream: true });
+        var lines = buf.split("\n");
+        buf = lines.pop();
+        lines.forEach(handleLine);
+      }
+      handleLine(buf);
+      if (full.trim()) return full;
+      lastErr = new Error("réponse vide de Gemini");
+    }
+    throw lastErr || new Error("aucun modèle disponible");
+  }
+  async function streamCourseChatReply(prompt, onText) {
+    var primaryKey = getApiKey();
+    if (!primaryKey) throw new Error("ajoute ta clé API Gemini dans les paramètres");
+    try {
+      return await streamCourseChatWithKey(primaryKey, prompt, onText);
+    } catch (err1) {
+      var backupKey = getBackupApiKey();
+      if (!err1.rateLimited || !backupKey) throw err1;
+      return await streamCourseChatWithKey(backupKey, prompt, onText);
+    }
+  }
   var COURSE_CHAT_QUICK = [
     ["simple", "🧸 Explique plus simplement", "Explique-moi ça plus simplement, comme si je n'avais rien compris."],
     ["example", "💡 Donne-moi un exemple", "Donne-moi un exemple concret pour bien comprendre."],
@@ -6101,7 +6162,7 @@
       "- Formules en LaTeX entre $...$ (ou $$...$$ isolée), jamais de commande de couleur. Markdown simple autorisé (gras, listes, tableaux).\n\n" +
       "Voici le cours :\n\n" + content + "\n\n" +
       "Conversation jusqu'ici (le dernier message est celui auquel tu dois répondre maintenant) :\n\n" + convo + "\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni : \"reply\" contient ta réponse au dernier message de l'élève.";
+      "Réponds directement par ton message au dernier message de l'élève (Markdown simple), sans préambule ni balise.";
   }
   function courseChatHtml(course) {
     if (course.status !== "ready") return "";
@@ -6125,7 +6186,7 @@
         ? '<div class="chat-msg chat-msg-user">' + (m.html ? '<div class="rte-display">' + sanitizeRichHtml(m.html) + '</div>' : esc(m.text).replace(/\n/g, "<br>")) + '</div>'
         : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose">' + mdToHtml(m.text, course.figures) + '</div></div>';
     }).join("") : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body">Ah, te voilà ! Pose-moi n\'importe quelle question sur « ' + esc(course.title) + ' », je t\'explique tout ça.</div></div>';
-    if (pending) listHtml += '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body chat-typing"><span class="dotpulse"></span> Le conteur réfléchit…</div></div>';
+    if (pending) listHtml += (courseChatStream[course.id] ? '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose" id="course-chat-stream">' + mdToHtml(courseChatStream[course.id], course.figures) + '</div></div>' : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body chat-typing" id="course-chat-stream"><span class="dotpulse"></span> Le conteur réfléchit…</div></div>');
     return '<div class="course-chat" id="course-chat" data-course="' + course.id + '">' +
       '<div class="course-chat-head"><img src="' + avatar + '" alt=""><div style="flex:1;font-weight:700">Le vieux conteur</div>' +
       (msgs.length ? '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.resetCourseChat(\'' + course.id + '\')">🗑 Nouvelle conversation</button>' : "") +
@@ -8417,12 +8478,36 @@
       saveDB(); render();
       // Les 20 derniers messages suffisent comme contexte (le cours, lui, part en entier à chaque fois).
       var history = course.chat.slice(-20);
-      callGemini([{ text: buildCourseChatPrompt(course, loc, history) }], COURSE_CHAT_SCHEMA, 4096, 90000).then(function (data) {
-        var reply = String(data && data.reply || "").trim();
+      courseChatStream[courseId] = "";
+      // La réponse s'affiche au fur et à mesure qu'elle s'écrit (mise à jour directe de la bulle, sans
+      // redessiner toute la page), au plus une fois par image pour rester fluide.
+      var frameQueued = false;
+      var onText = function (soFar) {
+        courseChatStream[courseId] = soFar;
+        if (frameQueued) return;
+        frameQueued = true;
+        requestAnimationFrame(function () {
+          frameQueued = false;
+          var bubble = document.getElementById("course-chat-stream");
+          var list = document.getElementById("course-chat-list");
+          if (!bubble || !list) return;
+          var nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+          bubble.className = "chat-msg-body prose";
+          bubble.innerHTML = mdToHtml(courseChatStream[courseId] || "", course.figures);
+          if (nearBottom) list.scrollTop = list.scrollHeight;
+        });
+      };
+      streamCourseChatReply(buildCourseChatPrompt(course, loc, history), onText).then(function (reply) {
+        reply = String(reply || "").trim();
         course.chat.push({ role: "model", text: reply || "Hmm… je n'ai pas su quoi répondre, repose-moi ta question autrement.", at: Date.now() });
       }).catch(function (err) {
-        course.chat.push({ role: "model", text: "⚠️ Je n'ai pas pu te répondre (" + (err && err.message || "erreur inconnue") + "). Réessaie dans un instant.", at: Date.now(), error: true });
+        // Coupure en plein milieu : on garde ce qui a déjà été écrit plutôt que de tout perdre.
+        var partial = String(courseChatStream[courseId] || "").trim();
+        course.chat.push(partial
+          ? { role: "model", text: partial + "\n\n*(réponse coupée, repose ta question si besoin)*", at: Date.now() }
+          : { role: "model", text: "⚠️ Je n'ai pas pu te répondre (" + (err && err.message || "erreur inconnue") + "). Réessaie dans un instant.", at: Date.now(), error: true });
       }).then(function () {
+        courseChatStream[courseId] = "";
         courseChatPending[courseId] = false;
         courseChatScrollIntoView = true;
         saveDB();
