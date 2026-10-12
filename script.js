@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -2058,7 +2058,7 @@
       "Voici le contenu du chapitre « " + chapterName + " » sur lequel doit porter l'épreuve (déjà étudié par l'élève) :\n\n" + stripFigureMarkdown(chapterContent).slice(0, 6000) + "\n\n" +
       "Génère UN sujet inédit, plausible pour un vrai contrôle sur ce chapitre, dans le style exact d'un sujet de « " + methodo.genre + " » — une vraie formulation d'examen, jamais une simple question de cours. L'élève devra y répondre avec " + mechanicLabel + ", en s'appuyant EXCLUSIVEMENT sur les connaissances réelles du chapitre fourni (dates, notions, auteurs, exemples déjà étudiés) : n'invente aucun fait, aucune date, aucun événement absent de ce chapitre.\n\n" +
       "Fournis aussi \"referencePlan\", un corrigé de référence complet et rigoureux (correspondant précisément à ce qui est demandé ci-dessus — ne corrige que la partie demandée si une seule partie est demandée) qui servira de grille de correction.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf si le document/cours source est rédigé dans une langue étrangère (cours de langue) : énoncés, sujets et solutions restent alors dans cette langue (entièrement s'il est entièrement dans cette langue ; s'il mélange français et langue étrangère, consignes en français et textes/expressions dans la langue étrangère). Ne traduis jamais un texte étudié.";
   }
   function generateMethodologySubject(methodo, chapterName, chapterContent, mechanic, customInstruction) {
     var parts = [{ text: buildMethodologySubjectPrompt(methodo, chapterName, chapterContent, mechanic, customInstruction) }];
@@ -2184,7 +2184,7 @@
       "Copie de l'élève (attendu : " + mechanicNote + ") :\n\n" + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie — note 0/20, c'est un devoir non rendu)") + "\n\n" +
       "Donne une note sur 20, un verdict direct, les points forts réels (liste vide si aucun), les points faibles précis, et une correction détaillée partie par partie.\n\n" +
       "Pour toute formule ou notation nécessitant du LaTeX, utilise $...$ ou $$...$$.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si l'exercice est dans une langue étrangère (cours de langue), évalue la réponse dans cette langue (sens, vocabulaire, grammaire attendus), et cite les corrections dans cette langue.";
   }
   function gradeMethodologyAnswer(methodo, item, studentAnswer) {
     var parts = [{ text: buildMethodologyGradePrompt(methodo, item, studentAnswer) }];
@@ -2779,7 +2779,7 @@
       "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées (score = scoreMax moins la somme des points retirés listés dans \"mistakes\"). N'arrondis jamais à la hausse par gentillesse : une réponse avec des erreurs de fond ne doit jamais approcher le score maximal.\n" +
       "- Le \"feedback\" doit être factuel et sans complaisance : dis explicitement ce qui est faux, incomplet ou hors sujet, sans formules vagues type \"pas tout à fait\" ou \"presque\" qui adoucissent le constat. Explique aussi ce qui est juste, le cas échéant, mais sans laisser croire que la réponse est meilleure qu'elle ne l'est.\n\n" +
       "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si l'exercice est dans une langue étrangère (cours de langue), évalue la réponse dans cette langue (sens, vocabulaire, grammaire attendus), et cite les corrections dans cette langue.";
   }
   async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
     var parts = [{ text: buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), studentAnswer) }];
@@ -2838,7 +2838,7 @@
       "5. Si un exercice s'appuie sur un schéma, graphique, figure géométrique ou dessin VISUEL réellement NÉCESSAIRE pour le résoudre (pas une simple décoration), repère-le dans les photos sources et ajoute une entrée dans \"figures\" avec : \"imageIndex\" (index du fichier, à partir de 0), \"pageIndex\" (pour un PDF : numéro de la page où est le schéma, à partir de 1 ; pour une photo : 1), \"box\" (zone rectangulaire exacte du schéma dans cette photo, format [ymin, xmin, ymax, xmax] sur une échelle 0-1000, en excluant le texte autour), \"caption\" (légende courte et DISTINCTIVE : numéro de l'exercice ou de la partie + ce que montre le schéma, ex. \"Exercice 2 — circuit avec deux lampes en série\") et \"placeholder\" (jeton unique \"[[figure:N]]\"). Insère ce jeton tel quel, seul sur sa ligne, exactement à l'endroit du \"statement\" de cet exercice où le schéma doit apparaître — ne le décris jamais en mots à la place. Signal à prendre TRÈS au sérieux : dès qu'un énoncé contient les mots \"ci-contre\", \"ci-dessous\", \"ci-joint\" ou \"ci-après\" à propos d'une représentation graphique/d'un schéma/d'une figure, c'est qu'un visuel est physiquement présent dans la photo à cet endroit — cherche-le activement et capture-le, ne le laisse JAMAIS de côté même si le document contient beaucoup d'exercices et que tu dois rester attentif jusqu'au dernier. Une même page contient souvent PLUSIEURS exercices avec chacun son schéma : crée une entrée séparée par schéma (jamais deux schémas dans une même zone, jamais un schéma oublié parce qu'un autre a déjà été pris sur la page), avec une zone qui ne déborde pas sur l'exercice voisin, et place chaque jeton dans l'énoncé du BON exercice. INTERDIT : ne crée JAMAIS de figure pour du texte, même encadré ou stylisé (citation, définition, énoncé) — ce texte doit TOUJOURS être retranscrit normalement dans \"statement\", jamais capturé comme une image. \"figures\" est réservé exclusivement à du contenu qui ne peut PAS être retranscrit en texte. S'il n'y a aucun schéma nécessaire, renvoie un tableau \"figures\" vide.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ en ligne ou $$...$$ pour une formule isolée. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) si tu veux mettre quelque chose en valeur.\n\n" +
       "Si un énoncé comporte un tableau de données, reproduis-le comme un vrai tableau Markdown (| Colonne 1 | Colonne 2 |, puis une ligne |---|---|, puis les lignes de données) plutôt qu'une liste à puces : le site sait afficher de vrais tableaux.\n\n" +
-      "Réponds uniquement en respectant le schéma JSON fourni, en français.";
+      "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf si le document/cours source est rédigé dans une langue étrangère (cours de langue) : énoncés, sujets et solutions restent alors dans cette langue (entièrement s'il est entièrement dans cette langue ; s'il mélange français et langue étrangère, consignes en français et textes/expressions dans la langue étrangère). Ne traduis ni ne reformule jamais un texte en langue étrangère à étudier (la règle de reformulation ne s'applique pas à lui).";
   }
   async function generateImportedExercise(imageDataUrls, pre) {
     var images = (imageDataUrls || []).map(function (url) {
