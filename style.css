@@ -689,6 +689,12 @@
   .dp-merchant-close { position: absolute; top: 20px; right: 20px; z-index: 5; width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); color: #fff; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .dp-merchant-tools { position: absolute; top: 20px; left: 20px; z-index: 5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 90px); }
   .dp-merchant-tools .dp-shop-timer { background: rgba(0,0,0,0.55); color: #fff; border-color: rgba(255,255,255,0.4); }
+  .dp-luck-line { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: rgba(0,0,0,0.55); color: #fff; border: 2px solid rgba(255,255,255,0.4); border-radius: 12px; padding: 6px 10px; }
+  .dp-luck-main { font-weight: 700; font-size: 13px; margin-right: 2px; }
+  .dp-luck-pips { display: inline-flex; gap: 3px; margin-right: 6px; }
+  .dp-luck-pips span { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.7); }
+  .dp-luck-pips span.on { background: #6fd36f; border-color: #6fd36f; }
+  .dp-luck-hint { font-size: 11px; opacity: 0.75; }
   .dp-merchant-table { position: absolute; left: 50%; bottom: 27%; transform: translateX(-50%); z-index: 2; display: flex; gap: 10px; padding: 0 24px; flex-wrap: nowrap; justify-content: space-between; width: 76vw; max-width: 1500px; min-width: 780px; }
   .dp-merchant-card { background: rgba(255,255,255,0.16); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); border: 2px solid rgba(255,255,255,0.4); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 168px; box-shadow: 0 6px 14px rgba(0,0,0,0.4); flex: none; }
   .dp-merchant-card .dp-egg-img { width: 116px; height: 116px; }

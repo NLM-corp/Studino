@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3991,22 +3991,38 @@
     if (hours < 24) return hours + " h";
     return Math.floor(hours / 24) + " j";
   }
-  function dpGenerateShopItems(zoneId, lucky) {
+  // Chance du vendeur, par niveaux. Chaque case de la boutique tire d'abord sa RARETÉ avec ces
+  // pourcentages (ceux affichés au joueur), puis une espèce de cette rareté. Avant, on tirait 5 espèces
+  // différentes pondérées une par une : avec seulement 10 espèces par biome, ça sortait presque toujours
+  // les 4 communs, et « Chance+ » ne changeait quasiment rien.
+  var DP_LUCK_ODDS = [
+    { commun: 70, rare: 22, epique: 7, legendaire: 1 },
+    { commun: 50, rare: 33, epique: 13, legendaire: 4 },
+    { commun: 35, rare: 38, epique: 20, legendaire: 7 },
+    { commun: 20, rare: 40, epique: 28, legendaire: 12 },
+    { commun: 10, rare: 38, epique: 34, legendaire: 18 },
+    { commun: 0, rare: 35, epique: 40, legendaire: 25 }
+  ];
+  var DP_LUCK_MAX = DP_LUCK_ODDS.length - 1;
+  function dpLuckLevel(shop) { return Math.max(0, Math.min(DP_LUCK_MAX, (shop && shop.luck) || 0)); }
+  // « Chance » affichée = probabilité qu'une case ne soit PAS un commun.
+  function dpLuckPercent(level) { return 100 - DP_LUCK_ODDS[level].commun; }
+  function dpGenerateShopItems(zoneId, luckLevel) {
     var species = dpSpeciesByZone(zoneId);
-    var weighted = [];
-    species.forEach(function (s) {
-      var w = DP_RARITY[s.rarity].weight;
-      if (lucky) w = s.rarity === "commun" ? Math.max(1, Math.round(w * 0.2)) : w * 5;
-      for (var i = 0; i < w; i++) weighted.push(s.id);
-    });
-    var picks = [];
-    var used = {};
+    var odds = DP_LUCK_ODDS[Math.max(0, Math.min(DP_LUCK_MAX, luckLevel || 0))];
+    var byRarity = {};
+    species.forEach(function (s) { (byRarity[s.rarity] = byRarity[s.rarity] || []).push(s.id); });
+    var rarities = Object.keys(odds).filter(function (r) { return odds[r] > 0 && byRarity[r]; });
+    var total = rarities.reduce(function (sum, r) { return sum + odds[r]; }, 0);
+    var picks = [], used = {};
     var slots = Math.min(DP_SHOP_SLOTS, species.length);
-    var guard = 0;
-    while (picks.length < slots && guard < 2000) {
-      guard++;
-      var pick = weighted[Math.floor(Math.random() * weighted.length)];
-      if (used[pick]) continue;
+    for (var i = 0; i < slots && total > 0; i++) {
+      var x = Math.random() * total, rarity = rarities[rarities.length - 1];
+      for (var k = 0; k < rarities.length; k++) { x -= odds[rarities[k]]; if (x < 0) { rarity = rarities[k]; break; } }
+      // Une espèce pas encore proposée si possible ; sinon (ex. 2 légendaires tirés, 1 seule espèce) on la répète.
+      var candidates = byRarity[rarity].filter(function (id) { return !used[id]; });
+      if (!candidates.length) candidates = byRarity[rarity];
+      var pick = candidates[Math.floor(Math.random() * candidates.length)];
       used[pick] = true;
       picks.push(pick);
     }
@@ -4016,7 +4032,7 @@
     var dp = dpData();
     var shop = dp.shops[zoneId];
     if (!shop || Date.now() >= shop.expiresAt) {
-      shop = { items: dpGenerateShopItems(zoneId, false), expiresAt: Date.now() + DP_SHOP_DURATION };
+      shop = { items: dpGenerateShopItems(zoneId, 0), luck: 0, expiresAt: Date.now() + DP_SHOP_DURATION };
       dp.shops[zoneId] = shop;
       saveDB();
     }
@@ -4883,14 +4899,26 @@
       var shopState = dpShop(zoneId);
       var shopItems = shopState.items.map(function (id) { return dpSpecies(id); });
       var canRefresh = dp.points >= DP_SHOP_REFRESH_COST;
-      var canLuck = dp.points >= DP_SHOP_LUCK_COST;
+      var luckLevel = dpLuckLevel(shopState);
+      var luckMaxed = luckLevel >= DP_LUCK_MAX;
+      var canLuck = !luckMaxed && dp.points >= DP_SHOP_LUCK_COST;
+      var odds = DP_LUCK_ODDS[luckLevel];
+      var luckHtml = '<div class="dp-luck-line">' +
+        '<span class="dp-luck-main mono">🍀 Chance ' + dpLuckPercent(luckLevel) + ' %</span>' +
+        '<span class="dp-luck-pips" aria-label="Niveau ' + luckLevel + ' sur ' + DP_LUCK_MAX + '">' + DP_LUCK_ODDS.slice(1).map(function (_, i) { return '<span class="' + (i < luckLevel ? "on" : "") + '"></span>'; }).join("") + '</span>' +
+        ["commun", "rare", "epique", "legendaire"].map(function (r) {
+          return '<span class="dp-rarity dp-rarity-' + r + '">' + DP_RARITY[r].label + ' ' + odds[r] + ' %</span>';
+        }).join("") +
+        '<span class="dp-luck-hint">par case</span>' +
+        '</div>';
       toolsHtml = '<div class="dp-merchant-tools">' +
         '<span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span>' +
         '<span class="dp-shop-timer mono" id="dp-shop-timer" data-zone="' + zoneId + '">⏳ ' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span>' +
         '<button class="btn btn-sm btn-ghost" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">🔄 Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
-        '<button class="btn btn-sm btn-ghost" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">🍀 Chance+ (' + DP_SHOP_LUCK_COST + ' pts)</button>' +
+        '<button class="btn btn-sm btn-ghost" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">' +
+        (luckMaxed ? "🍀 Chance max" : "🍀 Chance+ → " + dpLuckPercent(luckLevel + 1) + " % (" + DP_SHOP_LUCK_COST + " pts)") + '</button>' +
         '<button class="btn btn-sm btn-ghost" onclick="App.dpStartSellDino()">💰 Vendre des dinos</button>' +
-        '</div>';
+        luckHtml + '</div>';
       tableHtml = '<div class="dp-merchant-table">' +
         shopItems.map(function (sp) {
           var rarity = DP_RARITY[sp.rarity];
@@ -9354,15 +9382,20 @@
       var dp = dpData();
       if (dp.points < DP_SHOP_REFRESH_COST) { toast("Pas assez de points"); return; }
       dp.points -= DP_SHOP_REFRESH_COST;
-      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, false), expiresAt: Date.now() + DP_SHOP_DURATION };
-      saveDB(); toast("Le vendeur a été rafraîchi"); render();
+      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, 0), luck: 0, expiresAt: Date.now() + DP_SHOP_DURATION };
+      saveDB(); toast("Le vendeur a été rafraîchi (chance remise à " + dpLuckPercent(0) + " %)"); render();
     },
+    // Chaque Chance+ monte d'un niveau (jusqu'au max) et refait la boutique avec les nouvelles chances.
+    // Le niveau dure tant que cette boutique est là : il retombe à 0 quand elle expire ou avec « Rafraîchir ».
     dpLuckShop: function (zoneId) {
       var dp = dpData();
-      if (dp.points < DP_SHOP_LUCK_COST) { toast("Pas assez de points"); return; }
+      var level = dpLuckLevel(dpShop(zoneId));
+      if (level >= DP_LUCK_MAX) { toast("Chance déjà au maximum pour cette boutique"); return; }
+      if (dp.points < DP_SHOP_LUCK_COST) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
       dp.points -= DP_SHOP_LUCK_COST;
-      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, true), expiresAt: Date.now() + DP_SHOP_DURATION };
-      saveDB(); toast("Le vendeur propose de meilleures trouvailles !"); render();
+      level++;
+      dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, level), luck: level, expiresAt: Date.now() + DP_SHOP_DURATION };
+      saveDB(); toast("🍀 Chance " + dpLuckPercent(level) + " % · légendaire " + DP_LUCK_ODDS[level].legendaire + " % par case"); render();
     },
     dpStartIncubation: function (slot, eggIndex) {
       if (eggIndex === "") return;
