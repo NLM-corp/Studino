@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -6070,6 +6070,8 @@
   var courseChatPending = {}; // courseId → réponse en cours
   var courseChatDraft = {};   // courseId → texte en cours de frappe (survit aux re-rendus)
   var courseChatScrollIntoView = false;
+  var courseChatBig = false; // fenêtre du chat agrandie (gardée d'un cours à l'autre)
+  try { courseChatBig = localStorage.getItem("studino-chat-big") === "1"; } catch (e) {}
   var courseChatStream = {};  // courseId → texte de la réponse en train de s'écrire
   // Chat : modèle le plus rapide d'abord (pas besoin du plus puissant pour expliquer un cours), les
   // autres en secours si celui-ci est à quota ou indisponible.
@@ -6136,11 +6138,6 @@
       return await streamCourseChatWithKey(backupKey, prompt, onText);
     }
   }
-  var COURSE_CHAT_QUICK = [
-    ["simple", "🧸 Explique plus simplement", "Explique-moi ça plus simplement, comme si je n'avais rien compris."],
-    ["example", "💡 Donne-moi un exemple", "Donne-moi un exemple concret pour bien comprendre."],
-    ["quiz", "❓ Interroge-moi", "Interroge-moi sur le cours : pose-moi UNE question, attends ma réponse, puis corrige-moi avant de passer à la suivante."]
-  ];
   function buildCourseChatPrompt(course, loc, history) {
     var gender = getUserGender();
     var genderNote = gender === "m" ? "L'élève est un garçon (formulations masculines si tu l'interpelles : \"mon grand\", \"jeune homme\")."
@@ -6187,14 +6184,12 @@
         : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose">' + mdToHtml(m.text, course.figures) + '</div></div>';
     }).join("") : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body">Ah, te voilà ! Pose-moi n\'importe quelle question sur « ' + esc(course.title) + ' », je t\'explique tout ça.</div></div>';
     if (pending) listHtml += (courseChatStream[course.id] ? '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body prose" id="course-chat-stream">' + mdToHtml(courseChatStream[course.id], course.figures) + '</div></div>' : '<div class="chat-msg chat-msg-bot"><img src="' + avatar + '" alt=""><div class="chat-msg-body chat-typing" id="course-chat-stream"><span class="dotpulse"></span> Le conteur réfléchit…</div></div>');
-    return '<div class="course-chat" id="course-chat" data-course="' + course.id + '">' +
+    return '<div class="course-chat' + (courseChatBig ? " course-chat-big" : "") + '" id="course-chat" data-course="' + course.id + '">' +
       '<div class="course-chat-head"><img src="' + avatar + '" alt=""><div style="flex:1;font-weight:700">Le vieux conteur</div>' +
       (msgs.length ? '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.resetCourseChat(\'' + course.id + '\')">🗑 Nouvelle conversation</button>' : "") +
-      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.closeCourseChat(\'' + course.id + '\')" title="Réduire">✕</button></div>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" data-chat-size onclick="App.toggleCourseChatSize()" title="' + (courseChatBig ? "Réduire la fenêtre" : "Agrandir la fenêtre") + '">' + (courseChatBig ? "⤡ Réduire" : "⤢ Agrandir") + '</button>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.closeCourseChat(\'' + course.id + '\')" title="Fermer le chat">✕</button></div>' +
       '<div class="course-chat-list" id="course-chat-list">' + listHtml + '</div>' +
-      '<div class="course-chat-quick">' + COURSE_CHAT_QUICK.map(function (q) {
-        return '<button class="btn btn-ghost btn-sm" style="width:auto"' + dis + ' onclick="App.sendCourseChat(\'' + course.id + '\',\'' + q[0] + '\')">' + q[1] + '</button>';
-      }).join("") + '</div>' +
       '<div class="course-chat-form">' + chatEditor +
       '<div class="course-chat-send"><span class="course-chat-hint">Ctrl + Entrée pour envoyer</span><button type="button" class="btn btn-primary" style="width:auto"' + dis + ' onclick="App.sendCourseChat(\'' + course.id + '\')">Envoyer</button></div></div>' +
       '</div>';
@@ -8445,6 +8440,14 @@
     },
     openCourseChat: function (courseId) { courseChatOpen[courseId] = true; courseChatScrollIntoView = true; render(); },
     closeCourseChat: function (courseId) { courseChatOpen[courseId] = false; render(); },
+    toggleCourseChatSize: function () {
+      courseChatBig = !courseChatBig;
+      try { localStorage.setItem("studino-chat-big", courseChatBig ? "1" : "0"); } catch (e) {}
+      var box = document.getElementById("course-chat");
+      if (box) box.classList.toggle("course-chat-big", courseChatBig);
+      var btn = box && box.querySelector("[data-chat-size]");
+      if (btn) { btn.textContent = courseChatBig ? "⤡ Réduire" : "⤢ Agrandir"; btn.title = courseChatBig ? "Réduire la fenêtre" : "Agrandir la fenêtre"; }
+    },
     setCourseChatDraft: function (courseId, value) { courseChatDraft[courseId] = value; },
     resetCourseChat: function (courseId) {
       var loc = locateCourse(courseId);
@@ -8454,24 +8457,20 @@
       courseChatScrollIntoView = true;
       render();
     },
-    sendCourseChat: function (courseId, quickId) {
+    sendCourseChat: function (courseId) {
       var loc = locateCourse(courseId);
       if (!loc || courseChatPending[courseId]) return;
-      var quick = quickId ? COURSE_CHAT_QUICK.find(function (q) { return q[0] === quickId; }) : null;
       // Texte envoyé à l'IA : formules en $...$, tableaux en lignes/colonnes (comme pour « Mes exos ») ;
       // le HTML sert juste à réafficher le message tel que l'élève l'a écrit.
-      var text = quick ? quick[2] : rteText("course-chat-input");
+      var text = rteText("course-chat-input");
       if (!text) return;
       if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
       var course = loc.course;
       course.chat = course.chat || [];
-      var msg = { role: "user", text: text, at: Date.now() };
-      if (!quick) {
-        msg.html = rteValue("course-chat-input");
-        courseChatDraft[courseId] = "";
-        var ed = document.getElementById("course-chat-input");
-        if (ed) ed.innerHTML = "";
-      }
+      var msg = { role: "user", text: text, html: rteValue("course-chat-input"), at: Date.now() };
+      courseChatDraft[courseId] = "";
+      var ed = document.getElementById("course-chat-input");
+      if (ed) ed.innerHTML = "";
       course.chat.push(msg);
       courseChatPending[courseId] = true;
       courseChatScrollIntoView = true;
