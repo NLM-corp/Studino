@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3843,7 +3843,13 @@
     return chapter.courses.filter(dpCourseHasContent);
   }
 
-  var DP_SHOP_SLOTS = 5;
+  // Nombre d'œufs proposés par le vendeur, PAR BIOME : 2 au départ, améliorable jusqu'à 5.
+  var DP_SHOP_SLOTS_MIN = 2, DP_SHOP_SLOTS_MAX = 5;
+  var DP_SHOP_SLOT_UPGRADE_COST = { 3: 400, 4: 800, 5: 1500 }; // prix pour passer À ce nombre d'œufs
+  function dpShopSlots(zoneId) {
+    var lv = (dpData().shopSlots || {})[zoneId] || DP_SHOP_SLOTS_MIN;
+    return Math.max(DP_SHOP_SLOTS_MIN, Math.min(DP_SHOP_SLOTS_MAX, lv));
+  }
   var DP_SHOP_DURATION = 30 * 60 * 1000;
   var DP_SHOP_REFRESH_COST = 150;
   var DP_SHOP_LUCK_COST = 300;
@@ -4007,7 +4013,7 @@
   function dpLuckLevel(shop) { return Math.max(0, Math.min(DP_LUCK_MAX, (shop && shop.luck) || 0)); }
   // « Chance » affichée = probabilité qu'une case ne soit PAS un commun.
   function dpLuckPercent(level) { return 100 - DP_LUCK_ODDS[level].commun; }
-  function dpGenerateShopItems(zoneId, luckLevel) {
+  function dpGenerateShopItems(zoneId, luckLevel, count) {
     var species = dpSpeciesByZone(zoneId);
     var odds = DP_LUCK_ODDS[Math.max(0, Math.min(DP_LUCK_MAX, luckLevel || 0))];
     var byRarity = {};
@@ -4015,7 +4021,7 @@
     var rarities = Object.keys(odds).filter(function (r) { return odds[r] > 0 && byRarity[r]; });
     var total = rarities.reduce(function (sum, r) { return sum + odds[r]; }, 0);
     var picks = [], used = {};
-    var slots = Math.min(DP_SHOP_SLOTS, species.length);
+    var slots = Math.min(count || dpShopSlots(zoneId), species.length);
     for (var i = 0; i < slots && total > 0; i++) {
       var x = Math.random() * total, rarity = rarities[rarities.length - 1];
       for (var k = 0; k < rarities.length; k++) { x -= odds[rarities[k]]; if (x < 0) { rarity = rarities[k]; break; } }
@@ -4036,6 +4042,9 @@
       dp.shops[zoneId] = shop;
       saveDB();
     }
+    // Boutique générée avant le passage à 2 œufs de base (ou trop grande) : on la ramène au bon nombre.
+    var maxSlots = dpShopSlots(zoneId);
+    if (shop.items.length > maxSlots) { shop.items = shop.items.slice(0, maxSlots); saveDB(); }
     return shop;
   }
   function dpFormatCountdown(ms) {
@@ -4899,6 +4908,9 @@
       var shopState = dpShop(zoneId);
       var shopItems = shopState.items.map(function (id) { return dpSpecies(id); });
       var canRefresh = dp.points >= DP_SHOP_REFRESH_COST;
+      var curSlots = dpShopSlots(zoneId);
+      var slotsMaxed = curSlots >= DP_SHOP_SLOTS_MAX;
+      var slotCost = slotsMaxed ? 0 : DP_SHOP_SLOT_UPGRADE_COST[curSlots + 1];
       var luckLevel = dpLuckLevel(shopState);
       var luckMaxed = luckLevel >= DP_LUCK_MAX;
       var canLuck = !luckMaxed && dp.points >= DP_SHOP_LUCK_COST;
@@ -4917,6 +4929,9 @@
         '<button class="btn btn-sm btn-ghost" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">🔄 Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
         '<button class="btn btn-sm btn-ghost" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">' +
         (luckMaxed ? "🍀 Chance max" : "🍀 Chance+ → " + dpLuckPercent(luckLevel + 1) + " % (" + DP_SHOP_LUCK_COST + " pts)") + '</button>' +
+        (slotsMaxed
+          ? '<button class="btn btn-sm btn-ghost" disabled>🥚 ' + DP_SHOP_SLOTS_MAX + ' œufs (max)</button>'
+          : '<button class="btn btn-sm btn-ghost" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">🥚 ' + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') +
         '<button class="btn btn-sm btn-ghost" onclick="App.dpStartSellDino()">💰 Vendre des dinos</button>' +
         luckHtml + '</div>';
       tableHtml = '<div class="dp-merchant-table">' +
@@ -9384,6 +9399,21 @@
       dp.points -= DP_SHOP_REFRESH_COST;
       dp.shops[zoneId] = { items: dpGenerateShopItems(zoneId, 0), luck: 0, expiresAt: Date.now() + DP_SHOP_DURATION };
       saveDB(); toast("Le vendeur a été rafraîchi (chance remise à " + dpLuckPercent(0) + " %)"); render();
+    },
+    // Un œuf de plus chez le vendeur de CE biome (2 → 3 → 4 → 5). Le nouvel œuf apparaît tout de suite,
+    // tiré avec la chance actuelle de la boutique.
+    dpUpgradeShopSlots: function (zoneId) {
+      var dp = dpData();
+      var cur = dpShopSlots(zoneId);
+      if (cur >= DP_SHOP_SLOTS_MAX) { toast("Le vendeur propose déjà le maximum d'œufs"); return; }
+      var cost = DP_SHOP_SLOT_UPGRADE_COST[cur + 1];
+      if (dp.points < cost) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
+      dp.points -= cost;
+      dp.shopSlots = dp.shopSlots || {};
+      dp.shopSlots[zoneId] = cur + 1;
+      var shop = dpShop(zoneId);
+      shop.items = shop.items.concat(dpGenerateShopItems(zoneId, dpLuckLevel(shop), 1));
+      saveDB(); dpPlayMerchantSound("thankyou"); toast("🥚 Le vendeur propose maintenant " + (cur + 1) + " œufs dans ce biome"); render();
     },
     // Chaque Chance+ monte d'un niveau (jusqu'au max) et refait la boutique avec les nouvelles chances.
     // Le niveau dure tant que cette boutique est là : il retombe à 0 quand elle expire ou avec « Rafraîchir ».
