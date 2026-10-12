@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "8.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "8.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -6040,8 +6040,8 @@
     var msgs = course.chat || [];
     var avatar = PODCAST_DIR + PODCAST_ATTEND_IMGS[0];
     if (!courseChatOpen[course.id]) {
-      return '<div class="course-chat-launch"><img src="' + avatar + '" alt=""><div style="flex:1;min-width:180px"><div class="course-chat-launch-title">Une question sur ce cours ?</div><div class="course-chat-launch-sub">Le vieux conteur du podcast te l\'explique, à partir de ton cours.</div></div>' +
-        '<button class="btn btn-primary" style="width:auto" onclick="App.openCourseChat(\'' + course.id + '\')">💬 ' + (msgs.length ? "Reprendre la conversation" : "Parler au vieux conteur") + '</button></div>';
+      // Bouton flottant, toujours visible en bas de l'écran : pas besoin de descendre tout en bas du cours.
+      return '<button class="course-chat-fab" onclick="App.openCourseChat(\'' + course.id + '\')" title="Pose tes questions sur ce cours au vieux conteur"><img src="' + avatar + '" alt=""><span>💬 ' + (msgs.length ? "Reprendre la conversation" : "Parler au vieux conteur") + '</span></button>';
     }
     var pending = !!courseChatPending[course.id];
     var dis = pending ? " disabled" : "";
@@ -6110,8 +6110,6 @@
       if (chatList) chatList.scrollTop = chatList.scrollHeight;
       if (courseChatScrollIntoView) {
         courseChatScrollIntoView = false;
-        var chatBox = document.getElementById("course-chat");
-        if (chatBox) chatBox.scrollIntoView({ block: "end", behavior: "smooth" });
         var chatInput = document.getElementById("course-chat-input");
         if (chatInput && !courseChatPending[course.id]) chatInput.focus();
       }
