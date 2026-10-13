@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -131,6 +131,21 @@
       if (changed) saveDB();
       return gcPodcastAudio();
     });
+  }
+  // Au chargement, aucune génération ne tourne encore : un podcast resté « en préparation » a forcément
+  // été interrompu (page fermée ou rechargée, mise à jour de l'appli...). Sans ça, il restait bloqué pour
+  // toujours avec un chrono qui montait. Son texte éventuel est gardé : « Réessayer » ne refait que la voix.
+  function markInterruptedPodcasts() {
+    var changed = false;
+    allPodcastsInDB().forEach(function (p) {
+      if (p.status !== "processing") return;
+      p.status = "error";
+      p.error = p.script
+        ? "La voix n'a pas pu être terminée : la page a été fermée ou rechargée pendant la préparation. Clique sur Réessayer (le texte est gardé)."
+        : "La préparation a été interrompue : la page a été fermée ou rechargée. Clique sur Réessayer.";
+      changed = true;
+    });
+    if (changed) saveDB();
   }
   // Supprime les sons des podcasts qui n'existent plus (supprimés, remplacés par une actualisation...).
   function gcPodcastAudio() {
@@ -8259,7 +8274,20 @@
       // Le script de cette partie a déjà été généré avec succès (seule la voix a échoué) : on ne
       // relance que l'audio, jamais tout le podcast — sinon l'IA redécoupe le script à neuf avec un
       // nombre de parties potentiellement différent, créant des doublons avec les parties déjà prêtes.
-      if (pod.script) { retryPodcastPartAudio(pod); return; }
+      if (pod.script) {
+        // Puis, si ça marche, les autres parties du même podcast restées sans voix (ex. génération
+        // interrompue par un rechargement de page), une par une, en s'arrêtant au premier échec.
+        var retryChain = function (p) {
+          return retryPodcastPartAudio(p).then(function () {
+            if (p.status !== "ready") return;
+            var next = podcastData().filter(function (x) { return podcastGroupKey(x) === podcastGroupKey(p) && x.status === "error" && x.script; })
+              .sort(function (a, b) { return a.partIndex - b.partIndex; })[0];
+            if (next) return retryChain(next);
+          });
+        };
+        retryChain(pod);
+        return;
+      }
       var subj = findSubject(pod.subjectId);
       if (!subj) return;
       var content = podcastScopeContentText(subj, pod.scopeLevel, pod.scopeId);
@@ -9845,7 +9873,7 @@
   // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
   var appEl = document.getElementById("app");
   if (appEl) appEl.innerHTML = '<div class="processing-box" style="min-height:100vh;justify-content:center">' + genLogo() + '<span>Chargement…</span></div>';
-  initDB().then(function () { return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }); }).then(function () {
+  initDB().then(function () { markInterruptedPodcasts(); return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }); }).then(function () {
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", syncTopbarHeightVar);
     render();
