@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -937,14 +937,24 @@
     var lastErr = null;
     var hadRateLimit = false;
     var recitationRetries = 0;
-    for (var i = 0; i < GEMINI_MODELS.length; i++) {
-      if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
-      var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens, timeoutMs);
-      if (r.ok) return r.value;
-      lastErr = r.err;
-      if (r.rateLimit) hadRateLimit = true;
-      if (r.recitation) recitationRetries++;
-      if (!r.retryable) throw lastErr;
+    // Serveurs Google saturés (503 « high demand ») : c'est passager mais ça touche souvent TOUS les
+    // modèles en même temps. Plutôt que d'abandonner après un seul tour, on attend puis on refait le
+    // tour des modèles (jusqu'à 2 fois de plus : après 8 s, puis 20 s).
+    var OVERLOAD_WAITS = [8000, 20000];
+    for (var round = 0; round <= OVERLOAD_WAITS.length; round++) {
+      var hadOverload = false;
+      for (var i = 0; i < GEMINI_MODELS.length; i++) {
+        if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
+        var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens, timeoutMs);
+        if (r.ok) return r.value;
+        lastErr = r.err;
+        if (r.rateLimit) hadRateLimit = true;
+        if (r.recitation) recitationRetries++;
+        if (r.err && (r.err.status === 503 || /overload|unavailable|high demand/i.test(r.err.message || ""))) hadOverload = true;
+        if (!r.retryable) throw lastErr;
+      }
+      if (!hadOverload || hadRateLimit || round === OVERLOAD_WAITS.length) break;
+      await sleep(OVERLOAD_WAITS[round]);
     }
     // Dernier recours spécifique au blocage RECITATION : la boucle ci-dessus finit sur flash-lite, le
     // modèle le moins capable de reformuler intelligemment un contenu très indexé en ligne — on retente
@@ -6146,7 +6156,19 @@
     var primaryKey = getApiKey();
     if (!primaryKey) throw new Error("ajoute ta clé API Gemini dans les paramètres");
     try {
-      return await streamCourseChatWithKey(primaryKey, prompt, onText);
+      // Serveurs Google saturés (503) sur tous les modèles : on réessaie après 5 s puis 12 s.
+      var waits = [5000, 12000];
+      for (var attempt = 0; ; attempt++) {
+        try {
+          return await streamCourseChatWithKey(primaryKey, prompt, onText);
+        } catch (e) {
+          if (e.status !== 503 || attempt >= waits.length) {
+            if (e.status === 503) e.message = "les serveurs de Google sont saturés en ce moment, réessaie dans une minute";
+            throw e;
+          }
+          await sleep(waits[attempt]);
+        }
+      }
     } catch (err1) {
       var backupKey = getBackupApiKey();
       if (!err1.rateLimited || !backupKey) throw err1;
