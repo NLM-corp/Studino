@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -700,7 +700,7 @@
       "Réponds uniquement en respectant le schéma JSON fourni.";
   }
   // Vérification au pixel : si un trait (encre plus foncée que le fond) touche un bord de la découpe, c'est
-  // que le schéma continue au-delà → on élargit CE côté et on revérifie (jusqu'à 6 fois). Rattrape les
+  // que le schéma continue au-delà → on élargit CE côté et on revérifie (jusqu'à 12 fois). Rattrape les
   // découpes un peu trop serrées de l'IA (une lettre, un chiffre ou un bord de schéma coupé).
   function figureEdgeInk(canvas) {
     var w = canvas.width, h = canvas.height;
@@ -733,7 +733,7 @@
     var box = clamp(r);
     if (box.w < 20 || box.h < 20) return null;
     var canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
-    for (var round = 0; round < 6; round++) {
+    for (var round = 0; round < 12; round++) {
       var e = figureEdgeInk(canvas);
       var stepX = Math.max(16, box.w * 0.06), stepY = Math.max(16, box.h * 0.06);
       var grow = { x: box.x, y: box.y, w: box.w, h: box.h }, changed = false;
@@ -785,7 +785,30 @@
         };
       }), 2);
       if (!anyBatchOk) return empty;
-      // 2. Doublons (même visuel vu dans deux tranches qui se chevauchent) : on garde le plus grand.
+      // 2a. Visuel plus grand qu'une tranche : il est coupé PARTOUT, et chaque tranche n'en donne qu'un
+      // morceau. On recolle les morceaux coupés qui se touchent (même colonne/ligne, bords adjacents ou
+      // superposés) en un seul rectangle, avant le zoom.
+      var touches = function (a, b) {
+        var ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        var tolY = 0.06 * Math.max(a.tileH, b.tileH), tolX = 0.06 * Math.max(a.tileW, b.tileW);
+        return (ox > 0.5 * Math.min(a.w, b.w) && oy > -tolY) || (oy > 0.5 * Math.min(a.h, b.h) && ox > -tolX);
+      };
+      for (var mergedSome = true; mergedSome;) {
+        mergedSome = false;
+        for (var ai = 0; ai < found.length && !mergedSome; ai++) {
+          for (var bi = ai + 1; bi < found.length; bi++) {
+            var A = found[ai], B = found[bi];
+            if (A.si !== B.si || !(A.cut || B.cut) || !touches(A, B)) continue;
+            var nx = Math.min(A.x, B.x), ny = Math.min(A.y, B.y);
+            found[ai] = { si: A.si, x: nx, y: ny, w: Math.max(A.x + A.w, B.x + B.w) - nx, h: Math.max(A.y + A.h, B.y + B.h) - ny,
+              caption: A.caption.length >= B.caption.length ? A.caption : B.caption, cut: true, tileW: A.tileW, tileH: A.tileH };
+            found.splice(bi, 1);
+            mergedSome = true;
+            break;
+          }
+        }
+      }
+      // 2b. Doublons (même visuel vu en entier dans deux tranches qui se chevauchent) : on garde le plus grand.
       found.sort(function (a, b) { return b.w * b.h - a.w * a.h; });
       var kept = [];
       found.forEach(function (f) {
@@ -798,6 +821,15 @@
       await runWithConcurrency(kept.map(function (f, i) {
         return function () {
           var s = sources[f.si];
+          // Visuel plus grand qu'une tranche (morceaux recollés) : un zoom serait encore une bande trop
+          // réduite pour l'IA. On part directement du rectangle recollé et la vérification au pixel des
+          // bords l'agrandit jusqu'à ce que plus aucun trait ne soit coupé.
+          if ((f.tileH < s.h && f.h > f.tileH * 0.9) || (f.tileW < s.w && f.w > f.tileW * 0.9)) {
+            var bp = Math.max(10, Math.min(f.w, f.h) * 0.04);
+            return cropUntilEdgesClear(s, { x: f.x - bp, y: f.y - bp, w: f.w + 2 * bp, h: f.h + 2 * bp }).then(function (res) {
+              if (res) { crops[i] = res.url; finals[i] = res.box; }
+            });
+          }
           var mx = Math.max(40, f.w * 0.25), my = Math.max(40, f.h * 0.35);
           // Visuel coupé au bord d'une tranche : on regarde beaucoup plus haut et plus bas pour le récupérer en entier.
           if (f.cut) { if (f.tileH < s.h) my = Math.max(my, f.tileH * 0.6); if (f.tileW < s.w) mx = Math.max(mx, f.tileW * 0.6); }
