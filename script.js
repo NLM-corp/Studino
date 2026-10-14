@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -568,7 +568,10 @@
      puis chaque visuel est revérifié sur un zoom serré autour de lui avant la découpe finale. */
   var FIG_RENDER_WIDTH = 1600;   // largeur de rendu d'une page de PDF
   var FIG_TILE_RATIO = 1.6;      // hauteur d'une tranche = 1,6 × sa largeur (proche d'une page A4)
-  var FIG_TILE_OVERLAP = 0.2;    // 20 % de chevauchement : un schéma coupé dans une tranche est entier dans la suivante
+  // 50 % de chevauchement : tout schéma moins haut que la moitié d'une tranche est forcément ENTIER dans au
+  // moins une tranche. Un schéma plus grand, coupé partout, est quand même signalé (cut=true) puis
+  // récupéré en entier par le zoom de vérification, qui regarde alors large au-dessus et en dessous.
+  var FIG_TILE_OVERLAP = 0.5;
   var FIG_TILES_PER_CALL = 4;
   var FIG_MAX_TILES = 60, FIG_MAX_PDF_PAGES = 30, FIG_MAX_FIGURES = 40;
   function runWithConcurrency(tasks, limit) {
@@ -652,9 +655,10 @@
           properties: {
             imageIndex: { type: "integer", description: "Index (à partir de 0) de l'image de CET envoi où le visuel est entièrement visible." },
             box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 dans CETTE image, qui contient TOUT le visuel avec son titre et ses annotations, sans le texte de l'énoncé autour." },
-            caption: { type: "string", description: "Légende distinctive : partie/exercice + ce que montre le visuel." }
+            caption: { type: "string", description: "Légende distinctive : partie/exercice + ce que montre le visuel." },
+            cut: { type: "boolean", description: "true si le visuel est coupé par le bord haut ou bas de cette image (il continue au-delà)." }
           },
-          required: ["imageIndex", "box", "caption"]
+          required: ["imageIndex", "box", "caption", "cut"]
         }
       }
     },
@@ -664,7 +668,7 @@
     return "Voici " + count + " image(s), numérotées à partir de 0 : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent un peu). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
       "À repérer : graphiques, courbes, schémas (cases, flèches, cercles, tableaux de bits dessinés...), diagrammes, montages, figures géométriques, structures chimiques, cartes, pictogrammes, photos qui apportent une information.\n" +
       "À NE PAS repérer : le texte normal, les calculs et développements écrits (même alignés ou posés en colonnes : ils seront retranscrits en texte), les tableaux de texte simples, les titres, les numéros, les logos, les décorations, les zones vides.\n\n" +
-      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Un visuel coupé par le bord HAUT ou BAS d'une image ne doit PAS être donné pour cette image (il est entier dans l'image voisine). S'il apparaît entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
+      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Si un visuel est coupé par le bord HAUT ou BAS d'une image, donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   var FIGURE_ZOOM_SCHEMA = {
@@ -714,7 +718,7 @@
               var s = sources[t.si];
               var x0 = f.box[1] / 1000 * s.w, x1 = f.box[3] / 1000 * s.w;
               var y0 = t.y + f.box[0] / 1000 * t.h, y1 = t.y + f.box[2] / 1000 * t.h;
-              found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "" });
+              found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "", cut: !!f.cut, tileH: t.h });
             });
           });
         };
@@ -734,6 +738,8 @@
         return function () {
           var s = sources[f.si];
           var mx = Math.max(40, f.w * 0.25), my = Math.max(40, f.h * 0.35);
+          // Visuel coupé au bord d'une tranche : on regarde beaucoup plus haut et plus bas pour le récupérer en entier.
+          if (f.cut) my = Math.max(my, f.tileH * 0.6);
           var cx = Math.max(0, f.x - mx), cy = Math.max(0, f.y - my);
           var cw = Math.min(s.w, f.x + f.w + mx) - cx, ch = Math.min(s.h, f.y + f.h + my) - cy;
           return s.renderRegion(cx, cy, cw, ch).then(function (zoomUrl) {
