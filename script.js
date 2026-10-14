@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -2706,6 +2706,8 @@
     type: "object",
     properties: {
       overview: { type: "string", description: "Stratégie de révision globale en 2-3 phrases motivantes, en français." },
+      practiceShare: { type: "integer", description: "Part (0 à 100) des exercices d'application dans les séances, le reste étant de la connaissance du cours à restituer." },
+      modeReason: { type: "string", description: "Une phrase qui explique à l'élève pourquoi cette répartition cours/exercices (vide si le type de révision a été imposé)." },
       days: {
         type: "array",
         description: "Un élément par jour de révision disponible avant l'examen.",
@@ -2721,9 +2723,22 @@
         }
       }
     },
-    required: ["overview", "days"]
+    required: ["overview", "practiceShare", "modeReason", "days"]
   };
-  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) {
+  // Type de révision d'une prépa : « auto » = l'IA choisit la part d'exercices selon la matière et le
+  // contenu (affichée à l'élève), sinon imposé par l'élève (lui seul sait ce que le prof a annoncé).
+  var EP_REVISION_MODES = [["auto", "Auto (recommandé)"], ["cours", "Apprendre le cours"], ["exos", "Exercices d'application"]];
+  function epRevisionModeHint(mode) {
+    if (mode === "cours") return "Uniquement le par cœur : définitions, dates, formules et notions à savoir restituer.";
+    if (mode === "exos") return "Uniquement de la pratique : appliquer les méthodes et formules sur des exercices.";
+    return "L'IA choisit le dosage cours / exercices selon la matière et ton contenu (ex. surtout des exercices en maths, surtout du cours en histoire), et t'explique son choix.";
+  }
+  function epRevisionModeRule(mode) {
+    if (mode === "cours") return "TYPE DE RÉVISION imposé par l'élève : APPRENDRE LE COURS. Les séances portent sur la mémorisation et la restitution (définitions, dates, formules, notions, raisonnements à savoir expliquer), PAS sur des exercices d'application. \"practiceShare\" = 0 et \"modeReason\" vide.\n";
+    if (mode === "exos") return "TYPE DE RÉVISION imposé par l'élève : EXERCICES D'APPLICATION. Les séances portent sur la pratique : appliquer les méthodes, formules et raisonnements du cours sur des exercices, de plus en plus difficiles ; presque pas de récitation. \"practiceShare\" = 100 et \"modeReason\" vide.\n";
+    return "TYPE DE RÉVISION : c'est à toi de choisir la bonne répartition entre connaissance du cours et exercices d'application, d'après la matière et le contenu ci-dessus. \"practiceShare\" (0-100) = part des exercices d'application : élevée (70 à 90) pour un contenu surtout fait de méthodes, calculs, démonstrations ou savoir-faire (maths, physique-chimie, informatique...) ; faible (10 à 30) pour un contenu surtout à mémoriser (dates, définitions, faits, vocabulaire : histoire, géographie, SVT descriptive...) ; intermédiaire si c'est mixte. \"modeReason\" : une phrase claire pour l'élève qui explique ce choix (ex. « Ce chapitre est surtout fait de méthodes de calcul : la prépa est orientée exercices. »). Les \"focus\" et \"topics\" des jours suivent cette répartition.\n";
+  }
+  function buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets, mode) {
     var sourceBlocks = courses.map(function (co) {
       return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
     }).join("\n\n");
@@ -2734,6 +2749,7 @@
     return "Tu es un coach de révision pour un élève francophone qui prépare : « " + title + " ».\n" +
       "Aujourd'hui : " + todayStr + ". Date de l'examen : " + examDateStr + ". Il reste exactement " + dayCount + " jour(s) avant l'examen (le jour de l'examen lui-même n'est pas un jour de révision).\n" +
       continuityBlock + "\n" +
+      epRevisionModeRule(mode) + "\n" +
       "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
       "Certains jours parmi ces " + dayCount + " sont des jours de repos SANS séance (pour ne pas surcharger l'élève quand l'examen est encore loin). Voici la liste EXACTE des décalages en jours depuis aujourd'hui (offsetDays, 0 = aujourd'hui) pour lesquels une séance est prévue : " + offsets.join(", ") + ". Produis EXACTEMENT une entrée par offsetDays listé ici, ni plus ni moins (n'en ajoute aucun pour les jours de repos, n'en oublie aucun de la liste), en respectant ces principes :\n" +
       "- Les séances doivent être substantielles, pas expéditives : mieux vaut une séance un peu longue et exigeante qu'une séance courte qui ne prépare à rien (typiquement 20 à 60 minutes indicatives, mais dépasser cette estimation n'est jamais un problème).\n" +
@@ -2743,8 +2759,8 @@
       "\"overview\" résume ta stratégie globale en 2-3 phrases motivantes, en français.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) {
-    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets) }];
+  function generateExamPlan(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets, mode) {
+    var parts = [{ text: buildExamPlanPrompt(title, examDateStr, todayStr, dayCount, courses, priorTopics, offsets, mode) }];
     return callGemini(parts, EXAM_PLAN_SCHEMA);
   }
   function runExamPlanGeneration(prep) {
@@ -2791,8 +2807,12 @@
       return;
     }
     var priorTopics = (prep.topics || []).slice();
-    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses, priorTopics, scheduleOffsets).then(function (data) {
+    generateExamPlan(prep.title, prep.examDate, today, dayCount, courses, priorTopics, scheduleOffsets, prep.revisionMode || "auto").then(function (data) {
       prep.overview = data.overview || prep.overview || "";
+      var mode = prep.revisionMode || "auto";
+      var share = Math.round(Number(data.practiceShare));
+      prep.practiceShare = mode === "cours" ? 0 : mode === "exos" ? 100 : (isFinite(share) ? Math.max(0, Math.min(100, share)) : 50);
+      prep.modeReason = mode === "auto" ? String(data.modeReason || "") : "";
       var offsetSet = {};
       scheduleOffsets.forEach(function (o) { offsetSet[o] = true; });
       var newDays = (data.days || [])
@@ -2849,6 +2869,40 @@
     var pickedIds = {};
     var add = function (it) { if (it && !pickedIds[it.id]) { pickedIds[it.id] = true; picked.push(it); } };
     var countKind = function (kind) { return picked.filter(function (p) { return p.kind === kind; }).length; };
+    // Type de révision (voir EP_REVISION_MODES) : la part d'exercices d'application (exercices du cours +
+    // questions de catégorie « application ») suit practiceShare ; le reste est de la connaissance du cours.
+    if (typeof prep.practiceShare === "number") {
+      var share = prep.practiceShare / 100;
+      var isPractice = function (it) { return it.kind === "exercise" || it.category === "application"; };
+      var practice = scored.filter(function (s) { return isPractice(s.item); });
+      var knowledge = scored.filter(function (s) { return !isPractice(s.item); });
+      var budget = 14; // une séance substantielle ; un exercice compte double (plus long)
+      var weight = function (it) { return it.kind === "exercise" ? 2 : 1; };
+      var used = 0;
+      var takeUntil = function (list, limit) {
+        list.forEach(function (s) {
+          if (used >= limit) return;
+          if (s.item.kind === "qcm" && countKind("qcm") >= 3) return; // le QCM reste minoritaire
+          if (pickedIds[s.item.id]) return;
+          add(s.item); used += weight(s.item);
+        });
+      };
+      var practiceBudget = Math.round(budget * share);
+      if (share < 1) {
+        // Connaissance : tout le par cœur des notions du jour d'abord, puis le reste par priorité.
+        knowledge.forEach(function (s) { if (s.isMemo && s.matchesToday && used < budget - practiceBudget) { add(s.item); used += 1; } });
+        takeUntil(knowledge, budget - practiceBudget);
+      }
+      if (share > 0) {
+        var knowledgeUsed = used;
+        takeUntil(practice.filter(function (s) { return s.item.kind === "exercise"; }), knowledgeUsed + Math.max(2, Math.round(practiceBudget * 0.6)));
+        takeUntil(practice, knowledgeUsed + practiceBudget);
+      }
+      // Cours sans assez d'éléments du type choisi : on complète avec l'autre type plutôt qu'une séance vide.
+      if (picked.length < 4) takeUntil(scored, budget);
+      for (var pj = picked.length - 1; pj > 0; pj--) { var pk = Math.floor(Math.random() * (pj + 1)); var pt = picked[pj]; picked[pj] = picked[pk]; picked[pk] = pt; }
+      return picked;
+    }
     // 1. Couverture du "par cœur" : toute définition/formule à savoir par cœur liée aux notions du
     // jour est posée SANS exception, et forcément en rédaction (jamais en QCM — voir buildCoursePrompt
     // qui force déjà ces catégories en type "ouverte") : l'élève doit la réécrire, pas la reconnaître.
@@ -6495,7 +6549,18 @@
           dayFcSection +
           '</div>';
       }).join("");
-      body = readinessHtml + epTopicDetailHtml(prep) + '<div class="prose" style="margin:16px 0 20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
+      var epMode = prep.revisionMode || "auto";
+      var epShare = typeof prep.practiceShare === "number" ? prep.practiceShare : null;
+      var epModeLine = epShare === null ? ""
+        : epMode === "cours" ? "📖 Prépa orientée <b>apprentissage du cours</b> (choisi par toi)."
+        : epMode === "exos" ? "✏️ Prépa orientée <b>exercices d'application</b> (choisi par toi)."
+        : (epShare >= 60 ? "✏️ Prépa orientée <b>exercices</b>" : epShare <= 40 ? "📖 Prépa orientée <b>cours</b>" : "⚖️ Prépa <b>cours + exercices</b>") +
+          " (≈ " + epShare + " % d'exercices, choisi par l'IA)" + (prep.modeReason ? " : " + esc(prep.modeReason) : ".");
+      var epModeHtml = '<div class="ep-mode-box">' + (epModeLine ? '<div>' + epModeLine + '</div>' : "") +
+        '<label class="ep-mode-change">Type de révision : <select onchange="App.setExamPrepRevisionMode(\'' + prep.id + '\', this.value)">' +
+        EP_REVISION_MODES.map(function (rm) { return '<option value="' + rm[0] + '" ' + (epMode === rm[0] ? "selected" : "") + '>' + rm[1] + '</option>'; }).join("") +
+        '</select></label></div>';
+      body = readinessHtml + epTopicDetailHtml(prep) + epModeHtml + '<div class="prose" style="margin:16px 0 20px"><p>' + esc(prep.overview) + '</p></div>' + cta + '<h3 style="font-size:16px;margin:22px 0 12px">Planning jour par jour</h3><div class="ep-day-list">' + daysHtml + '</div>';
     }
     renderShell(["examprep", prep.id], head + body, { narrow: true });
   }
@@ -7849,6 +7914,9 @@
                 : '<p class="modal-warn">Ce chapitre n\'a aucun cours généré.</p>'
             ) : "")
           ) : '<p class="modal-warn">Cette matière n\'a aucun cours généré pour l\'instant.</p>') +
+          '<div class="field"><label>Type de révision</label><select onchange="App.setExamPrepField(\'revisionMode\',this.value);App.refreshModal()">' +
+          EP_REVISION_MODES.map(function (rm) { return '<option value="' + rm[0] + '" ' + ((modal.revisionMode || "auto") === rm[0] ? "selected" : "") + '>' + rm[1] + '</option>'; }).join("") +
+          '</select><p style="font-size:12px;color:var(--text-muted);margin:6px 0 0">' + epRevisionModeHint(modal.revisionMode || "auto") + '</p></div>' +
           (function () {
             // Pas de filtre par matière ici : une méthodologie n'est plus liée à une seule matière
             // (elle peut servir en français comme en histoire), donc toutes celles prêtes sont proposées.
@@ -9175,6 +9243,16 @@
       render();
     },
     setExamPrepField: function (field, value) { modal[field] = value; },
+    refreshModal: function () { if (modal) renderModal(); },
+    // Changer le type de révision d'une prépa existante : le planning des jours restants est refait
+    // (les jours passés et les séances déjà faites, ainsi que la maîtrise des notions, sont gardés).
+    setExamPrepRevisionMode: function (prepId, mode) {
+      var prep = userData().examPreps.find(function (p) { return p.id === prepId; });
+      if (!prep || prep.planStatus === "processing") return;
+      if (!getApiKey()) { toast("Ajoute d'abord ta clé API dans les paramètres"); App.openApiKeyModal(); return; }
+      prep.revisionMode = mode;
+      runExamPlanGeneration(prep);
+    },
     changeExamPrepLevel: function (level) {
       modal.level = level;
       var theme = findTheme(findSubject(modal.subjectId), modal.themeId);
@@ -9248,6 +9326,7 @@
       var prep = {
         id: uid(), title: (m.title || "").trim() || label, examDate: m.examDate, scope: scope, createdAt: Date.now(),
         methodologyId: m.methodologyId || null,
+        revisionMode: m.revisionMode || "auto",
         planStatus: "processing", planError: null, planErrorStatus: null, planErrorDetail: null,
         overview: "", days: [], topicStatus: {}, sessions: {}, gapFlashcards: [], activeSession: null
       };

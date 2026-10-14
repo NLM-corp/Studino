@@ -1107,3 +1107,8 @@
     .course-chat, .course-chat.course-chat-big { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; border: none; }
     .course-chat-fab { right: 14px; bottom: 14px; font-size: 13px; }
   }
+
+  /* Prépa contrôle : type de révision */
+  .ep-mode-box { display: flex; flex-direction: column; gap: 8px; margin: 16px 0 0; padding: 12px 14px; border: 2px solid var(--border-soft); border-radius: 12px; background: var(--surface); font-size: 13.5px; }
+  .ep-mode-change { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
+  .ep-mode-change select { width: auto; }
