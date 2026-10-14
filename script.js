@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3506,9 +3506,7 @@
           function (it, svg) { it.figureSvg = svg; }
         ).then(function (stillMissing) {
           course.transcription = transcription;
-          course.explanation = addMode ? (keepExplanation + (explanation.trim() ? "
-
-" + explanation : "")) : explanation;
+          course.explanation = addMode ? (keepExplanation + (explanation.trim() ? "\n\n" + explanation : "")) : explanation;
           course.transcriptionFigureSvg = textBlocks[0].figureSvg;
           course.explanationFigureSvg = addMode ? (course.explanationFigureSvg || textBlocks[1].figureSvg) : textBlocks[1].figureSvg;
           // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
