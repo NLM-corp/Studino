@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -152,6 +152,7 @@
     if (dbUsesLocalStorageFallback) return Promise.resolve();
     var alive = {};
     allPodcastsInDB().forEach(function (p) { alive[PODCAST_AUDIO_PREFIX + p.id] = 1; });
+    allFigureLists(DB).forEach(function (list) { list.forEach(function (f) { if (f) alive[FIGURE_IMG_PREFIX + f.id] = 1; }); });
     return idbKeys().then(function (keys) {
       keys.forEach(function (k) {
         if (typeof k === "string" && k.indexOf(PODCAST_AUDIO_PREFIX) === 0 && !alive[k]) {
@@ -159,8 +160,88 @@
           if (podcastLiveAudioUrls[id]) { URL.revokeObjectURL(podcastLiveAudioUrls[id]); delete podcastLiveAudioUrls[id]; }
           idbDelete(k).catch(function () {});
         }
+        if (typeof k === "string" && k.indexOf(FIGURE_IMG_PREFIX) === 0 && !alive[k]) {
+          var fid = k.slice(FIGURE_IMG_PREFIX.length);
+          if (figureUrlCache[fid]) { URL.revokeObjectURL(figureUrlCache[fid]); delete figureUrlCache[fid]; }
+          idbDelete(k).catch(function () {});
+        }
       });
     }).catch(function () {});
+  }
+
+  /* ---------------- Images des schémas découpés : rangées à part ----------------
+     Même raison que l'audio des podcasts : gardées en data URL dans DB, chaque saveDB() les recopiait
+     toutes (des dizaines de Mo avec beaucoup de cours). Chaque image vit dans sa propre entrée IndexedDB
+     (« fig:<id> ») ; dans DB, le schéma garde son id, sa légende et stored=true, et figureSrc() donne
+     l'URL blob: chargée pour la session. */
+  var FIGURE_IMG_PREFIX = "fig:";
+  var figureUrlCache = {}; // id → URL blob: de cette session
+  function figureSrc(f) { return (f && (f.image || figureUrlCache[f.id])) || ""; }
+  function allFigureLists(db) {
+    var lists = [];
+    Object.keys((db && db.data) || {}).forEach(function (u) {
+      var d = db.data[u];
+      if (!d) return;
+      (d.subjects || []).forEach(function (s) {
+        (s.themes || []).forEach(function (t) {
+          (t.chapters || []).forEach(function (c) {
+            (c.courses || []).forEach(function (co) { if (Array.isArray(co.figures)) lists.push(co.figures); });
+          });
+        });
+      });
+      (d.importedExercises || []).forEach(function (e) { if (Array.isArray(e.figures)) lists.push(e.figures); });
+    });
+    return lists;
+  }
+  // Range dans IndexedDB les images encore stockées dans les données (nouvelles découpes, anciens cours).
+  function storeFigureImages() {
+    if (dbUsesLocalStorageFallback) return Promise.resolve();
+    var todo = [];
+    allFigureLists(DB).forEach(function (list) { list.forEach(function (f) { if (f && f.image && f.image.indexOf("data:") === 0) todo.push(f); }); });
+    if (!todo.length) return Promise.resolve();
+    return todo.reduce(function (chain, f) {
+      return chain.then(function () {
+        var dataUrl = f.image;
+        return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+          return idbSet(FIGURE_IMG_PREFIX + f.id, blob).then(function () {
+            if (f.image !== dataUrl) return; // remplacé entre-temps
+            figureUrlCache[f.id] = URL.createObjectURL(blob);
+            f.image = ""; f.stored = true;
+          });
+        }).catch(function (err) { console.error("Rangement d'un schéma :", err); });
+      });
+    }, Promise.resolve()).then(function () { saveDB(); });
+  }
+  function hydrateFigureImages() {
+    if (dbUsesLocalStorageFallback) return Promise.resolve();
+    var stored = [];
+    allFigureLists(DB).forEach(function (list) { list.forEach(function (f) { if (f && f.stored && !f.image && !figureUrlCache[f.id]) stored.push(f); }); });
+    return Promise.all(stored.map(function (f) {
+      return idbGet(FIGURE_IMG_PREFIX + f.id).then(function (blob) { if (blob) figureUrlCache[f.id] = URL.createObjectURL(blob); }).catch(function () {});
+    })).then(storeFigureImages);
+  }
+  // Copie pour l'export : les images rangées à part sont remises dedans (data URL), sinon une sauvegarde
+  // importée sur un autre appareil n'aurait plus aucun schéma.
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(fr.error); };
+      fr.readAsDataURL(blob);
+    });
+  }
+  function exportCopyWithFigures(dbCopy) {
+    var jobs = [];
+    allFigureLists(dbCopy).forEach(function (list) {
+      list.forEach(function (f) {
+        if (!f || f.image || !f.stored) return;
+        jobs.push(idbGet(FIGURE_IMG_PREFIX + f.id).then(function (blob) {
+          if (!blob) return;
+          return blobToDataUrl(blob).then(function (url) { f.image = url; delete f.stored; });
+        }).catch(function () {}));
+      });
+    });
+    return Promise.all(jobs).then(function () { return dbCopy; });
   }
 
   function saveDB() {
@@ -548,6 +629,17 @@
       return { subs: subs, figures: stored };
     });
   }
+  // Schémas d'un cours existant envoyés à l'IA sous forme de jetons [[keep:id]] (elle ne voit pas les
+  // images), puis remis en vraies références après la génération.
+  function protectFigureRefs(text) {
+    return String(text || "").replace(/!\[[^\]]*\]\(figure:([^)\s]+)\)/g, "[[keep:$1]]");
+  }
+  function restoreFigureRefs(text, figures) {
+    return String(text || "").replace(/\[\[keep:([^\]\s]+)\]\]/g, function (m, id) {
+      var f = (figures || []).find(function (x) { return x.id === id; });
+      return f ? "![" + String(f.caption || "").replace(/[[\]]/g, "") + "](figure:" + id + ")" : "";
+    });
+  }
   function substituteFigures(text, subs) {
     var out = text || "";
     (subs || []).forEach(function (s) { if (s.placeholder) out = out.split(s.placeholder).join(s.replacement); });
@@ -576,7 +668,7 @@
   // récupéré en entier par le zoom de vérification, qui regarde alors large au-dessus et en dessous.
   var FIG_TILE_OVERLAP = 0.5;
   var FIG_TILES_PER_CALL = 4;
-  var FIG_MAX_TILES = 60, FIG_MAX_PDF_PAGES = 30, FIG_MAX_FIGURES = 40;
+  var FIG_MAX_TILES = 150, FIG_MAX_PDF_PAGES = 60, FIG_MAX_FIGURES = 80;
   function runWithConcurrency(tasks, limit) {
     var next = 0;
     var worker = function () {
@@ -600,6 +692,7 @@
         var buf = await (await fetch(src)).arrayBuffer();
         var doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
         var pageCount = Math.min(doc.numPages, FIG_MAX_PDF_PAGES);
+        if (doc.numPages > FIG_MAX_PDF_PAGES) sources.truncated = true;
         for (var pn = 1; pn <= pageCount; pn++) {
           (function (page, pageNum) {
             var base = page.getViewport({ scale: 1 });
@@ -679,7 +772,7 @@
     required: ["figures"]
   };
   function buildTileDetectPrompt(count) {
-    return "Voici " + count + " image(s), numérotées à partir de 0 : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
+    return "Voici " + count + " image(s), chacune précédée de son numéro (« Image 0 », « Image 1 »…), le numéro à renvoyer dans imageIndex : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
       "À repérer : graphiques, courbes, schémas (cases, flèches, cercles, tableaux de bits dessinés...), diagrammes, montages, figures géométriques, structures chimiques, cartes, pictogrammes, photos qui apportent une information.\n" +
       "À NE PAS repérer : le texte normal, les calculs et développements écrits (même alignés ou posés en colonnes : ils seront retranscrits en texte), les tableaux de texte simples, les titres, les numéros, les logos, les décorations, les zones vides.\n\n" +
       "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Si un visuel est coupé par un bord de l'image (haut, bas, gauche ou droite), donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
@@ -710,8 +803,11 @@
     var sample = [];
     for (var sy = 0; sy < h; sy += Math.max(1, Math.floor(h / 40))) for (var sx = 0; sx < w; sx += Math.max(1, Math.floor(w / 40))) sample.push(lum(sx, sy));
     sample.sort(function (a, b) { return a - b; });
-    var bg = sample[Math.floor(sample.length * 0.9)] || 255;
-    var isInk = function (x, y) { return lum(x, y) < bg - 70; };
+    // Document à fond sombre (mode sombre, tableau noir) : l'« encre » est alors plus CLAIRE que le fond.
+    var median = sample[Math.floor(sample.length * 0.5)] || 255;
+    var dark = median < 110;
+    var bg = dark ? (sample[Math.floor(sample.length * 0.1)] || 0) : (sample[Math.floor(sample.length * 0.9)] || 255);
+    var isInk = dark ? function (x, y) { return lum(x, y) > bg + 70; } : function (x, y) { return lum(x, y) < bg - 70; };
     var band = 2;
     var side = function (horizontal, fixedStart) {
       var len = horizontal ? w : h, ink = 0;
@@ -733,14 +829,17 @@
     var box = clamp(r);
     if (box.w < 20 || box.h < 20) return null;
     var canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
+    // On n'élargit que pour de FINS traits coupés (1,5 % à 45 % du bord) : un bord presque entièrement
+    // « encré » est une grande zone (ombre de la photo, table, fond d'un encadré), pas un trait coupé.
+    var cutSide = function (v) { return v > 0.015 && v < 0.45; };
     for (var round = 0; round < 12; round++) {
       var e = figureEdgeInk(canvas);
       var stepX = Math.max(16, box.w * 0.06), stepY = Math.max(16, box.h * 0.06);
       var grow = { x: box.x, y: box.y, w: box.w, h: box.h }, changed = false;
-      if (e.left > 0.015 && box.x > 0) { grow.x -= stepX; grow.w += stepX; changed = true; }
-      if (e.right > 0.015 && box.x + box.w < source.w) { grow.w += stepX; changed = true; }
-      if (e.top > 0.015 && box.y > 0) { grow.y -= stepY; grow.h += stepY; changed = true; }
-      if (e.bottom > 0.015 && box.y + box.h < source.h) { grow.h += stepY; changed = true; }
+      if (cutSide(e.left) && box.x > 0) { grow.x -= stepX; grow.w += stepX; changed = true; }
+      if (cutSide(e.right) && box.x + box.w < source.w) { grow.w += stepX; changed = true; }
+      if (cutSide(e.top) && box.y > 0) { grow.y -= stepY; grow.h += stepY; changed = true; }
+      if (cutSide(e.bottom) && box.y + box.h < source.h) { grow.h += stepY; changed = true; }
       if (!changed) break;
       box = clamp(grow);
       canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
@@ -760,10 +859,14 @@
     var sources = [];
     try {
       sources = await buildFigureSources(images);
+      var truncated = !!sources.truncated, failedBatches = 0;
       // 1. Tranches de toutes les sources, repérage par lots de quelques tranches.
       var tiles = [];
       sources.forEach(function (s, si) {
-        figureTilesFor(s).forEach(function (t) { if (tiles.length < FIG_MAX_TILES) tiles.push({ si: si, x: t.x, y: t.y, w: t.w, h: t.h }); });
+        figureTilesFor(s).forEach(function (t) {
+          if (tiles.length < FIG_MAX_TILES) tiles.push({ si: si, x: t.x, y: t.y, w: t.w, h: t.h });
+          else truncated = true;
+        });
       });
       for (var ti = 0; ti < tiles.length; ti++) tiles[ti].dataUrl = await sources[tiles[ti].si].renderRegion(tiles[ti].x, tiles[ti].y, tiles[ti].w, tiles[ti].h);
       var batches = [];
@@ -771,8 +874,16 @@
       var found = [], anyBatchOk = false;
       await runWithConcurrency(batches.map(function (batch) {
         return function () {
-          var parts = geminiImageParts(batch.map(function (t) { return t.dataUrl; })).concat([{ text: buildTileDetectPrompt(batch.length) }]);
-          return callGemini(parts, FIGURE_TILE_DETECT_SCHEMA).then(function (data) {
+          // Chaque image est précédée de son numéro écrit en clair : sans ça, l'IA se trompait parfois de
+          // numéro (en comptant à partir de 1) et le schéma était cherché dans la mauvaise tranche.
+          var parts = [];
+          batch.forEach(function (t, k) { parts.push({ text: "Image " + k + " :" }); parts = parts.concat(geminiImageParts([t.dataUrl])); });
+          parts.push({ text: buildTileDetectPrompt(batch.length) });
+          // Un lot qui échoue (quota, serveurs saturés) est retenté une fois après une pause, plutôt que de
+          // perdre en silence les schémas de ces tranches.
+          return callGemini(parts, FIGURE_TILE_DETECT_SCHEMA).catch(function () {
+            return sleep(8000).then(function () { return callGemini(parts, FIGURE_TILE_DETECT_SCHEMA); });
+          }).catch(function (err) { failedBatches++; throw err; }).then(function (data) {
             anyBatchOk = true;
             (data && data.figures || []).forEach(function (f) {
               var t = batch[f.imageIndex];
@@ -812,7 +923,7 @@
       found.sort(function (a, b) { return b.w * b.h - a.w * a.h; });
       var kept = [];
       found.forEach(function (f) {
-        if (kept.length >= FIG_MAX_FIGURES) return;
+        if (kept.length >= FIG_MAX_FIGURES) { truncated = true; return; }
         if (!kept.some(function (k) { return k.si === f.si && figBoxOverlap(k, f) > 0.5; })) kept.push(f);
       });
       kept.sort(function (a, b) { return a.si - b.si || a.y - b.y; }); // ordre de lecture
@@ -871,9 +982,18 @@
         var fid = uid();
         figures.push({ id: fid, image: crops[i], caption: caption });
         subs.push({ placeholder: placeholder, replacement: "![" + caption + "](figure:" + fid + ")" });
-        list.push({ placeholder: placeholder, caption: caption, imageIndex: sources[f.si].fileIndex });
+        // Position dans le document, pour que la génération place chaque schéma au bon endroit du texte même
+        // quand deux légendes se ressemblent.
+        var src = sources[f.si];
+        var along = src.h >= src.w ? (f.y + f.h / 2) / src.h : (f.x + f.w / 2) / src.w;
+        var where = "fichier " + (src.fileIndex + 1) + (src.page > 1 || sources.some(function (o) { return o.fileIndex === src.fileIndex && o.page > 1; }) ? ", page " + src.page : "") +
+          ", vers " + Math.round(along * 100) + " % de " + (src.h >= src.w ? "la hauteur" : "la largeur");
+        list.push({ placeholder: placeholder, caption: caption, imageIndex: src.fileIndex, where: where, order: list.length + 1 });
       });
-      return { ok: true, list: list, subs: subs, figures: figures };
+      var warning = truncated ? "Document très long : seuls les schémas du début ont pu être récupérés automatiquement."
+        : failedBatches ? "Certains passages du document n'ont pas pu être analysés (serveurs saturés) : il peut manquer des schémas."
+        : "";
+      return { ok: true, list: list, subs: subs, figures: figures, warning: warning };
     } catch (err) {
       console.error("Détection des schémas :", err);
       return empty;
@@ -887,7 +1007,7 @@
     if (pre && pre.ok && !pre.list.length) return "SCHÉMAS : les visuels du document ont déjà été repérés à part (il n'y en a aucun à placer). Laisse \"figures\" vide et n'insère aucun jeton [[figure:N]].\n\n";
     if (!pre || !pre.list || !pre.list.length) return "";
     return "SCHÉMAS DÉJÀ DÉCOUPÉS — les visuels du document ont déjà été repérés et découpés :\n" +
-      pre.list.map(function (f) { return f.placeholder + " — fichier " + f.imageIndex + " — " + f.caption; }).join("\n") + "\n" +
+      pre.list.map(function (f) { return f.placeholder + " — n° " + f.order + " dans l'ordre du document — " + (f.where || "fichier " + f.imageIndex) + " — " + f.caption; }).join("\n") + "\n" +
       "Insère CHAQUE jeton ci-dessus tel quel, seul sur sa ligne, " + where + ", à l'endroit exact où ce visuel apparaît dans le document. N'en oublie aucun, ne les décris pas en mots à la place, ne les modifie pas. Laisse \"figures\" vide et n'insère aucun autre jeton : tous les visuels ont déjà été repérés et découpés à part.\n\n";
   }
   // Jetons que la génération n'a pas placés : on n'en perd aucun.
@@ -1064,7 +1184,7 @@
         // un peu (une tendance naturelle des modèles à "faire plus propre") — la seule façon de garantir
         // zéro perte est de ne plus jamais y retoucher, et de laisser le code les recoller tel quel.
         ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu, donné ici UNIQUEMENT comme contexte pour que ton explication/tes questions restent cohérentes avec lui — tu ne dois PAS le recopier ni le reformuler dans \"transcription\" :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Dans le champ \"transcription\" de ta réponse, retranscris UNIQUEMENT le contenu de CES NOUVELLES photos, fidèlement et intégralement, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras) — reprends les détails/exemples/remarques QUI SONT RÉELLEMENT ÉCRITS SUR CES PHOTOS, jamais un exemple ou un détail que tu inventerais toi-même. Le contenu déjà connu ci-dessus sera rajouté automatiquement par le site, tel quel, tu n'as pas à t'en occuper."
-        : "Ce cours a déjà été retranscrit à partir de documents précédents (aucune nouvelle photo n'est fournie cette fois). Reprends sa transcription telle quelle dans \"transcription\" (tu peux la nettoyer légèrement si besoin, mais garde tout le contenu, en Markdown structuré) :\n\n" + priorTranscription;
+        : "Ce cours a déjà été retranscrit à partir de documents précédents (aucune nouvelle photo n'est fournie cette fois). Reprends sa transcription telle quelle dans \"transcription\" (tu peux la nettoyer légèrement si besoin, mais garde tout le contenu, en Markdown structuré). Les jetons de la forme [[keep:...]] sont des schémas : recopie-les tels quels, chacun seul sur sa ligne, exactement au même endroit du texte :\n\n" + priorTranscription;
     } else if (imageCount === 0) {
       step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
     } else if (imageCount === 1) {
@@ -3266,6 +3386,8 @@
           // — c'est alors le seul moyen de pouvoir corriger le tir avec "Régénérer" plus tard.
           if (!stillMissing) entry.images = [];
           saveDB();
+          if (pre && pre.warning) toast("⚠️ " + pre.warning);
+          storeFigureImages();
           toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
           render();
         });
@@ -3313,6 +3435,11 @@
     course.error = null;
     saveDB(); render();
     var images = imagesOverride || course.images;
+    // Ce qui existe déjà (texte AVEC ses schémas, et les schémas eux-mêmes) : avant, « Ajouter des documents »
+    // et « Régénérer » repartaient d'un texte sans images et vidaient la liste des schémas, qui disparaissaient.
+    var keepTranscription = course.transcription || "";
+    var keepFigures = (course.figures || []).slice();
+    var freshFromImages = !priorTranscription && images && images.length; // tout refait depuis les photos : les anciens schémas sont remplacés
     var pre = null;
     prepareDocumentFigures(images).then(function (p) {
       pre = p;
@@ -3323,13 +3450,14 @@
         // Schémas déjà découpés que la génération a oublié de placer : ajoutés à la fin, jamais perdus.
         var lostPre = unplacedPreFigures(pre, [data.transcription, data.explanation]);
         var allSubs = pre.subs.concat(resolved.subs);
-        var transcription = substituteFigures(data.transcription, allSubs);
+        // Régénération sans photo : les schémas existants voyagent sous forme de jetons [[keep:id]], remis ici.
+        var transcription = substituteFigures(restoreFigureRefs(data.transcription, keepFigures), allSubs);
         if (lostPre.length) transcription += "\n\n## Schémas du document\n\n" + lostPre.map(function (s) { return s.replacement; }).join("\n\n");
         // Ajout de nouvelles photos à un cours existant : l'IA n'a retranscrit QUE le nouveau contenu
-        // (voir buildCoursePrompt) — on recolle l'ancien texte tel quel, jamais retouché par l'IA, pour
-        // garantir qu'aucun détail déjà transcrit ne puisse être perdu/compressé lors de l'ajout.
-        if (priorTranscription && images && images.length) transcription = priorTranscription + "\n\n" + transcription;
-        var explanation = substituteFigures(data.explanation, allSubs);
+        // (voir buildCoursePrompt) — on recolle l'ancien texte tel quel (AVEC ses schémas), jamais retouché
+        // par l'IA, pour garantir qu'aucun détail déjà transcrit ne puisse être perdu lors de l'ajout.
+        if (priorTranscription && images && images.length) transcription = (keepTranscription || priorTranscription) + "\n\n" + transcription;
+        var explanation = substituteFigures(restoreFigureRefs(data.explanation, keepFigures), allSubs);
         var missedFigure = [transcription, explanation].some(statementMissesFigure);
         // Un schéma manqué est souvent un raté ponctuel de cette passe précise plutôt qu'un problème
         // systématique : retenter une fois EN SILENCE (tant que les photos sont là) rattrape la
@@ -3366,7 +3494,7 @@
           // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
           // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
           // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
-          course.figures = pre.figures.concat(resolved.figures);
+          course.figures = (freshFromImages ? [] : keepFigures).concat(pre.figures, resolved.figures);
           course.videos = course.videos || [];
           course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
           course.quizQuestions = quizQuestions;
@@ -3380,6 +3508,8 @@
           if (!stillMissing) course.images = [];
           saveDB();
           toast("Cours généré · " + course.title);
+          if (pre && pre.warning) toast("⚠️ " + pre.warning);
+          storeFigureImages();
           render();
           // Recherche de vraies vidéos en arrière-plan, après coup : le cours reste utilisable tout de
           // suite sans attendre cette passe, et si aucune vidéo pertinente n'est trouvée, on laisse
@@ -6357,7 +6487,7 @@
     if (!openState[entityId]) return toggle;
     var grid = figures.map(function (f) {
       return '<div class="course-figure-item">' +
-        '<img src="' + f.image + '" alt="" onclick="App.openFigureLightbox(this.src)">' +
+        '<img src="' + figureSrc(f) + '" alt="" onclick="App.openFigureLightbox(this.src)">' +
         (f.caption ? '<div class="course-figure-caption">' + esc(f.caption) + '</div>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:100%" onclick="App.' + deleteAction + '(\'' + entityId + '\',\'' + f.id + '\')">' + icon("trash") + ' Supprimer</button>' +
         '</div>';
@@ -6644,7 +6774,7 @@
         if (figRef) {
           var refFig = (figures || []).find(function (f) { return f.id === figRef[1]; });
           if (refFig) {
-            html += '<figure class="prose-figure"><img src="' + refFig.image + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+            html += '<figure class="prose-figure"><img src="' + figureSrc(refFig) + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
           } else {
             html += '<div class="prose-figure-removed">🚫 Schéma supprimé pour libérer de l\'espace' + (imgLine[1] ? " — " + esc(imgLine[1]) : "") + '</div>';
           }
@@ -8762,7 +8892,7 @@
       } else {
         // Plus de photos/PDF conservés (espace libéré) : on régénère explication/flashcards/contrôle/
         // exercices à partir de la retranscription déjà connue, plutôt que d'échouer ou de repartir de rien.
-        runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, [], stripFigureMarkdown(loc.course.transcription));
+        runCourseGeneration(loc.course, loc.subject.name, loc.chapter.name, [], protectFigureRefs(loc.course.transcription));
       }
     },
     openCourseChat: function (courseId) { courseChatOpen[courseId] = true; courseChatScrollIntoView = true; render(); },
@@ -9444,7 +9574,9 @@
     // donc rien automatiquement. Ce fichier de sauvegarde (le DB entier : comptes + données) permet de
     // le faire manuellement.
     exportBackup: function () {
-      var json = JSON.stringify(dbWithoutPodcastAudio(), null, 2);
+      toast("Préparation de la sauvegarde…");
+      exportCopyWithFigures(JSON.parse(JSON.stringify(dbWithoutPodcastAudio()))).then(function (copy) {
+      var json = JSON.stringify(copy, null, 2);
       var blob = new Blob([json], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
@@ -9455,6 +9587,7 @@
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast("Sauvegarde téléchargée");
+      });
     },
     importBackupFile: function (e) {
       var file = e.target.files && e.target.files[0];
@@ -9483,7 +9616,7 @@
       if (!DB.currentUser || !DB.users[DB.currentUser]) DB.currentUser = null;
       modal = null;
       saveDB();
-      hydratePodcastAudio().then(function () { render(); });
+      hydratePodcastAudio().then(hydrateFigureImages).then(function () { render(); });
       toast("Sauvegarde importée !");
       navigate("#/");
     },
@@ -9494,7 +9627,7 @@
       DB = mergeDB(DB, imported);
       modal = null;
       saveDB();
-      hydratePodcastAudio().then(function () { render(); });
+      hydratePodcastAudio().then(hydrateFigureImages).then(function () { render(); });
       toast("Sauvegardes fusionnées !");
       navigate("#/");
     },
@@ -10172,7 +10305,7 @@
   // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
   var appEl = document.getElementById("app");
   if (appEl) appEl.innerHTML = '<div class="processing-box" style="min-height:100vh;justify-content:center">' + genLogo() + '<span>Chargement…</span></div>';
-  initDB().then(function () { markInterruptedPodcasts(); return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }); }).then(function () {
+  initDB().then(function () { markInterruptedPodcasts(); return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }).then(function () { return hydrateFigureImages().catch(function (err) { console.error("Images des schémas :", err); }); }); }).then(function () {
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", syncTopbarHeightVar);
     render();
