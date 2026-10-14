@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -350,7 +350,10 @@
     });
   }
   function drawSourceToJpegDataUrl(source, w, h) {
-    var scale = Math.min(1, IMG_MAX_W / w);
+    // Réduction calée sur le PETIT côté (1400 px) : calée sur la largeur, un document très large devenait
+    // une bande de quelques pixels de haut, illisible. Le grand côté est plafonné pour rester sous la
+    // taille maximale d'un canvas du navigateur.
+    var scale = Math.min(1, IMG_MAX_W / Math.min(w, h), 16000 / Math.max(w, h));
     var canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(w * scale));
     canvas.height = Math.max(1, Math.round(h * scale));
@@ -566,7 +569,7 @@
      taille maximale d'un canvas du navigateur (découpes blanches). On découpe donc chaque photo / page
      en tranches aux proportions normales qui se chevauchent, l'IA repère les visuels tranche par tranche,
      puis chaque visuel est revérifié sur un zoom serré autour de lui avant la découpe finale. */
-  var FIG_RENDER_WIDTH = 1600;   // largeur de rendu d'une page de PDF
+  var FIG_RENDER_SHORT = 1600;   // petit côté d'une page de PDF au rendu (page haute OU large)
   var FIG_TILE_RATIO = 1.6;      // hauteur d'une tranche = 1,6 × sa largeur (proche d'une page A4)
   // 50 % de chevauchement : tout schéma moins haut que la moitié d'une tranche est forcément ENTIER dans au
   // moins une tranche. Un schéma plus grand, coupé partout, est quand même signalé (cut=true) puis
@@ -600,7 +603,7 @@
         for (var pn = 1; pn <= pageCount; pn++) {
           (function (page, pageNum) {
             var base = page.getViewport({ scale: 1 });
-            var vp = page.getViewport({ scale: Math.min(3, FIG_RENDER_WIDTH / base.width) });
+            var vp = page.getViewport({ scale: Math.min(3, FIG_RENDER_SHORT / Math.min(base.width, base.height)) });
             sources.push({
               fileIndex: fi, page: pageNum, w: Math.round(vp.width), h: Math.round(vp.height), doc: doc,
               renderRegion: function (x, y, w, h) {
@@ -633,17 +636,25 @@
     }
     return sources;
   }
+  // Tranches le long du GRAND côté : bandes horizontales pour une page haute, verticales pour une page
+  // large. Chaque tranche garde des proportions normales (1,6 × le petit côté).
   function figureTilesFor(source) {
-    var tileH = Math.round(source.w * FIG_TILE_RATIO);
-    if (source.h <= tileH * 1.15) return [{ y: 0, h: source.h }];
-    var step = Math.round(tileH * (1 - FIG_TILE_OVERLAP));
-    var tiles = [];
-    for (var y = 0; y < source.h; y += step) {
-      var top = Math.min(y, source.h - tileH);
-      tiles.push({ y: top, h: tileH });
-      if (top + tileH >= source.h) break;
+    var vertical = source.h >= source.w;
+    var along = vertical ? source.h : source.w, across = vertical ? source.w : source.h;
+    var len = Math.round(across * FIG_TILE_RATIO);
+    var spans = [];
+    if (along <= len * 1.15) spans.push({ start: 0, len: along });
+    else {
+      var step = Math.round(len * (1 - FIG_TILE_OVERLAP));
+      for (var p = 0; p < along; p += step) {
+        var start = Math.min(p, along - len);
+        spans.push({ start: start, len: len });
+        if (start + len >= along) break;
+      }
     }
-    return tiles;
+    return spans.map(function (sp) {
+      return vertical ? { x: 0, y: sp.start, w: source.w, h: sp.len } : { x: sp.start, y: 0, w: sp.len, h: source.h };
+    });
   }
   var FIGURE_TILE_DETECT_SCHEMA = {
     type: "object",
@@ -656,7 +667,7 @@
             imageIndex: { type: "integer", description: "Index (à partir de 0) de l'image de CET envoi où le visuel est entièrement visible." },
             box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 dans CETTE image, qui contient TOUT le visuel avec son titre et ses annotations, sans le texte de l'énoncé autour." },
             caption: { type: "string", description: "Légende distinctive : partie/exercice + ce que montre le visuel." },
-            cut: { type: "boolean", description: "true si le visuel est coupé par le bord haut ou bas de cette image (il continue au-delà)." }
+            cut: { type: "boolean", description: "true si le visuel est coupé par un bord de cette image (il continue au-delà)." }
           },
           required: ["imageIndex", "box", "caption", "cut"]
         }
@@ -665,10 +676,10 @@
     required: ["figures"]
   };
   function buildTileDetectPrompt(count) {
-    return "Voici " + count + " image(s), numérotées à partir de 0 : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent un peu). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
+    return "Voici " + count + " image(s), numérotées à partir de 0 : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
       "À repérer : graphiques, courbes, schémas (cases, flèches, cercles, tableaux de bits dessinés...), diagrammes, montages, figures géométriques, structures chimiques, cartes, pictogrammes, photos qui apportent une information.\n" +
       "À NE PAS repérer : le texte normal, les calculs et développements écrits (même alignés ou posés en colonnes : ils seront retranscrits en texte), les tableaux de texte simples, les titres, les numéros, les logos, les décorations, les zones vides.\n\n" +
-      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Si un visuel est coupé par le bord HAUT ou BAS d'une image, donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
+      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Si un visuel est coupé par un bord de l'image (haut, bas, gauche ou droite), donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   var FIGURE_ZOOM_SCHEMA = {
@@ -701,9 +712,9 @@
       // 1. Tranches de toutes les sources, repérage par lots de quelques tranches.
       var tiles = [];
       sources.forEach(function (s, si) {
-        figureTilesFor(s).forEach(function (t) { if (tiles.length < FIG_MAX_TILES) tiles.push({ si: si, y: t.y, h: t.h }); });
+        figureTilesFor(s).forEach(function (t) { if (tiles.length < FIG_MAX_TILES) tiles.push({ si: si, x: t.x, y: t.y, w: t.w, h: t.h }); });
       });
-      for (var ti = 0; ti < tiles.length; ti++) tiles[ti].dataUrl = await sources[tiles[ti].si].renderRegion(0, tiles[ti].y, sources[tiles[ti].si].w, tiles[ti].h);
+      for (var ti = 0; ti < tiles.length; ti++) tiles[ti].dataUrl = await sources[tiles[ti].si].renderRegion(tiles[ti].x, tiles[ti].y, tiles[ti].w, tiles[ti].h);
       var batches = [];
       for (var b = 0; b < tiles.length; b += FIG_TILES_PER_CALL) batches.push(tiles.slice(b, b + FIG_TILES_PER_CALL));
       var found = [], anyBatchOk = false;
@@ -715,10 +726,9 @@
             (data && data.figures || []).forEach(function (f) {
               var t = batch[f.imageIndex];
               if (!t || !isValidFigureBox(f.box)) return;
-              var s = sources[t.si];
-              var x0 = f.box[1] / 1000 * s.w, x1 = f.box[3] / 1000 * s.w;
+              var x0 = t.x + f.box[1] / 1000 * t.w, x1 = t.x + f.box[3] / 1000 * t.w;
               var y0 = t.y + f.box[0] / 1000 * t.h, y1 = t.y + f.box[2] / 1000 * t.h;
-              found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "", cut: !!f.cut, tileH: t.h });
+              found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "", cut: !!f.cut, tileW: t.w, tileH: t.h });
             });
           });
         };
@@ -739,7 +749,7 @@
           var s = sources[f.si];
           var mx = Math.max(40, f.w * 0.25), my = Math.max(40, f.h * 0.35);
           // Visuel coupé au bord d'une tranche : on regarde beaucoup plus haut et plus bas pour le récupérer en entier.
-          if (f.cut) my = Math.max(my, f.tileH * 0.6);
+          if (f.cut) { if (f.tileH < s.h) my = Math.max(my, f.tileH * 0.6); if (f.tileW < s.w) mx = Math.max(mx, f.tileW * 0.6); }
           var cx = Math.max(0, f.x - mx), cy = Math.max(0, f.y - my);
           var cw = Math.min(s.w, f.x + f.w + mx) - cx, ch = Math.min(s.h, f.y + f.h + my) - cy;
           return s.renderRegion(cx, cy, cw, ch).then(function (zoomUrl) {
