@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1183,7 +1183,7 @@
         // texte déjà transcrit, même avec la consigne "ne perds rien", finit toujours par le compresser
         // un peu (une tendance naturelle des modèles à "faire plus propre") — la seule façon de garantir
         // zéro perte est de ne plus jamais y retoucher, et de laisser le code les recoller tel quel.
-        ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu, donné ici UNIQUEMENT comme contexte pour que ton explication/tes questions restent cohérentes avec lui — tu ne dois PAS le recopier ni le reformuler dans \"transcription\" :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Dans le champ \"transcription\" de ta réponse, retranscris UNIQUEMENT le contenu de CES NOUVELLES photos, fidèlement et intégralement, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras) — reprends les détails/exemples/remarques QUI SONT RÉELLEMENT ÉCRITS SUR CES PHOTOS, jamais un exemple ou un détail que tu inventerais toi-même. Le contenu déjà connu ci-dessus sera rajouté automatiquement par le site, tel quel, tu n'as pas à t'en occuper."
+        ? "Ce cours a déjà été retranscrit à partir de documents précédents. Voici son contenu déjà connu, donné ici UNIQUEMENT comme contexte pour que ton explication/tes questions restent cohérentes avec lui — tu ne dois PAS le recopier ni le reformuler dans \"transcription\" :\n\n" + priorTranscription + "\n\nL'élève vient d'ajouter " + imageCount + " nouvelle(s) photo(s)/page(s) à ce même cours (fournies ci-dessous, dans l'ordre). Dans le champ \"transcription\" de ta réponse, retranscris UNIQUEMENT ce que CES NOUVELLES photos apportent de NOUVEAU par rapport au contenu déjà connu ci-dessus, fidèlement et intégralement : un passage déjà présent dans le contenu connu (même formulé un peu autrement, une page reprise, recoupée ou mieux photographiée) ne doit PAS être recopié une deuxième fois ; s'il n'y a absolument rien de nouveau, laisse \"transcription\" vide. Retranscris le nouveau en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras) — reprends les détails/exemples/remarques QUI SONT RÉELLEMENT ÉCRITS SUR CES PHOTOS, jamais un exemple ou un détail que tu inventerais toi-même. Le contenu déjà connu ci-dessus sera rajouté automatiquement par le site, tel quel, tu n'as pas à t'en occuper."
         : "Ce cours a déjà été retranscrit à partir de documents précédents (aucune nouvelle photo n'est fournie cette fois). Reprends sa transcription telle quelle dans \"transcription\" (tu peux la nettoyer légèrement si besoin, mais garde tout le contenu, en Markdown structuré). Les jetons de la forme [[keep:...]] sont des schémas : recopie-les tels quels, chacun seul sur sa ligne, exactement au même endroit du texte :\n\n" + priorTranscription;
     } else if (imageCount === 0) {
       step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
@@ -1197,6 +1197,7 @@
       preFiguresPromptText(pre, "dans \"transcription\" (et aussi dans \"explanation\" là où c'est utile)") +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
+      (priorTranscription && imageCount > 0 ? "MODE AJOUT (prioritaire sur les consignes 2 à 6) : l'explication, les flashcards, les questions de révision et les exercices du contenu déjà connu EXISTENT DÉJÀ et sont conservés tels quels. \"explanation\", \"flashcards\", \"quizQuestions\" et \"exercises\" doivent donc porter UNIQUEMENT sur le contenu NOUVEAU que tu as mis dans \"transcription\" (en restant cohérents avec le reste du cours), sans reprendre ce qui est déjà couvert. Les nombres minimums indiqués plus bas ne s'appliquent pas : adapte-les à la quantité de contenu nouveau. Si \"transcription\" est vide, laisse-les tous vides.\n" : "") +
       "2. Rédige une VRAIE explication pédagogique approfondie, pas un résumé reformulé en plus simple. Pour CHAQUE notion du cours (pas seulement les principales) : explique le \"pourquoi\" avant/avec le \"quoi\" (d'où ça vient, à quoi ça sert, pourquoi c'est vrai ou pourquoi on en a besoin), donne au moins un exemple concret et chiffré/situé (jamais juste \"par exemple...\" vague), anticipe et lève explicitement la confusion ou l'erreur la plus fréquente sur cette notion précise (\"beaucoup d'élèves confondent X et Y, mais...\"), et relie la notion à celles qui précèdent/suivent dans le cours pour que l'ensemble forme un raisonnement cohérent plutôt qu'une liste de paragraphes indépendants. Structure-la en Markdown avec les mêmes ## et ### que la retranscription (une sous-section par grande notion), jamais un seul bloc de texte continu. Une explication qui se contente de reformuler la transcription avec des mots plus simples, sans profondeur ni exemple ni mise en garde, est un ÉCHEC — vise la longueur et la richesse qu'il faut pour que l'élève comprenne vraiment, pas un résumé expéditif.\n" +
       "3. Les vidéos YouTube recommandées sont gérées séparément après cette génération (recherche de vraies vidéos existantes) : ignore ce point ici.\n" +
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota. Qualité exigée pour chaque flashcard : \"q\" doit être une question PRÉCISE et autonome (compréhensible sans relire le cours, jamais une question vague type \"à quoi ça sert ?\" sans préciser de quoi on parle) ; \"a\" doit être une réponse COMPLÈTE et formulée en vraie phrase (jamais un mot ou un fragment télégraphique isolé, sauf si la réponse est authentiquement un seul mot/une seule valeur comme une date ou un nombre) — une flashcard doit se suffire à elle-même pour réviser sans le cours sous les yeux.\n" +
@@ -3439,12 +3440,29 @@
     // et « Régénérer » repartaient d'un texte sans images et vidaient la liste des schémas, qui disparaissaient.
     var keepTranscription = course.transcription || "";
     var keepFigures = (course.figures || []).slice();
+    // « Ajouter des documents » : seul le NOUVEAU contenu est ajouté. L'explication, les flashcards (avec
+    // ta progression), les questions et les exercices déjà là ne bougent pas ; ceux du nouveau contenu
+    // s'ajoutent à la suite.
+    var addMode = !!(priorTranscription && images && images.length);
+    var keepExplanation = course.explanation || "";
+    var keepFlashcards = (course.flashcards || []).slice();
+    var keepQuiz = (course.quizQuestions || []).slice();
+    var keepExercises = (course.exercises || []).slice();
     var freshFromImages = !priorTranscription && images && images.length; // tout refait depuis les photos : les anciens schémas sont remplacés
     var pre = null;
     prepareDocumentFigures(images).then(function (p) {
       pre = p;
       return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
     }).then(function (data) {
+      // Ajout de documents qui ne contiennent rien de nouveau : le cours reste exactement tel quel.
+      if (addMode && !String(data.transcription || "").trim()) {
+        course.status = "ready";
+        course.images = [];
+        saveDB();
+        toast("Rien de nouveau dans ces documents : le cours n'a pas changé.");
+        render();
+        return;
+      }
       // Repérage dédié réussi : les découpes approximatives de la génération elle-même sont ignorées.
       return resolveFigures(pre.ok ? [] : data.figures, images).then(function (resolved) {
         // Schémas déjà découpés que la génération a oublié de placer : ajoutés à la fin, jamais perdus.
@@ -3488,17 +3506,20 @@
           function (it, svg) { it.figureSvg = svg; }
         ).then(function (stillMissing) {
           course.transcription = transcription;
-          course.explanation = explanation;
+          course.explanation = addMode ? (keepExplanation + (explanation.trim() ? "
+
+" + explanation : "")) : explanation;
           course.transcriptionFigureSvg = textBlocks[0].figureSvg;
-          course.explanationFigureSvg = textBlocks[1].figureSvg;
+          course.explanationFigureSvg = addMode ? (course.explanationFigureSvg || textBlocks[1].figureSvg) : textBlocks[1].figureSvg;
           // Remplacé (pas accumulé) : les figures d'un ancien contenu ne sont de toute façon plus
           // référencées dans le texte fraîchement régénéré (le contexte envoyé à l'IA est nettoyé de
           // ses anciennes images), les garder ne ferait que gonfler le stockage pour rien.
           course.figures = (freshFromImages ? [] : keepFigures).concat(pre.figures, resolved.figures);
           course.videos = course.videos || [];
-          course.flashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
-          course.quizQuestions = quizQuestions;
-          course.exercises = exercises;
+          var newFlashcards = (data.flashcards || []).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: "new" }; });
+          course.flashcards = addMode ? keepFlashcards.concat(newFlashcards) : newFlashcards;
+          course.quizQuestions = addMode ? keepQuiz.concat(quizQuestions) : quizQuestions;
+          course.exercises = addMode ? keepExercises.concat(exercises) : exercises;
           course.status = "ready";
           // Les photos/PDF source ne sont plus utiles une fois le cours généré : la retranscription
           // sert désormais de mémoire pour "Régénérer"/"Ajouter des documents", donc plus la peine
@@ -7744,7 +7765,7 @@
         ) : '<p class="modal-warn">Crée d\'abord une matière avec au moins un cours généré.</p>');
     } else if (modal.type === "addCourseDocs") {
       inner = '<h3>Ajouter des documents</h3>' +
-        '<p class="modal-warn" style="margin-bottom:14px">Le contenu de ces nouvelles photos sera fusionné avec la retranscription déjà connue de ce cours, et tout le cours (retranscription, flashcards, contrôle, exercices) sera régénéré pour couvrir l\'ensemble.</p>' +
+        '<p class="modal-warn" style="margin-bottom:14px">Seul ce qui est <b>nouveau</b> dans ces documents est ajouté au cours : ce qui y est déjà n\'est pas recopié. Rien de ce qui existe ne change (retranscription, explication, schémas, flashcards et ta progression, contrôle, exercices) ; le nouveau contenu arrive à la suite, avec ses propres explications, flashcards, questions et exercices.</p>' +
         '<form onsubmit="App.addCourseDocs(event)">' +
         '<div class="field"><label>Nouvelles photos ou PDF</label>' +
         '<div class="file-thumbs">' +
