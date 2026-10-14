@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -606,13 +606,13 @@
             var vp = page.getViewport({ scale: Math.min(3, FIG_RENDER_SHORT / Math.min(base.width, base.height)) });
             sources.push({
               fileIndex: fi, page: pageNum, w: Math.round(vp.width), h: Math.round(vp.height), doc: doc,
-              renderRegion: function (x, y, w, h) {
+              renderCanvas: function (x, y, w, h) {
                 var canvas = document.createElement("canvas");
                 canvas.width = Math.max(1, Math.round(w)); canvas.height = Math.max(1, Math.round(h));
                 var ctx = canvas.getContext("2d");
                 ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
                 return page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -x, -y] }).promise
-                  .then(function () { return canvas.toDataURL("image/jpeg", 0.9); });
+                  .then(function () { return canvas; });
               }
             });
           })(await doc.getPage(pn), pn);
@@ -622,18 +622,21 @@
         (function (im) {
           sources.push({
             fileIndex: fi, page: 1, w: im.naturalWidth || im.width, h: im.naturalHeight || im.height,
-            renderRegion: function (x, y, w, h) {
+            renderCanvas: function (x, y, w, h) {
               var canvas = document.createElement("canvas");
               canvas.width = Math.max(1, Math.round(w)); canvas.height = Math.max(1, Math.round(h));
               var ctx = canvas.getContext("2d");
               ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
               ctx.drawImage(im, x, y, w, h, 0, 0, canvas.width, canvas.height);
-              return Promise.resolve(canvas.toDataURL("image/jpeg", 0.9));
+              return Promise.resolve(canvas);
             }
           });
         })(img);
       }
     }
+    sources.forEach(function (s) {
+      s.renderRegion = function (x, y, w, h) { return s.renderCanvas(x, y, w, h).then(function (c) { return c.toDataURL("image/jpeg", 0.9); }); };
+    });
     return sources;
   }
   // Tranches le long du GRAND côté : bandes horizontales pour une page haute, verticales pour une page
@@ -696,6 +699,54 @@
       "Si ce visuel n'est pas dans l'image (ou si ce n'est que du texte), mets found=false.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni.";
   }
+  // Vérification au pixel : si un trait (encre plus foncée que le fond) touche un bord de la découpe, c'est
+  // que le schéma continue au-delà → on élargit CE côté et on revérifie (jusqu'à 6 fois). Rattrape les
+  // découpes un peu trop serrées de l'IA (une lettre, un chiffre ou un bord de schéma coupé).
+  function figureEdgeInk(canvas) {
+    var w = canvas.width, h = canvas.height;
+    var data = canvas.getContext("2d").getImageData(0, 0, w, h).data;
+    var lum = function (x, y) { var k = (y * w + x) * 4; return 0.299 * data[k] + 0.587 * data[k + 1] + 0.114 * data[k + 2]; };
+    // Fond = luminance claire typique de la découpe (90e centile d'un échantillon).
+    var sample = [];
+    for (var sy = 0; sy < h; sy += Math.max(1, Math.floor(h / 40))) for (var sx = 0; sx < w; sx += Math.max(1, Math.floor(w / 40))) sample.push(lum(sx, sy));
+    sample.sort(function (a, b) { return a - b; });
+    var bg = sample[Math.floor(sample.length * 0.9)] || 255;
+    var isInk = function (x, y) { return lum(x, y) < bg - 70; };
+    var band = 2;
+    var side = function (horizontal, fixedStart) {
+      var len = horizontal ? w : h, ink = 0;
+      for (var p = 0; p < len; p++) {
+        for (var d = 0; d < band; d++) {
+          var c = fixedStart + d;
+          if (horizontal ? isInk(p, Math.min(h - 1, c)) : isInk(Math.min(w - 1, c), p)) { ink++; break; }
+        }
+      }
+      return ink / Math.max(1, len);
+    };
+    return { top: side(true, 0), bottom: side(true, h - band), left: side(false, 0), right: side(false, w - band) };
+  }
+  async function cropUntilEdgesClear(source, r) {
+    var clamp = function (b) {
+      var x = Math.max(0, b.x), y = Math.max(0, b.y);
+      return { x: x, y: y, w: Math.min(source.w, b.x + b.w) - x, h: Math.min(source.h, b.y + b.h) - y };
+    };
+    var box = clamp(r);
+    if (box.w < 20 || box.h < 20) return null;
+    var canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
+    for (var round = 0; round < 6; round++) {
+      var e = figureEdgeInk(canvas);
+      var stepX = Math.max(16, box.w * 0.06), stepY = Math.max(16, box.h * 0.06);
+      var grow = { x: box.x, y: box.y, w: box.w, h: box.h }, changed = false;
+      if (e.left > 0.015 && box.x > 0) { grow.x -= stepX; grow.w += stepX; changed = true; }
+      if (e.right > 0.015 && box.x + box.w < source.w) { grow.w += stepX; changed = true; }
+      if (e.top > 0.015 && box.y > 0) { grow.y -= stepY; grow.h += stepY; changed = true; }
+      if (e.bottom > 0.015 && box.y + box.h < source.h) { grow.h += stepY; changed = true; }
+      if (!changed) break;
+      box = clamp(grow);
+      canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
+    }
+    return { url: canvas.toDataURL("image/jpeg", 0.9), box: box };
+  }
   function figBoxOverlap(a, b) {
     var ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
     var iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
@@ -743,7 +794,7 @@
       });
       kept.sort(function (a, b) { return a.si - b.si || a.y - b.y; }); // ordre de lecture
       // 3. Zoom de vérification autour de chaque visuel, puis découpe finale à pleine résolution.
-      var crops = [];
+      var crops = [], finals = [];
       await runWithConcurrency(kept.map(function (f, i) {
         return function () {
           var s = sources[f.si];
@@ -761,19 +812,28 @@
                 if (z && isValidFigureBox(z.box)) {
                   box = { x: cx + z.box[1] / 1000 * cw, y: cy + z.box[0] / 1000 * ch, w: (z.box[3] - z.box[1]) / 1000 * cw, h: (z.box[2] - z.box[0]) / 1000 * ch };
                 }
-                var pad = Math.max(8, Math.min(box.w, box.h) * 0.03);
-                var x = Math.max(0, box.x - pad), y = Math.max(0, box.y - pad);
-                var w = Math.min(s.w, box.x + box.w + pad) - x, h = Math.min(s.h, box.y + box.h + pad) - y;
-                if (w < 20 || h < 20) return null;
-                return s.renderRegion(x, y, w, h);
-              })
-              .then(function (url) { if (url) crops[i] = url; });
+                var pad = Math.max(10, Math.min(box.w, box.h) * 0.04);
+                var r = { x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
+                return cropUntilEdgesClear(s, r).then(function (res) {
+                  if (res) { crops[i] = res.url; finals[i] = res.box; }
+                });
+              });
           });
         };
       }), 2);
+      // 4. Deuxième chasse aux doublons, APRÈS le zoom : deux morceaux d'un même grand schéma (coupé dans
+      // deux tranches) se recouvraient peu au repérage, mais le zoom les agrandit tous deux jusqu'au schéma
+      // entier. On ne garde alors que la découpe la plus grande.
+      var order = kept.map(function (f, i) { return i; }).filter(function (i) { return crops[i]; })
+        .sort(function (a, b) { return finals[b].w * finals[b].h - finals[a].w * finals[a].h; });
+      var finalKeep = {};
+      order.forEach(function (i) {
+        var dup = Object.keys(finalKeep).some(function (j) { return kept[j].si === kept[i].si && figBoxOverlap(finals[j], finals[i]) > 0.5; });
+        if (!dup) finalKeep[i] = true;
+      });
       var list = [], subs = [], figures = [];
       kept.forEach(function (f, i) {
-        if (!crops[i]) return;
+        if (!crops[i] || !finalKeep[i]) return;
         var placeholder = "[[img:" + list.length + "]]";
         var caption = String(f.caption || "").replace(/[[\]]/g, "");
         var fid = uid();
