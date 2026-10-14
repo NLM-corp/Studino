@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -144,6 +144,24 @@
         ? "La voix n'a pas pu être terminée : la page a été fermée ou rechargée pendant la préparation. Clique sur Réessayer (le texte est gardé)."
         : "La préparation a été interrompue : la page a été fermée ou rechargée. Clique sur Réessayer.";
       changed = true;
+    });
+    // Même chose pour toutes les autres générations : cours, fiches, méthodologies, exercices importés,
+    // plannings de prépa. Leurs photos/documents sont gardés tant que la génération n'a pas abouti, donc
+    // « Réessayer » repart bien de zéro.
+    var interrupted = "La génération a été interrompue : la page a été fermée ou rechargée pendant qu'elle tournait. Clique sur Réessayer.";
+    Object.keys(DB.data || {}).forEach(function (u) {
+      var d = DB.data[u];
+      if (!d) return;
+      var fix = function (x) { if (x && x.status === "processing") { x.status = "error"; x.error = interrupted; changed = true; } };
+      (d.subjects || []).forEach(function (s) {
+        (s.themes || []).forEach(function (t) { (t.chapters || []).forEach(function (c) { (c.courses || []).forEach(fix); }); });
+      });
+      (d.revisionSheets || []).forEach(fix);
+      (d.methodologies || []).forEach(fix);
+      (d.importedExercises || []).forEach(fix);
+      (d.examPreps || []).forEach(function (p) {
+        if (p && p.planStatus === "processing") { p.planStatus = "error"; p.planError = interrupted; changed = true; }
+      });
     });
     if (changed) saveDB();
   }
@@ -853,7 +871,9 @@
   }
   // Repère et découpe les visuels du document. Ne bloque jamais la génération : en cas d'échec on renvoie
   // ok=false et la génération repère alors les schémas elle-même, comme avant.
-  async function prepareDocumentFigures(images) {
+  // report(base, span, type) : avancement réel (voir genSub), 60 % pour le repérage, 40 % pour les zooms.
+  async function prepareDocumentFigures(images, report) {
+    report = report || function () {};
     var empty = { ok: false, list: [], subs: [], figures: [] };
     if (!images || !images.length) return empty;
     var sources = [];
@@ -871,9 +891,13 @@
       for (var ti = 0; ti < tiles.length; ti++) tiles[ti].dataUrl = await sources[tiles[ti].si].renderRegion(tiles[ti].x, tiles[ti].y, tiles[ti].w, tiles[ti].h);
       var batches = [];
       for (var b = 0; b < tiles.length; b += FIG_TILES_PER_CALL) batches.push(tiles.slice(b, b + FIG_TILES_PER_CALL));
-      var found = [], anyBatchOk = false;
+      var found = [], anyBatchOk = false, batchesDone = 0;
+      var reportBatches = function () { report(0.6 * batchesDone / batches.length, 0.6 * Math.min(2, batches.length - batchesDone) / batches.length, "figTile"); };
+      reportBatches();
       await runWithConcurrency(batches.map(function (batch) {
         return function () {
+          var t0 = Date.now();
+          var batchDone = function () { batchesDone++; genLearn("figTile", Date.now() - t0); reportBatches(); };
           // Chaque image est précédée de son numéro écrit en clair : sans ça, l'IA se trompait parfois de
           // numéro (en comptant à partir de 1) et le schéma était cherché dans la mauvaise tranche.
           var parts = [];
@@ -892,7 +916,7 @@
               var y0 = t.y + f.box[0] / 1000 * t.h, y1 = t.y + f.box[2] / 1000 * t.h;
               found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "", cut: !!f.cut, tileW: t.w, tileH: t.h });
             });
-          });
+          }).then(batchDone, function (err) { batchDone(); throw err; });
         };
       }), 2);
       if (!anyBatchOk) return empty;
@@ -928,9 +952,11 @@
       });
       kept.sort(function (a, b) { return a.si - b.si || a.y - b.y; }); // ordre de lecture
       // 3. Zoom de vérification autour de chaque visuel, puis découpe finale à pleine résolution.
-      var crops = [], finals = [];
+      var crops = [], finals = [], zoomsDone = 0;
+      var reportZooms = function () { report(0.6 + 0.4 * zoomsDone / Math.max(1, kept.length), 0.4 * Math.min(2, kept.length - zoomsDone) / Math.max(1, kept.length), "figZoom"); };
+      reportZooms();
       await runWithConcurrency(kept.map(function (f, i) {
-        return function () {
+        var zoomTask = function () {
           var s = sources[f.si];
           // Visuel plus grand qu'une tranche (morceaux recollés) : un zoom serait encore une bande trop
           // réduite pour l'IA. On part directement du rectangle recollé et la vérification au pixel des
@@ -962,6 +988,11 @@
                 });
               });
           });
+        };
+        return function () {
+          var t0 = Date.now();
+          var zoomDone = function () { zoomsDone++; genLearn("figZoom", Date.now() - t0); reportZooms(); };
+          return Promise.resolve().then(zoomTask).then(zoomDone, function (err) { zoomDone(); throw err; });
         };
       }), 2);
       // 4. Deuxième chasse aux doublons, APRÈS le zoom : deux morceaux d'un même grand schéma (coupé dans
@@ -1676,16 +1707,111 @@
       })
       .then(function (data) { return resolveSchemaVisualSvg(data); });
   }
+  /* ---------------- Pourcentage des générations ----------------
+     Google ne dit pas où en est l'IA pendant qu'elle réfléchit : un pourcentage exact n'existe que là
+     où l'appli compte elle-même des étapes (tranches analysées, schémas découpés, morceaux de voix
+     enregistrés...). Ailleurs, on estime d'après la durée HABITUELLE de cette étape, apprise sur les
+     générations précédentes de l'élève (moyenne glissante gardée dans ce navigateur). Une étape plus
+     longue que prévu ralentit vers 99 % sans jamais l'atteindre ; 100 % = vraiment terminé.
+     Une génération = une suite de phases pondérées { label, weight, type, scale } (scale = taille du travail,
+     ex. nombre de pages : la durée apprise est ramenée à une unité, puis multipliée) ; genSub() donne
+     l'avancement RÉEL à l'intérieur de la phase en cours quand il est connu. */
+  var GEN_DURATIONS_KEY = "studino-gen-durations";
+  var GEN_DEFAULT_MS = { figTile: 20000, figZoom: 12000, figures: 60000, course: 90000, exerciseImport: 60000, podcastScript: 120000, ttsChunk: 45000, sheet: 70000, sheetSchema: 25000, methodo: 50000, examPlan: 40000, finish: 15000, step: 30000 };
+  var genDurations = {};
+  try { genDurations = JSON.parse(localStorage.getItem(GEN_DURATIONS_KEY) || "{}") || {}; } catch (e) {}
+  function genExpected(type) { return genDurations[type] || GEN_DEFAULT_MS[type] || 60000; }
+  function genLearn(type, ms) {
+    if (!type || !(ms > 500)) return;
+    genDurations[type] = genDurations[type] ? Math.round(genDurations[type] * 0.6 + ms * 0.4) : Math.round(ms);
+    try { localStorage.setItem(GEN_DURATIONS_KEY, JSON.stringify(genDurations)); } catch (e) {}
+  }
+  var genProgress = {}; // id de l'élément généré → état
+  function genStart(id, phases) {
+    var list = phases.filter(function (p) { return p.weight > 0; });
+    genProgress[id] = { phases: list, idx: 0, phaseStart: Date.now(), sub: null, total: list.reduce(function (s, p) { return s + p.weight; }, 0) || 1 };
+  }
+  function genPhase(id, label) {
+    var g = genProgress[id];
+    if (!g) return;
+    var cur = g.phases[g.idx];
+    if (cur && cur.learn !== false) genLearn(cur.type, (Date.now() - g.phaseStart) / (cur.scale || 1));
+    var next = g.phases.findIndex(function (p) { return p.label === label; });
+    g.idx = next === -1 ? Math.min(g.idx + 1, g.phases.length - 1) : next;
+    g.phaseStart = Date.now();
+    g.sub = null;
+  }
+  // Avancement réel dans la phase : base (0-1) déjà fait, plus une part `span` en cours, estimée au temps
+  // écoulé selon la durée habituelle du type `type`.
+  function genSub(id, base, span, type) {
+    var g = genProgress[id];
+    if (!g) return;
+    g.sub = { base: Math.max(0, Math.min(1, base)), span: span || 0, type: type, start: Date.now() };
+  }
+  function genEnd(id, ok) {
+    var g = genProgress[id];
+    if (g && ok) { var cur = g.phases[g.idx]; if (cur && cur.learn !== false) genLearn(cur.type, (Date.now() - g.phaseStart) / (cur.scale || 1)); }
+    delete genProgress[id];
+  }
+  function genTimeFraction(elapsed, expected) {
+    var r = elapsed / Math.max(1000, expected);
+    return r <= 0.9 ? r : 0.9 + 0.09 * (1 - Math.exp(-(r - 0.9) * 2));
+  }
+  function genState(id) {
+    var g = genProgress[id];
+    if (!g || !g.phases.length) return null;
+    var cur = g.phases[g.idx];
+    var done = 0;
+    for (var i = 0; i < g.idx; i++) done += g.phases[i].weight;
+    var f;
+    if (g.sub) f = g.sub.base + g.sub.span * genTimeFraction(Date.now() - g.sub.start, genExpected(g.sub.type));
+    else f = genTimeFraction(Date.now() - g.phaseStart, genExpected(cur.type) * (cur.scale || 1));
+    var pct = Math.floor(((done + cur.weight * Math.min(0.99, f)) / g.total) * 100);
+    return { pct: Math.max(1, Math.min(99, pct)), label: cur.label };
+  }
+  // Barre de progression pour un écran d'attente (mise à jour en direct, sans redessiner la page).
+  function genProgressHtml(id, fallbackLabel, light) {
+    var st = genState(id);
+    if (!st) return '<span>' + esc(fallbackLabel) + '</span>';
+    return '<div class="gen-progress' + (light ? " gen-progress-light" : "") + '" data-gen-id="' + id + '">' +
+      '<div class="gen-progress-bar"><span style="width:' + st.pct + '%"></span></div>' +
+      '<div class="gen-progress-label"><b class="gen-pct mono">' + st.pct + ' %</b> · <span class="gen-label">' + esc(st.label) + '</span></div></div>';
+  }
+  // Petit pourcentage dans une pastille de liste (« Génération… 42 % »).
+  function genPillPct(id) {
+    var st = genState(id);
+    return st ? ' <span class="gen-pill-pct" data-gen-pill="' + id + '">' + st.pct + ' %</span>' : "";
+  }
+  setInterval(function () {
+    document.querySelectorAll("[data-gen-id]").forEach(function (el) {
+      var st = genState(el.getAttribute("data-gen-id"));
+      if (!st) return;
+      var bar = el.querySelector(".gen-progress-bar span"); if (bar) bar.style.width = st.pct + "%";
+      var pct = el.querySelector(".gen-pct"); if (pct) pct.textContent = st.pct + " %";
+      var lab = el.querySelector(".gen-label"); if (lab) lab.textContent = st.label;
+    });
+    document.querySelectorAll("[data-gen-pill]").forEach(function (el) {
+      var st = genState(el.getAttribute("data-gen-pill"));
+      if (st) el.textContent = st.pct + " %";
+    });
+  }, 500);
+
   function runRevisionSheetGeneration(sheet, courses, subjectName, chapterName) {
     sheet.status = "processing";
     sheet.error = null;
+    genStart(sheet.id, [
+      { label: "Rédaction de la fiche", weight: 75, type: "sheet", scale: Math.max(1, (courses || []).length * 0.5) },
+      { label: "Dessin des schémas", weight: 25, type: "sheetSchema", learn: false }
+    ]);
     saveDB(); render();
     generateRevisionSheetContent(courses, sheet.title, subjectName, chapterName, sheet.scope).then(function (data) {
       var content = data.content || "";
+      genPhase(sheet.id, "Dessin des schémas");
       var pending = (data.schemas || []).filter(function (sc) { return sc.placeholder && sc.description; });
       var schemas = [];
       function next(i) {
         if (i >= pending.length) {
+          genEnd(sheet.id, true);
           sheet.content = content;
           sheet.schemas = schemas;
           sheet.status = "ready";
@@ -1695,6 +1821,8 @@
           return;
         }
         var sc = pending[i];
+        genSub(sheet.id, i / pending.length, 1 / pending.length, "sheetSchema");
+        var schemaT0 = Date.now();
         generateRevisionSheetSchemaSvg(sc.caption || "", sc.description, subjectName, chapterName).then(function (svg) {
           if (svg) {
             var sid = uid();
@@ -1705,10 +1833,11 @@
           }
         }).catch(function () {
           content = content.split(sc.placeholder).join("");
-        }).then(function () { next(i + 1); });
+        }).then(function () { genLearn("sheetSchema", Date.now() - schemaT0); next(i + 1); });
       }
       next(0);
     }).catch(function (err) {
+      genEnd(sheet.id, false);
       sheet.status = "error";
       sheet.error = err.message || "Erreur inconnue";
       sheet.errorStatus = err.status || null;
@@ -1986,13 +2115,16 @@
   // (~2900 caractères ≈ 3 min) — le quota gratuit de la voix est très limité (10 requêtes/jour pour le
   // modèle lite), donc chaque morceau en moins compte vraiment, pas la peine d'être plus prudent que
   // nécessaire.
-  async function generatePodcastAudio(script, voiceName) {
+  // onProgress(k, n) : k morceaux de voix enregistrés sur n (avancement réel, voir podcastVoiceProgress).
+  async function generatePodcastAudio(script, voiceName, onProgress) {
     var chunks = splitScriptIntoTtsChunks(script, 2600);
     var wavs = [];
     for (var i = 0; i < chunks.length; i++) {
+      if (onProgress) onProgress(i, chunks.length);
       var url = await generatePodcastAudioChunk(chunks[i], voiceName);
       wavs.push(await parseWavPcm16(url));
     }
+    if (onProgress) onProgress(chunks.length, chunks.length);
     if (wavs.length === 1) return pcm16ToWavDataUrl(wavs[0].samples, wavs[0].sampleRate);
     var sampleRate = wavs[0].sampleRate;
     var totalLen = wavs.reduce(function (sum, w) { return sum + w.samples.length; }, 0);
@@ -2258,10 +2390,21 @@
     if (viewingOld) navigate("#/podcasts/" + pending[0].id);
     else render();
   }
+  function podcastVoiceProgress(podId) {
+    var t = Date.now();
+    return function (k, n) {
+      if (k > 0) { genLearn("ttsChunk", Date.now() - t); t = Date.now(); }
+      genSub(podId, k / n, k < n ? 1 / n : 0, "ttsChunk");
+    };
+  }
   function runPodcastGeneration(podcast, subjectName, scopeName, content) {
     podcast.status = "processing";
     podcast.processingStartedAt = Date.now();
     podcast.error = null; podcast.errorStatus = null; podcast.errorDetail = null;
+    genStart(podcast.id, [
+      { label: "Le conteur écrit son texte", weight: 30, type: "podcastScript", scale: Math.max(1, String(content || "").length / 20000) },
+      { label: "Enregistrement de la voix", weight: 70, type: "ttsChunk", learn: false }
+    ]);
     saveDB(); render();
     var scopeLevel = podcast.scopeLevel || "chapter";
     var gid = podcastGroupKey(podcast);
@@ -2269,6 +2412,7 @@
     generatePodcastScript(subjectName, scopeName, scopeLevel, content, podcast.langMode || "auto").then(function (data) {
       var scriptParts = (data.parts || []).filter(function (p) { return p && p.script; });
       if (!scriptParts.length) {
+        genEnd(podcast.id, false);
         podcast.status = "error";
         podcast.error = "Aucun script généré.";
         saveDB(); render();
@@ -2308,12 +2452,15 @@
         var pod = pods[i];
         if (podcastData().indexOf(pod) === -1) return; // supprimé ou actualisation annulée en route : inutile de consommer du quota voix
 
-        generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
+        if (i === 0) genPhase(pod.id, "Enregistrement de la voix");
+        else genStart(pod.id, [{ label: "Enregistrement de la voix", weight: 100, type: "ttsChunk", learn: false }]);
+        generatePodcastAudio(pod.script, PODCAST_VOICE, podcastVoiceProgress(pod.id)).then(function (audioUrl) {
           return audioDurationFromDataUrl(audioUrl).then(function (duration) {
             return storePodcastAudio(pod, audioUrl).then(function () { return duration; });
           }).then(function (duration) {
             pod.durationSec = duration;
             pod.segments = buildPodcastSegments(pod.script, duration);
+            genEnd(pod.id, true);
             pod.status = "ready";
             saveDB();
             if (pod.pendingReplace) { finalizePodcastReplacement(pod.pendingReplace); return; }
@@ -2321,6 +2468,7 @@
             render();
           });
         }).catch(function (err) {
+          genEnd(pod.id, false);
           pod.status = "error";
           pod.error = err.message || "Erreur inconnue";
           pod.errorStatus = err.status || null;
@@ -2330,6 +2478,7 @@
       };
       runOne(0);
     }).catch(function (err) {
+      genEnd(podcast.id, false);
       podcast.status = "error";
       podcast.error = err.message || "Erreur inconnue";
       podcast.errorStatus = err.status || null;
@@ -2346,15 +2495,17 @@
   // relance donc QUE l'audio, à partir du script déjà existant, sans toucher au reste du groupe.
   function retryPodcastPartAudio(pod) {
     pod.status = "processing";
+    genStart(pod.id, [{ label: "Enregistrement de la voix", weight: 100, type: "ttsChunk", learn: false }]);
     pod.processingStartedAt = Date.now();
     pod.error = null; pod.errorStatus = null; pod.errorDetail = null;
     saveDB(); render();
-    return generatePodcastAudio(pod.script, PODCAST_VOICE).then(function (audioUrl) {
+    return generatePodcastAudio(pod.script, PODCAST_VOICE, podcastVoiceProgress(pod.id)).then(function (audioUrl) {
       return audioDurationFromDataUrl(audioUrl).then(function (duration) {
         return storePodcastAudio(pod, audioUrl).then(function () { return duration; });
       }).then(function (duration) {
         pod.durationSec = duration;
         pod.segments = buildPodcastSegments(pod.script, duration);
+        genEnd(pod.id, true);
         pod.status = "ready";
         saveDB();
         if (pod.pendingReplace) { finalizePodcastReplacement(pod.pendingReplace); return; }
@@ -2362,6 +2513,7 @@
         render();
       });
     }).catch(function (err) {
+      genEnd(pod.id, false);
       pod.status = "error";
       pod.error = err.message || "Erreur inconnue";
       pod.errorStatus = err.status || null;
@@ -2433,6 +2585,7 @@
   function runMethodologyGeneration(methodo) {
     methodo.status = "processing";
     methodo.error = null;
+    genStart(methodo.id, [{ label: "Analyse de ta méthodologie", weight: 100, type: "methodo", scale: Math.max(1, (methodo.images || []).length * 0.5) }]);
     saveDB(); render();
     generateMethodologyContent(methodo.images, methodo.title).then(function (data) {
       methodo.genre = data.genre || "Épreuve";
@@ -2440,12 +2593,14 @@
       if (!methodo.mechanics.length) methodo.mechanics = ["redaction"];
       methodo.structure = data.structure || "";
       methodo.transcription = data.transcription || "";
+      genEnd(methodo.id, true);
       methodo.status = "ready";
       methodo.images = [];
       saveDB();
       toast("Méthodologie prête · " + methodo.title);
       render();
     }).catch(function (err) {
+      genEnd(methodo.id, false);
       methodo.status = "error";
       methodo.error = err.message || "Erreur inconnue";
       methodo.errorStatus = err.status || null;
@@ -2766,6 +2921,7 @@
   function runExamPlanGeneration(prep) {
     prep.planStatus = "processing";
     prep.planError = null;
+    genStart(prep.id, [{ label: "Préparation du planning", weight: 100, type: "examPlan" }]);
     saveDB(); render();
     var courses = epScopeCourses(prep.scope);
     if (!courses.length) {
@@ -2796,6 +2952,7 @@
       var newMastery = {};
       allTopics.forEach(function (t) { if (oldMastery[t]) newMastery[t] = oldMastery[t]; });
       prep.topicMastery = newMastery;
+      genEnd(prep.id, true);
       prep.planStatus = "ready";
       saveDB();
       toast("Planning de révision prêt · " + prep.title);
@@ -2822,6 +2979,7 @@
         });
       finishPlan(newDays);
     }).catch(function (err) {
+      genEnd(prep.id, false);
       prep.planStatus = "error";
       prep.planError = err.message || "Erreur inconnue";
       prep.planErrorStatus = err.status || null;
@@ -3392,13 +3550,21 @@
     attempt = attempt || 1;
     entry.status = "processing";
     entry.error = null;
+    var genImgs = (entry.images || []).length;
+    genStart(entry.id, [
+      { label: "Repérage et découpe des schémas", weight: genImgs ? 35 : 0, type: "figures", learn: false },
+      { label: "Analyse des exercices", weight: 55, type: "exerciseImport", scale: Math.max(1, genImgs * 0.5) },
+      { label: "Finitions", weight: 10, type: "finish" }
+    ]);
     saveDB(); render();
     var pre = null;
-    prepareDocumentFigures(entry.images).then(function (p) {
+    prepareDocumentFigures(entry.images, function (b, s, t) { genSub(entry.id, b, s, t); }).then(function (p) {
       pre = p;
+      genPhase(entry.id, "Analyse des exercices");
       return generateImportedExercise(entry.images, p);
     }).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
+      genPhase(entry.id, "Finitions");
       // Repérage dédié réussi : les découpes approximatives de la génération elle-même sont ignorées.
       return resolveFigures(pre.ok ? [] : data.figures, entry.images).then(function (resolved) {
         var allSubs = pre.subs.concat(resolved.subs);
@@ -3441,6 +3607,7 @@
           // — c'est alors le seul moyen de pouvoir corriger le tir avec "Régénérer" plus tard.
           if (!stillMissing) entry.images = [];
           saveDB();
+          genEnd(entry.id, true);
           if (pre && pre.warning) toast("⚠️ " + pre.warning);
           storeFigureImages();
           toast((entry.exercises.length > 1 ? entry.exercises.length + " exercices importés · " : "Exercice importé · ") + entry.title);
@@ -3448,6 +3615,7 @@
         });
       });
     }).catch(function (err) {
+      genEnd(entry.id, false);
       entry.status = "error";
       entry.error = err.message || "Erreur inconnue";
       entry.errorStatus = err.status || null;
@@ -3488,6 +3656,12 @@
     attempt = attempt || 1;
     course.status = "processing";
     course.error = null;
+    var genImgs = (imagesOverride || course.images || []).length;
+    genStart(course.id, [
+      { label: "Repérage et découpe des schémas", weight: genImgs ? 35 : 0, type: "figures", learn: false },
+      { label: "Rédaction du cours", weight: 55, type: "course", scale: Math.max(1, genImgs * 0.5 + (priorTranscription ? 0.5 : 0)) },
+      { label: "Finitions", weight: 10, type: "finish" }
+    ]);
     saveDB(); render();
     var images = imagesOverride || course.images;
     // Ce qui existe déjà (texte AVEC ses schémas, et les schémas eux-mêmes) : avant, « Ajouter des documents »
@@ -3504,12 +3678,15 @@
     var keepExercises = (course.exercises || []).slice();
     var freshFromImages = !priorTranscription && images && images.length; // tout refait depuis les photos : les anciens schémas sont remplacés
     var pre = null;
-    prepareDocumentFigures(images).then(function (p) {
+    prepareDocumentFigures(images, function (b, s, t) { genSub(course.id, b, s, t); }).then(function (p) {
       pre = p;
+      genPhase(course.id, "Rédaction du cours");
       return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
     }).then(function (data) {
+      genPhase(course.id, "Finitions");
       // Ajout de documents qui ne contiennent rien de nouveau : le cours reste exactement tel quel.
       if (addMode && !String(data.transcription || "").trim()) {
+        genEnd(course.id, true);
         course.status = "ready";
         course.images = [];
         saveDB();
@@ -3580,6 +3757,7 @@
           // — sans elles, "Régénérer" ne pourrait plus jamais retenter, il faudrait tout réimporter.
           if (!stillMissing) course.images = [];
           saveDB();
+          genEnd(course.id, true);
           toast("Cours généré · " + course.title);
           if (pre && pre.warning) toast("⚠️ " + pre.warning);
           storeFigureImages();
@@ -3593,6 +3771,7 @@
         });
       });
     }).catch(function (err) {
+      genEnd(course.id, false);
       course.status = "error";
       course.error = err.message || "Erreur inconnue";
       course.errorStatus = err.status || null;
@@ -5563,7 +5742,7 @@
         '<div class="card-grid-signs-short">' + sheets.slice().reverse().map(function (sheet) {
           var subj = findSubject(sheet.subjectId);
           var statusHtml = sheet.status === "processing"
-            ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…</span>'
+            ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…' + genPillPct(sheet.id) + '</span>'
             : sheet.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
             : '<span class="status-pill status-ready">Prêt</span>';
           return '<div class="tile tile-sign tile-sign-metal" onclick="location.hash=\'#/revision/' + sheet.id + '\'">' +
@@ -5643,7 +5822,7 @@
     } else {
       grid = '<div class="card-grid-signs-short">' + c.courses.map(function (co) {
         var statusHtml = co.status === "processing"
-          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…</span>'
+          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Génération…' + genPillPct(co.id) + '</span>'
           : '<span class="status-pill status-ready">Prêt</span>';
         return '<div class="tile tile-sign tile-sign-short" onclick="location.hash=\'#/course/' + co.id + '\'">' +
           '<button class="tile-rename" title="Renommer" onclick="event.stopPropagation();App.openRenameModal(\'course\',\'' + s.id + '\',\'' + th.id + '\',\'' + c.id + '\',\'' + co.id + '\')">✏️</button>' +
@@ -5672,7 +5851,7 @@
         var gradedCount = en.status === "ready" ? en.exercises.filter(function (ex) { return ex.answerStatus === "graded"; }).length : 0;
         var totalCount = en.status === "ready" ? en.exercises.length : 0;
         var statusHtml = en.status === "processing"
-          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…</span>'
+          ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…' + genPillPct(en.id) + '</span>'
           : en.status === "error"
           ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
           : gradedCount === 0
@@ -5704,7 +5883,7 @@
 
     var body;
     if (entry.status === "processing") {
-      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ton exercice…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + genProgressHtml(entry.id, "Gemini analyse ton exercice…") + '</div>';
     } else if (entry.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(entry.error || "L'import a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -5762,7 +5941,7 @@
     return m + ":" + (s < 10 ? "0" : "") + s;
   }
   function podcastStatusBadge(p) {
-    return p.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Préparation…</span>'
+    return p.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Préparation…' + genPillPct(p.id) + '</span>'
       : p.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
       : '<span class="status-pill status-ready">🎧 ' + podcastFormatTime(p.durationSec) + '</span>';
   }
@@ -5969,7 +6148,7 @@
         : "Le vieux conteur prépare son texte sur « " + pod.title + " »… généralement 1 à 3 minutes, un peu plus pour un cours très riche en plusieurs parties.";
       body = '<div class="podcast-fullscreen">' + closeBtn +
         '<img src="' + PODCAST_DIR + PODCAST_LIS_IMG + '" class="podcast-bg-img" alt="">' +
-        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>' + esc(procLabel) + '</span>' +
+        '<div class="podcast-fs-bottom"><div class="processing-box" style="color:#fff">' + genLogo() + '<span>' + esc(procLabel) + '</span>' + genProgressHtml(pod.id, "", true) +
         '<div class="mono" id="podcast-processing-timer" style="margin-top:8px;opacity:0.85">⏱️ ' + dpFormatCountdown(Date.now() - procStart) + '</div>' +
         '</div></div>' +
         '</div>';
@@ -6131,7 +6310,7 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.openModal(\'methodologie\')">' + icon("plus") + ' Ajouter une méthodologie</button></div>';
     } else {
       grid = '<div class="card-grid">' + list.map(function (m) {
-        var statusHtml = m.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…</span>'
+        var statusHtml = m.status === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Analyse…' + genPillPct(m.id) + '</span>'
           : m.status === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
           : '<span class="status-pill status-ready">' + (m.practiceItems || []).length + ' sujet' + ((m.practiceItems || []).length > 1 ? "s" : "") + '</span>';
         return '<div class="tile" onclick="location.hash=\'#/methodologies/' + m.id + '\'">' +
@@ -6216,7 +6395,7 @@
       '</div></div>';
     var body;
     if (methodo.status === "processing") {
-      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ta méthodologie…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + genProgressHtml(methodo.id, "Gemini analyse ta méthodologie…") + '</div>';
     } else if (methodo.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(methodo.error || "L'analyse a échoué.") + '</span>' +
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryMethodologyGeneration(\'' + methodo.id + '\')">Réessayer</button></div>';
@@ -6281,7 +6460,7 @@
       '</div>';
     var body;
     if (sheet.status === "processing") {
-      body = '<div class="processing-box">' + genLogo() + '<span>Gemini rédige ta fiche…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + genProgressHtml(sheet.id, "Gemini rédige ta fiche…") + '</div>';
     } else if (sheet.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(sheet.error || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -6308,7 +6487,7 @@
       grid = '<div class="card-grid-signs-short">' + list.map(function (p) {
         var daysLeft = epDaysBetween(today, p.examDate);
         var todaySession = p.sessions && p.sessions[today];
-        var statusHtml = p.planStatus === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Planning…</span>'
+        var statusHtml = p.planStatus === "processing" ? '<span class="status-pill status-processing"><span class="dotpulse"></span>Planning…' + genPillPct(p.id) + '</span>'
           : p.planStatus === "error" ? '<span class="status-pill status-processing">⚠️ Erreur</span>'
           : daysLeft < 0 ? '<span class="status-pill status-ready">Examen passé</span>'
           : daysLeft === 0 ? '<span class="status-pill status-ready">Examen aujourd\'hui !</span>'
@@ -6491,7 +6670,7 @@
       '</div></div>';
     var body;
     if (prep.planStatus === "processing") {
-      body = '<div class="processing-box">' + genLogo() + '<span>Gemini prépare ton planning de révision…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + genProgressHtml(prep.id, "Gemini prépare ton planning de révision…") + '</div>';
     } else if (prep.planStatus === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(prep.planError || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +
@@ -6745,7 +6924,7 @@
 
     var body;
     if (course.status === "processing") {
-      body = '<div class="processing-box">' + genLogo() + '<span>Gemini analyse ton cours…</span></div>';
+      body = '<div class="processing-box">' + genLogo() + genProgressHtml(course.id, "Gemini analyse ton cours…") + '</div>';
     } else if (course.status === "error") {
       body = '<div class="processing-box"><span>⚠️ ' + esc(course.error || "La génération a échoué.") + '</span>' +
         '<div style="display:flex;gap:10px">' +

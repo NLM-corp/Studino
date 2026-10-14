@@ -1112,3 +1112,13 @@
   .ep-mode-box { display: flex; flex-direction: column; gap: 8px; margin: 16px 0 0; padding: 12px 14px; border: 2px solid var(--border-soft); border-radius: 12px; background: var(--surface); font-size: 13.5px; }
   .ep-mode-change { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
   .ep-mode-change select { width: auto; }
+
+  /* Pourcentage des générations */
+  .gen-progress { width: min(420px, 100%); display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+  .gen-progress-bar { height: 10px; border-radius: 999px; background: var(--surface-2); border: 2px solid var(--border-soft); overflow: hidden; }
+  .gen-progress-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.45s ease; }
+  .gen-progress-label { font-size: 12px; text-align: center; font-family: 'Public Sans', sans-serif; }
+  .gen-progress-light .gen-progress-bar { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.4); }
+  .gen-progress-light .gen-progress-label { color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+  .gen-pill-pct { font-variant-numeric: tabular-nums; margin-left: 2px; }
+  @media (prefers-reduced-motion: reduce) { .gen-progress-bar span { transition: none; } }
