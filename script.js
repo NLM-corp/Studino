@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "9.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "9.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -548,6 +548,8 @@
   function substituteFigures(text, subs) {
     var out = text || "";
     (subs || []).forEach(function (s) { if (s.placeholder) out = out.split(s.placeholder).join(s.replacement); });
+    // Jeton resté sans schéma (découpe ratée ou schéma ignoré) : on le retire plutôt que de l'afficher tel quel.
+    out = out.replace(/^[ \t]*\[\[(?:figure|img):\d+\]\][ \t]*\n?/gm, "").replace(/\[\[(?:figure|img):\d+\]\]/g, "");
     return out;
   }
   /* ---------------- Passe dédiée de détection des schémas ----------------
@@ -555,7 +557,92 @@
      l'explication, les flashcards, le contrôle... Sur un document chargé (ex. 11 pages d'exercices),
      l'IA sautait souvent cette étape : aucun schéma. Un appel qui ne fait QUE ça les repère tous ; ils
      sont découpés avant la génération, qui n'a plus qu'à placer leurs jetons [[img:N]] dans le texte. */
-  var FIGURE_DETECT_SCHEMA = {
+  // Repère et découpe les visuels du document. Ne bloque jamais la génération : en cas d'échec on
+  // renvoie simplement une liste vide (la génération repère alors les schémas elle-même, comme avant).
+  /* Pourquoi des « tranches » : l'IA ne regarde jamais une image en pleine résolution, elle la réduit
+     d'abord. Une page très haute (ex. tout un cours sur une seule longue page de PDF, 20 fois plus haute
+     que large) devenait une bande illisible, et une zone sur une grille de 0 à 1000 y valait des
+     centaines de pixels : découpes au hasard. En plus, le rendu de cette page entière dépassait la
+     taille maximale d'un canvas du navigateur (découpes blanches). On découpe donc chaque photo / page
+     en tranches aux proportions normales qui se chevauchent, l'IA repère les visuels tranche par tranche,
+     puis chaque visuel est revérifié sur un zoom serré autour de lui avant la découpe finale. */
+  var FIG_RENDER_WIDTH = 1600;   // largeur de rendu d'une page de PDF
+  var FIG_TILE_RATIO = 1.6;      // hauteur d'une tranche = 1,6 × sa largeur (proche d'une page A4)
+  var FIG_TILE_OVERLAP = 0.2;    // 20 % de chevauchement : un schéma coupé dans une tranche est entier dans la suivante
+  var FIG_TILES_PER_CALL = 4;
+  var FIG_MAX_TILES = 60, FIG_MAX_PDF_PAGES = 30, FIG_MAX_FIGURES = 40;
+  function runWithConcurrency(tasks, limit) {
+    var next = 0;
+    var worker = function () {
+      if (next >= tasks.length) return Promise.resolve();
+      var task = tasks[next++];
+      return Promise.resolve().then(task).catch(function (err) { console.error(err); }).then(worker);
+    };
+    var workers = [];
+    for (var w = 0; w < Math.min(limit, tasks.length); w++) workers.push(worker());
+    return Promise.all(workers);
+  }
+  // Source = une photo, ou une page de PDF. renderRegion(x, y, w, h) renvoie cette zone (en pixels de
+  // la source) en JPEG, à pleine résolution, sans jamais dessiner la page entière d'un coup.
+  async function buildFigureSources(images) {
+    var sources = [];
+    for (var fi = 0; fi < images.length; fi++) {
+      var src = images[fi];
+      if (!src) continue;
+      if (isPdfDataUrl(src)) {
+        var lib = await loadPdfJs();
+        var buf = await (await fetch(src)).arrayBuffer();
+        var doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
+        var pageCount = Math.min(doc.numPages, FIG_MAX_PDF_PAGES);
+        for (var pn = 1; pn <= pageCount; pn++) {
+          (function (page, pageNum) {
+            var base = page.getViewport({ scale: 1 });
+            var vp = page.getViewport({ scale: Math.min(3, FIG_RENDER_WIDTH / base.width) });
+            sources.push({
+              fileIndex: fi, page: pageNum, w: Math.round(vp.width), h: Math.round(vp.height), doc: doc,
+              renderRegion: function (x, y, w, h) {
+                var canvas = document.createElement("canvas");
+                canvas.width = Math.max(1, Math.round(w)); canvas.height = Math.max(1, Math.round(h));
+                var ctx = canvas.getContext("2d");
+                ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                return page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -x, -y] }).promise
+                  .then(function () { return canvas.toDataURL("image/jpeg", 0.9); });
+              }
+            });
+          })(await doc.getPage(pn), pn);
+        }
+      } else {
+        var img = await loadImageEl(src);
+        (function (im) {
+          sources.push({
+            fileIndex: fi, page: 1, w: im.naturalWidth || im.width, h: im.naturalHeight || im.height,
+            renderRegion: function (x, y, w, h) {
+              var canvas = document.createElement("canvas");
+              canvas.width = Math.max(1, Math.round(w)); canvas.height = Math.max(1, Math.round(h));
+              var ctx = canvas.getContext("2d");
+              ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(im, x, y, w, h, 0, 0, canvas.width, canvas.height);
+              return Promise.resolve(canvas.toDataURL("image/jpeg", 0.9));
+            }
+          });
+        })(img);
+      }
+    }
+    return sources;
+  }
+  function figureTilesFor(source) {
+    var tileH = Math.round(source.w * FIG_TILE_RATIO);
+    if (source.h <= tileH * 1.15) return [{ y: 0, h: source.h }];
+    var step = Math.round(tileH * (1 - FIG_TILE_OVERLAP));
+    var tiles = [];
+    for (var y = 0; y < source.h; y += step) {
+      var top = Math.min(y, source.h - tileH);
+      tiles.push({ y: top, h: tileH });
+      if (top + tileH >= source.h) break;
+    }
+    return tiles;
+  }
+  var FIGURE_TILE_DETECT_SCHEMA = {
     type: "object",
     properties: {
       figures: {
@@ -563,10 +650,9 @@
         items: {
           type: "object",
           properties: {
-            imageIndex: { type: "integer", description: "Index (à partir de 0) du fichier où se trouve ce visuel." },
-            pageIndex: { type: "integer", description: "Pour un PDF : numéro de la page (à partir de 1). Pour une photo : 1." },
-            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 qui contient TOUT ce visuel avec son titre et ses annotations (ex. « Doc. 1 Courbe d'étalonnage… », axes, graduations, lettres), mais pas le texte de l'énoncé autour." },
-            caption: { type: "string", description: "Légende distinctive : numéro de l'exercice/de la partie + ce que montre le visuel, ex. \"Exercice 26 — Doc. 1 : courbe d'étalonnage du dosage des ions fer (III)\"." }
+            imageIndex: { type: "integer", description: "Index (à partir de 0) de l'image de CET envoi où le visuel est entièrement visible." },
+            box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 dans CETTE image, qui contient TOUT le visuel avec son titre et ses annotations, sans le texte de l'énoncé autour." },
+            caption: { type: "string", description: "Légende distinctive : partie/exercice + ce que montre le visuel." }
           },
           required: ["imageIndex", "box", "caption"]
         }
@@ -574,47 +660,127 @@
     },
     required: ["figures"]
   };
-  function buildFigureDetectPrompt(fileCount) {
-    return "Voici " + fileCount + " fichier(s) (photos ou pages d'un document de cours/d'exercices), numérotés à partir de 0 dans l'ordre. Ta SEULE tâche : repérer TOUS les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre ou à résoudre le contenu.\n\n" +
-      "À repérer : graphiques, courbes, spectres, diagrammes, schémas, montages expérimentaux, figures géométriques, formules développées/structures chimiques dessinées, cartes, frises, pictogrammes, et photos qui apportent une information (couleur d'une solution, montage, objet ou expérience étudiés).\n" +
-      "À NE PAS repérer : les tableaux (ils seront retranscrits en texte), le texte encadré ou coloré, les numéros d'exercice, les badges et logos (« BAC », icônes de compétences...), les éléments purement décoratifs.\n\n" +
-      "Parcours CHAQUE fichier en entier, du haut en bas, sans t'arrêter : une même page contient souvent PLUSIEURS exercices, chacun avec ses propres visuels. Une entrée par visuel ou par document visuel (ex. un « Doc. 2 » qui regroupe une photo, ou deux pictogrammes côte à côte qui vont ensemble : une seule zone) ; deux visuels de deux exercices différents ne partagent jamais la même zone. La zone englobe le visuel en entier avec son titre et toutes ses annotations, sans couper un bord, mais sans le texte de l'énoncé autour.\n" +
-      "Si aucun visuel n'est présent, renvoie un tableau vide.\n\n" +
+  function buildTileDetectPrompt(count) {
+    return "Voici " + count + " image(s), numérotées à partir de 0 : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent un peu). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
+      "À repérer : graphiques, courbes, schémas (cases, flèches, cercles, tableaux de bits dessinés...), diagrammes, montages, figures géométriques, structures chimiques, cartes, pictogrammes, photos qui apportent une information.\n" +
+      "À NE PAS repérer : le texte normal, les calculs et développements écrits (même alignés ou posés en colonnes : ils seront retranscrits en texte), les tableaux de texte simples, les titres, les numéros, les logos, les décorations, les zones vides.\n\n" +
+      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Un visuel coupé par le bord HAUT ou BAS d'une image ne doit PAS être donné pour cette image (il est entier dans l'image voisine). S'il apparaît entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
-  // Repère et découpe les visuels du document. Ne bloque jamais la génération : en cas d'échec on
-  // renvoie simplement une liste vide (la génération repère alors les schémas elle-même, comme avant).
-  function prepareDocumentFigures(images) {
-    var empty = { list: [], subs: [], figures: [] };
-    if (!images || !images.length) return Promise.resolve(empty);
-    var parts = geminiImageParts(images).concat([{ text: buildFigureDetectPrompt(images.length) }]);
-    return callGemini(parts, FIGURE_DETECT_SCHEMA).then(function (data) {
-      var detected = (data && data.figures || []).filter(function (f) {
-        return f && typeof f.imageIndex === "number" && images[f.imageIndex] && isValidFigureBox(f.box);
+  var FIGURE_ZOOM_SCHEMA = {
+    type: "object",
+    properties: {
+      found: { type: "boolean", description: "false si le visuel décrit n'est PAS dans cette image." },
+      box: { type: "array", items: { type: "integer" }, description: "Zone [ymin, xmin, ymax, xmax] sur 0-1000 dans CETTE image, qui encadre exactement le visuel en entier avec son titre et ses annotations, sans le texte normal autour." }
+    },
+    required: ["found", "box"]
+  };
+  function buildFigureZoomPrompt(caption) {
+    return "Cette image est un zoom sur une partie d'un document, autour d'un visuel décrit ainsi : « " + caption + " ».\n" +
+      "Donne la zone [ymin, xmin, ymax, xmax] (échelle 0-1000, relative à CETTE image) qui encadre ce visuel EN ENTIER, avec son titre et toutes ses annotations (lettres, chiffres, flèches, légende), sans en couper le moindre bord, mais en excluant le texte normal (phrases, calculs) qui l'entoure. Sois précis au pixel près.\n" +
+      "Si ce visuel n'est pas dans l'image (ou si ce n'est que du texte), mets found=false.\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  function figBoxOverlap(a, b) {
+    var ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    var iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    return (ix * iy) / Math.max(1, Math.min(a.w * a.h, b.w * b.h));
+  }
+  // Repère et découpe les visuels du document. Ne bloque jamais la génération : en cas d'échec on renvoie
+  // ok=false et la génération repère alors les schémas elle-même, comme avant.
+  async function prepareDocumentFigures(images) {
+    var empty = { ok: false, list: [], subs: [], figures: [] };
+    if (!images || !images.length) return empty;
+    var sources = [];
+    try {
+      sources = await buildFigureSources(images);
+      // 1. Tranches de toutes les sources, repérage par lots de quelques tranches.
+      var tiles = [];
+      sources.forEach(function (s, si) {
+        figureTilesFor(s).forEach(function (t) { if (tiles.length < FIG_MAX_TILES) tiles.push({ si: si, y: t.y, h: t.h }); });
       });
-      detected.forEach(function (f, i) { f.placeholder = "[[img:" + i + "]]"; });
-      if (!detected.length) return empty;
-      return resolveFigures(detected, images).then(function (resolved) {
-        var list = [], subs = [];
-        detected.forEach(function (f, i) {
-          if (!resolved.subs[i] || !resolved.subs[i].replacement) return;
-          list.push({ placeholder: f.placeholder, caption: f.caption || "", imageIndex: f.imageIndex });
-          subs.push(resolved.subs[i]);
-        });
-        return { list: list, subs: subs, figures: resolved.figures };
+      for (var ti = 0; ti < tiles.length; ti++) tiles[ti].dataUrl = await sources[tiles[ti].si].renderRegion(0, tiles[ti].y, sources[tiles[ti].si].w, tiles[ti].h);
+      var batches = [];
+      for (var b = 0; b < tiles.length; b += FIG_TILES_PER_CALL) batches.push(tiles.slice(b, b + FIG_TILES_PER_CALL));
+      var found = [], anyBatchOk = false;
+      await runWithConcurrency(batches.map(function (batch) {
+        return function () {
+          var parts = geminiImageParts(batch.map(function (t) { return t.dataUrl; })).concat([{ text: buildTileDetectPrompt(batch.length) }]);
+          return callGemini(parts, FIGURE_TILE_DETECT_SCHEMA).then(function (data) {
+            anyBatchOk = true;
+            (data && data.figures || []).forEach(function (f) {
+              var t = batch[f.imageIndex];
+              if (!t || !isValidFigureBox(f.box)) return;
+              var s = sources[t.si];
+              var x0 = f.box[1] / 1000 * s.w, x1 = f.box[3] / 1000 * s.w;
+              var y0 = t.y + f.box[0] / 1000 * t.h, y1 = t.y + f.box[2] / 1000 * t.h;
+              found.push({ si: t.si, x: x0, y: y0, w: x1 - x0, h: y1 - y0, caption: f.caption || "" });
+            });
+          });
+        };
+      }), 2);
+      if (!anyBatchOk) return empty;
+      // 2. Doublons (même visuel vu dans deux tranches qui se chevauchent) : on garde le plus grand.
+      found.sort(function (a, b) { return b.w * b.h - a.w * a.h; });
+      var kept = [];
+      found.forEach(function (f) {
+        if (kept.length >= FIG_MAX_FIGURES) return;
+        if (!kept.some(function (k) { return k.si === f.si && figBoxOverlap(k, f) > 0.5; })) kept.push(f);
       });
-    }).catch(function (err) {
+      kept.sort(function (a, b) { return a.si - b.si || a.y - b.y; }); // ordre de lecture
+      // 3. Zoom de vérification autour de chaque visuel, puis découpe finale à pleine résolution.
+      var crops = [];
+      await runWithConcurrency(kept.map(function (f, i) {
+        return function () {
+          var s = sources[f.si];
+          var mx = Math.max(40, f.w * 0.25), my = Math.max(40, f.h * 0.35);
+          var cx = Math.max(0, f.x - mx), cy = Math.max(0, f.y - my);
+          var cw = Math.min(s.w, f.x + f.w + mx) - cx, ch = Math.min(s.h, f.y + f.h + my) - cy;
+          return s.renderRegion(cx, cy, cw, ch).then(function (zoomUrl) {
+            return callGemini(geminiImageParts([zoomUrl]).concat([{ text: buildFigureZoomPrompt(f.caption) }]), FIGURE_ZOOM_SCHEMA)
+              .catch(function () { return null; })
+              .then(function (z) {
+                var box = { x: f.x, y: f.y, w: f.w, h: f.h };
+                if (z && z.found === false) return null; // zoom : finalement pas un visuel
+                if (z && isValidFigureBox(z.box)) {
+                  box = { x: cx + z.box[1] / 1000 * cw, y: cy + z.box[0] / 1000 * ch, w: (z.box[3] - z.box[1]) / 1000 * cw, h: (z.box[2] - z.box[0]) / 1000 * ch };
+                }
+                var pad = Math.max(8, Math.min(box.w, box.h) * 0.03);
+                var x = Math.max(0, box.x - pad), y = Math.max(0, box.y - pad);
+                var w = Math.min(s.w, box.x + box.w + pad) - x, h = Math.min(s.h, box.y + box.h + pad) - y;
+                if (w < 20 || h < 20) return null;
+                return s.renderRegion(x, y, w, h);
+              })
+              .then(function (url) { if (url) crops[i] = url; });
+          });
+        };
+      }), 2);
+      var list = [], subs = [], figures = [];
+      kept.forEach(function (f, i) {
+        if (!crops[i]) return;
+        var placeholder = "[[img:" + list.length + "]]";
+        var caption = String(f.caption || "").replace(/[[\]]/g, "");
+        var fid = uid();
+        figures.push({ id: fid, image: crops[i], caption: caption });
+        subs.push({ placeholder: placeholder, replacement: "![" + caption + "](figure:" + fid + ")" });
+        list.push({ placeholder: placeholder, caption: caption, imageIndex: sources[f.si].fileIndex });
+      });
+      return { ok: true, list: list, subs: subs, figures: figures };
+    } catch (err) {
       console.error("Détection des schémas :", err);
       return empty;
-    });
+    } finally {
+      sources.forEach(function (s) { if (s.doc && !s.doc._destroyed) { s.doc._destroyed = true; try { s.doc.destroy(); } catch (e) {} } });
+    }
   }
   // Consigne donnée à la génération quand les schémas sont déjà découpés : elle n'a plus qu'à placer
   // les jetons. Chaîne vide s'il n'y en a pas (la génération garde alors sa propre détection).
   function preFiguresPromptText(pre, where) {
+    if (pre && pre.ok && !pre.list.length) return "SCHÉMAS : les visuels du document ont déjà été repérés à part (il n'y en a aucun à placer). Laisse \"figures\" vide et n'insère aucun jeton [[figure:N]].\n\n";
     if (!pre || !pre.list || !pre.list.length) return "";
     return "SCHÉMAS DÉJÀ DÉCOUPÉS — les visuels du document ont déjà été repérés et découpés :\n" +
       pre.list.map(function (f) { return f.placeholder + " — fichier " + f.imageIndex + " — " + f.caption; }).join("\n") + "\n" +
-      "Insère CHAQUE jeton ci-dessus tel quel, seul sur sa ligne, " + where + ", à l'endroit exact où ce visuel apparaît dans le document. N'en oublie aucun, ne les décris pas en mots à la place, ne les modifie pas. Pour ces visuels-là, n'ajoute RIEN dans \"figures\" (\"figures\" ne sert plus qu'à un éventuel schéma nécessaire qui manquerait à cette liste).\n\n";
+      "Insère CHAQUE jeton ci-dessus tel quel, seul sur sa ligne, " + where + ", à l'endroit exact où ce visuel apparaît dans le document. N'en oublie aucun, ne les décris pas en mots à la place, ne les modifie pas. Laisse \"figures\" vide et n'insère aucun autre jeton : tous les visuels ont déjà été repérés et découpés à part.\n\n";
   }
   // Jetons que la génération n'a pas placés : on n'en perd aucun.
   function unplacedPreFigures(pre, texts) {
@@ -2950,7 +3116,8 @@
       return generateImportedExercise(entry.images, p);
     }).then(function (data) {
       entry.subjectGuess = data.subjectGuess || "";
-      return resolveFigures(data.figures, entry.images).then(function (resolved) {
+      // Repérage dédié réussi : les découpes approximatives de la génération elle-même sont ignorées.
+      return resolveFigures(pre.ok ? [] : data.figures, entry.images).then(function (resolved) {
         var allSubs = pre.subs.concat(resolved.subs);
         var rawStatements = (data.exercises || []).map(function (ex) { return ex.statement || ""; });
         // Schémas déjà découpés que la génération a oublié de placer : rangés dans l'exercice dont le
@@ -3043,7 +3210,8 @@
       pre = p;
       return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
     }).then(function (data) {
-      return resolveFigures(data.figures, images).then(function (resolved) {
+      // Repérage dédié réussi : les découpes approximatives de la génération elle-même sont ignorées.
+      return resolveFigures(pre.ok ? [] : data.figures, images).then(function (resolved) {
         // Schémas déjà découpés que la génération a oublié de placer : ajoutés à la fin, jamais perdus.
         var lostPre = unplacedPreFigures(pre, [data.transcription, data.explanation]);
         var allSubs = pre.subs.concat(resolved.subs);
