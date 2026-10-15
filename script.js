@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3310,12 +3310,37 @@
       "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 10 à 25 minutes de travail) : un support riche suivi de PLUSIEURS questions numérotées. JAMAIS une question unique et courte. Exemples : en français, pour des procédés stylistiques, un extrait de 6 à 12 lignes (écrit par toi dans l'esprit des textes du cours, ou une citation exacte du cours) qui contient PLUSIEURS procédés différents, avec des questions pour les repérer, les nommer, citer le passage et analyser l'effet de chacun ; en maths/physique-chimie, un problème à plusieurs étapes avec des données nouvelles ; en histoire-géographie, un document ou une situation à analyser avec plusieurs questions ; en langues, un texte avec compréhension et production.\n" +
       "- VARIÉTÉ : les exercices de cette séance ont des formes et des supports DIFFÉRENTS entre eux (repérage + analyse, problème, étude de document, rédaction courte, vrai/faux justifié, mise en relation...). Ils ne doivent PAS être une simple reformulation des exercices déjà existants ou déjà donnés listés plus bas : autre support, autre situation, autres questions.\n" +
       "- FIDÉLITÉ : uniquement des notions qui figurent dans le cours ci-dessous, au niveau de l'élève. N'invente aucun fait, aucune date, aucune définition qui n'y soit pas.\n" +
-      "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse).\n" +
+      "- MISE EN PAGE de \"prompt\" (en Markdown, jamais tout sur une seule ligne) : une courte consigne, puis le support (un texte ou extrait cité en bloc de citation, chaque ligne commençant par « > »), puis une ligne vide, puis CHAQUE question sur sa propre ligne, numérotée « 1. », « 2. », « 3. »..., avec une ligne vide entre deux questions.\n" +
+      "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse), une partie par question commençant par son numéro sur une nouvelle ligne.\n" +
       "- Formules en LaTeX entre $...$, jamais de commande de couleur.\n" +
       COURSE_POSED_OPERATION_RULE +
       (avoid.length ? "Exercices déjà existants ou déjà donnés lors des séances précédentes (NE PAS refaire, même reformulés) :\n" + avoid.map(function (a) { return "- " + a; }).join("\n") + "\n\n" : "") +
       "Voici le cours :\n\n" + source + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français (sauf ce que la RÈGLE DE LANGUE impose).";
+  }
+  // Énoncé écrit d'une traite (« ... Réponds aux questions : 1. ... 2. ... 3. ... ») : on remet chaque question
+  // numérotée sur sa propre ligne. Ne touche qu'à une vraie suite 1., 2., 3.... (pas à un nombre décimal ni à
+  // un « 1. » isolé), et seulement si elle n'est pas déjà en début de ligne.
+  function splitInlineNumberedQuestions(text) {
+    var out = String(text || "");
+    var pos = 0, n = 1, cuts = [];
+    for (;;) {
+      var re = new RegExp("(^|[\\s:;.!?»)])(" + n + ")[.)]\\s+(?=\\S)", "g");
+      re.lastIndex = pos;
+      var m = re.exec(out);
+      if (!m) break;
+      var at = m.index + m[1].length;
+      cuts.push(at);
+      pos = at + 2;
+      n++;
+    }
+    if (cuts.length < 2) return out;
+    for (var i = cuts.length - 1; i >= 0; i--) {
+      var before = out.slice(0, cuts[i]);
+      if (/\n\s*$/.test(before) || cuts[i] === 0) continue; // déjà en début de ligne
+      out = before.replace(/[ \t]+$/, "") + "\n\n" + out.slice(cuts[i]);
+    }
+    return out;
   }
   // Remplace les exercices tirés du cours par des exercices inédits (même nombre, avec un minimum selon le
   // type de révision). Ne bloque jamais la séance : en cas d'échec ou de lenteur, on garde le pool d'origine.
@@ -5171,7 +5196,7 @@
 
   function renderDinoParkExercise(backBtn, head, qz) {
     var ex = qz.exercise;
-    var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(ex.prompt) + '</div></div>' + exerciseFigureHtml(ex);
+    var body = '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(ex.prompt)) + '</div></div>' + exerciseFigureHtml(ex);
     if (qz.status === "grading") {
       body += '<div class="processing-box">' + genLogo() + '<span>Correction en cours…</span></div>';
     } else if (qz.status === "graded") {
@@ -5184,7 +5209,7 @@
         gradeMistakesHtml(qz.mistakes) +
         '<div class="correction-exp">' + mdToHtml(qz.feedback) + '</div>' +
         '</div>' +
-        '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
+        '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(ex.solution)) + '</div></div>' +
         '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.dpGoQuiz()">Choisir un autre cours</button><button class="btn btn-ghost" style="width:auto" onclick="App.downloadDpExercisePdf()">⬇️ Télécharger en PDF</button></div>';
     } else {
       body += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("dp-exercise-answer", "Écris ton raisonnement et ta réponse…", qz.answerHtml || "", true) + '</div>' +
@@ -5992,7 +6017,7 @@
             gradeMistakesHtml(ex.mistakes) +
             '<div class="correction-exp">' + mdToHtml(ex.feedback) + '</div>' +
             '</div>' +
-            '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(ex.solution) + '</div></div>' +
+            '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(ex.solution)) + '</div></div>' +
             '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.retryImportedExerciseAnswer(\'' + entry.id + '\',' + i + ')">Refaire cet exercice</button></div>';
         } else {
           block += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("ie-answer-" + i, "Écris ton raisonnement et ta réponse…", ex.answerHtml || "", true) + '</div>' +
@@ -6667,7 +6692,7 @@
     }
     var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + '</div>';
     if (item.kind === "exercise") {
-      body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(item.prompt) + '</div></div>' + exerciseFigureHtml(item);
+      body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.prompt)) + '</div></div>' + exerciseFigureHtml(item);
     } else {
       body += '<div class="quiz-q-text">' + esc(item.prompt) + '</div>' + exerciseFigureHtml(item);
     }
@@ -6706,7 +6731,7 @@
         (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
         (item.kind === "exercise" ? '' : '<div class="correction-exp">' + mdToHtml(item.explanation || "") + '</div>') +
         '</div>' +
-        (item.kind === "exercise" ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(item.solution) + '</div></div>' : '') +
+        (item.kind === "exercise" ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.solution)) + '</div></div>' : '') +
         '<div class="quiz-nav" style="margin-top:14px"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
     }
     renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
@@ -7184,6 +7209,9 @@
     s = esc(s);
     s = s.replace(//g, "<br>");
     s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // Italique *texte* (après le gras) : l'étoile doit être collée au texte des deux côtés, pour ne pas
+    // confondre avec une multiplication écrite « 3 * 4 ».
+    s = s.replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, "$1<em>$2</em>");
     s = s.replace(/__(.+?)__/g, "<u>$1</u>");
     return s;
   }
@@ -9923,7 +9951,7 @@
       var entry = userData().importedExercises.find(function (x) { return x.id === exId; });
       if (!entry || !entry.exercises.length || !entry.exercises.every(function (ex) { return ex.answerStatus === "graded"; })) return;
       var html = entry.exercises.map(function (ex, i) {
-        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.level || (ex.correct ? "correct" : "wrong"), ex.feedback, mdToHtml(ex.solution), ex.mistakes);
+        return buildExercisePrintHtml(entry.title + (entry.exercises.length > 1 ? " — Exercice " + (i + 1) : ""), entry.subjectGuess, mdToHtml(ex.statement, entry.figures), ex.answerHtml, ex.level || (ex.correct ? "correct" : "wrong"), ex.feedback, mdToHtml(splitInlineNumberedQuestions(ex.solution)), ex.mistakes);
       }).join("");
       printAndDownload(html, entry.title);
     },
@@ -10509,7 +10537,7 @@
       var ex = qz.exercise;
       var loc = locateCourse(qz.courseId);
       var title = loc ? loc.course.title : "Exercice";
-      var html = buildExercisePrintHtml(title, "", mdToHtml(ex.prompt), qz.answerHtml, qz.level || (qz.correct ? "correct" : "wrong"), qz.feedback, mdToHtml(ex.solution), qz.mistakes);
+      var html = buildExercisePrintHtml(title, "", mdToHtml(splitInlineNumberedQuestions(ex.prompt)), qz.answerHtml, qz.level || (qz.correct ? "correct" : "wrong"), qz.feedback, mdToHtml(splitInlineNumberedQuestions(ex.solution)), qz.mistakes);
       printAndDownload(html, title);
     },
 
