@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -7347,13 +7347,28 @@
       var looksLikeTable = mdPipeCount(line) >= 1 && nextLine.trim() !== "" && (mdIsTableSep(nextLine) || mdPipeCount(nextLine) >= 1);
       if (looksLikeTable) {
         if (inList) { html += "</ul>"; inList = false; }
+        // Un schéma peut être DANS une case (ex. « Électrisation par frottement | explication | schéma »,
+        // comme dans le cours d'origine) : avant, la case affichait le code brut ![...](figure:...).
+        var cellHtml = function (c) {
+          var re = /!\[([^\]]*)\]\(((?:figure|schema):[^)\s]+)\)/g, out = "", last = 0, m;
+          while ((m = re.exec(c))) {
+            out += inlineMdPlain(c.slice(last, m.index));
+            var id = m[2].replace(/^(figure|schema):/, "");
+            var f = (figures || []).find(function (x) { return x.id === id; });
+            if (!f) out += '<span class="prose-figure-removed">🚫 Schéma supprimé</span>';
+            else if (m[2].indexOf("schema:") === 0) out += '<span class="table-figure table-schema">' + f.svg + '</span>';
+            else out += '<img class="table-figure" src="' + figureSrc(f) + '" alt="' + esc(m[1]) + '" title="' + esc(m[1]) + '" onclick="App.openFigureLightbox(this.src)">';
+            last = re.lastIndex;
+          }
+          return out + inlineMdPlain(c.slice(last));
+        };
         var head = mdTableRow(line);
-        html += "<table><thead><tr>" + head.map(function (c) { return "<th>" + inlineMdPlain(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+        html += "<table><thead><tr>" + head.map(function (c) { return "<th>" + cellHtml(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
         i++;
         while (i < lines.length && mdPipeCount(lines[i]) >= 1 && lines[i].trim() !== "") {
           if (mdIsTableSep(lines[i])) { i++; continue; }
           var row = mdTableRow(lines[i]);
-          html += "<tr>" + row.map(function (c) { return "<td>" + inlineMdPlain(c) + "</td>"; }).join("") + "</tr>";
+          html += "<tr>" + row.map(function (c) { return "<td>" + cellHtml(c) + "</td>"; }).join("") + "</tr>";
           i++;
         }
         html += "</tbody></table>";
@@ -7396,9 +7411,9 @@
         i--;
         html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMdPlain(l) + "</p>"; }).join("") + '</div>';
       }
-      else if (/^#{2,6}\s*/.test(line.trim())) {
+      else if (/^(#{2,6}\s*|#\s+)/.test(line.trim())) { // « # Titre » aussi (avant, le # restait affiché)
         if (inList) { html += "</ul>"; inList = false; }
-        var headingMatch = /^(#{2,6})\s*(.*)$/.exec(line.trim());
+        var headingMatch = /^(#{1,6})\s*(.*)$/.exec(line.trim());
         var tag = headingMatch[1].length <= 2 ? "h3" : "h4";
         html += "<" + tag + ">" + inlineMdPlain(headingMatch[2]) + "</" + tag + ">";
       }

@@ -1144,3 +1144,7 @@
   .draw-size-bar button:hover { border-color: var(--accent); }
   .draw-size-val { min-width: 48px; text-align: center; font-size: 12px; }
   @media (max-width: 780px) { .draw-overlay { padding: 0; } .draw-box { width: 100vw; height: 100dvh; border-radius: 0; border: none; } }
+
+  /* Schéma placé dans une case de tableau */
+  .table-figure { display: block; max-width: 100%; width: auto; max-height: 320px; margin: 4px auto; border-radius: 8px; background: #fff; cursor: zoom-in; }
+  .table-schema svg { max-width: 100%; height: auto; }
