@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3311,7 +3311,7 @@
       "- VARIÉTÉ : les exercices de cette séance ont des formes et des supports DIFFÉRENTS entre eux (repérage + analyse, problème, étude de document, rédaction courte, vrai/faux justifié, mise en relation...). Ils ne doivent PAS être une simple reformulation des exercices déjà existants ou déjà donnés listés plus bas : autre support, autre situation, autres questions.\n" +
       "- FIDÉLITÉ : uniquement des notions qui figurent dans le cours ci-dessous, au niveau de l'élève. N'invente aucun fait, aucune date, aucune définition qui n'y soit pas.\n" +
       "- MISE EN PAGE de \"prompt\" (en Markdown, jamais tout sur une seule ligne) : une courte consigne, puis le support (un texte ou extrait cité en bloc de citation, chaque ligne commençant par « > »), puis une ligne vide, puis CHAQUE question sur sa propre ligne, numérotée « 1. », « 2. », « 3. »..., avec une ligne vide entre deux questions.\n" +
-      "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse), une partie par question commençant par son numéro sur une nouvelle ligne.\n" +
+      "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse), une partie par question commençant par son numéro sur une nouvelle ligne, et à l'intérieur, CHAQUE étape ou élément (ex. chaque lettre d'une méthode, chaque procédé trouvé) sur sa propre ligne, en liste « - ».\n" +
       "- Formules en LaTeX entre $...$, jamais de commande de couleur.\n" +
       COURSE_POSED_OPERATION_RULE +
       (avoid.length ? "Exercices déjà existants ou déjà donnés lors des séances précédentes (NE PAS refaire, même reformulés) :\n" + avoid.map(function (a) { return "- " + a; }).join("\n") + "\n\n" : "") +
@@ -3334,12 +3334,22 @@
       pos = at + 2;
       n++;
     }
-    if (cuts.length < 2) return out;
-    for (var i = cuts.length - 1; i >= 0; i--) {
-      var before = out.slice(0, cuts[i]);
-      if (/\n\s*$/.test(before) || cuts[i] === 0) continue; // déjà en début de ligne
-      out = before.replace(/[ \t]+$/, "") + "\n\n" + out.slice(cuts[i]);
+    if (cuts.length >= 2) {
+      for (var i = cuts.length - 1; i >= 0; i--) {
+        var before = out.slice(0, cuts[i]);
+        if (/\n\s*$/.test(before) || cuts[i] === 0) continue; // déjà en début de ligne
+        out = before.replace(/[ \t]+$/, "") + "\n\n" + out.slice(cuts[i]);
+      }
     }
+    // Étapes écrites en ligne avec des tirets (« méthode : -L (...). -G (...). -S (...) ») : une étape par
+    // ligne, en vraie liste. Seulement un tiret qui suit une ponctuation (jamais un mot composé comme
+    // « c'est-à-dire »), et seulement s'il y en a au moins deux sur la même ligne.
+    var dashRe = /([:.;!?»)])[ \t]*[-–][ \t]*(?=[A-Za-zÀ-ÖØ-öø-ÿ«(])/g;
+    out = out.split("\n").map(function (line) {
+      var hits = line.match(dashRe);
+      if (!hits || hits.length < 2) return line;
+      return line.replace(dashRe, "$1\n- ");
+    }).join("\n");
     return out;
   }
   // Remplace les exercices tirés du cours par des exercices inédits (même nombre, avec un minimum selon le
