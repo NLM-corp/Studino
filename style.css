@@ -1136,5 +1136,11 @@
   .draw-hint { flex: 1; font-size: 12.5px; color: var(--text-muted); min-width: 160px; }
   .draw-canvas { flex: 1; min-height: 0; position: relative; background: #fff; }
   .draw-canvas .excalidraw { height: 100%; }
-  .rte-drawing { display: block; max-width: 100%; height: auto; margin: 8px 0; border: 2px solid var(--border-soft); border-radius: 10px; background: #fff; }
+  .rte-drawing { display: block; width: 60%; max-width: 100%; height: auto; margin: 8px 0; border: 2px solid var(--border-soft); border-radius: 10px; background: #fff; }
+  .rte-editor .rte-drawing { cursor: pointer; }
+  .rte-editor .rte-drawing:hover { border-color: var(--accent); }
+  .draw-size-bar { position: fixed; z-index: 75; display: flex; align-items: center; gap: 4px; padding: 4px; background: var(--surface); border: 2px solid var(--border); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+  .draw-size-bar button { min-width: 32px; height: 30px; border: 2px solid var(--border-soft); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
+  .draw-size-bar button:hover { border-color: var(--accent); }
+  .draw-size-val { min-width: 48px; text-align: center; font-size: 12px; }
   @media (max-width: 780px) { .draw-overlay { padding: 0; } .draw-box { width: 100vw; height: 100dvh; border-radius: 0; border: none; } }

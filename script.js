@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -864,6 +864,60 @@
     }
     return { url: canvas.toDataURL("image/jpeg", 0.9), box: box };
   }
+  // Dernière vérification de chaque découpe, par l'IA, sur l'image finale elle-même : la vérification au
+  // pixel ne sait pas distinguer un trait du schéma d'une ligne de texte voisine (un schéma encadré collé
+  // à une colonne de texte récupérait des bouts de phrases, voire s'agrandissait vers le texte). L'IA
+  // retire ce qui n'appartient pas au schéma, et signale un bord où il est coupé (on élargit alors ce côté).
+  var FIGURE_REVIEW_SCHEMA = {
+    type: "object",
+    properties: {
+      cutSides: { type: "array", items: { type: "string", enum: ["top", "bottom", "left", "right"] }, description: "Bords de l'image par lesquels le visuel est coupé (il continue au-delà). Vide s'il est entier." },
+      box: { type: "array", items: { type: "integer" }, description: "[ymin, xmin, ymax, xmax] sur 0-1000 dans CETTE image : le visuel entier (titre, annotations, légendes, cadre éventuel compris), sans aucun texte du cours qui ne lui appartient pas." }
+    },
+    required: ["cutSides", "box"]
+  };
+  function buildFigureReviewPrompt(caption) {
+    return "Cette image est une découpe qui doit contenir UNIQUEMENT ce visuel : « " + caption + " ».\n" +
+      "1. Si le visuel est coupé par un bord de l'image (une partie du dessin, du cadre ou de ses annotations continue au-delà), indique ce ou ces bords dans \"cutSides\".\n" +
+      "2. Donne dans \"box\" la zone [ymin, xmin, ymax, xmax] (0-1000, relative à cette image) qui contient TOUT le visuel — avec son titre, ses lettres, valeurs, flèches, légendes et son cadre s'il en a un — mais AUCUN morceau de texte du cours qui ne lui appartient pas (phrases, formules ou tableaux voisins, même coupés). Si l'image ne contient que le visuel, renvoie [0, 0, 1000, 1000].\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  async function reviewFigureCrop(source, box, caption) {
+    var cur = { x: box.x, y: box.y, w: box.w, h: box.h };
+    var clamp = function (b) {
+      var x = Math.max(0, b.x), y = Math.max(0, b.y);
+      return { x: x, y: y, w: Math.min(source.w, b.x + b.w) - x, h: Math.min(source.h, b.y + b.h) - y };
+    };
+    for (var round = 0; round < 3; round++) {
+      var url = await source.renderRegion(cur.x, cur.y, cur.w, cur.h);
+      var r = null;
+      try { r = await callGemini(geminiImageParts([url]).concat([{ text: buildFigureReviewPrompt(caption) }]), FIGURE_REVIEW_SCHEMA); } catch (e) { r = null; }
+      if (!r) return { url: url, box: cur };
+      var cut = (r.cutSides || []).filter(function (sd) {
+        return (sd === "top" && cur.y > 0) || (sd === "left" && cur.x > 0) || (sd === "bottom" && cur.y + cur.h < source.h) || (sd === "right" && cur.x + cur.w < source.w);
+      });
+      if (cut.length && round < 2) {
+        var gx = cur.w * 0.25, gy = cur.h * 0.25, g = { x: cur.x, y: cur.y, w: cur.w, h: cur.h };
+        if (cut.indexOf("left") !== -1) { g.x -= gx; g.w += gx; }
+        if (cut.indexOf("right") !== -1) { g.w += gx; }
+        if (cut.indexOf("top") !== -1) { g.y -= gy; g.h += gy; }
+        if (cut.indexOf("bottom") !== -1) { g.h += gy; }
+        cur = clamp(g);
+        continue;
+      }
+      if (isValidFigureBox(r.box)) {
+        var nb = { x: cur.x + r.box[1] / 1000 * cur.w, y: cur.y + r.box[0] / 1000 * cur.h, w: (r.box[3] - r.box[1]) / 1000 * cur.w, h: (r.box[2] - r.box[0]) / 1000 * cur.h };
+        // Garde-fou : une « correction » qui ne garderait presque rien est plus probablement une erreur.
+        if (nb.w * nb.h >= 0.2 * cur.w * cur.h) {
+          var pad = Math.max(6, Math.min(nb.w, nb.h) * 0.02);
+          var trimmed = clamp({ x: nb.x - pad, y: nb.y - pad, w: nb.w + 2 * pad, h: nb.h + 2 * pad });
+          if (trimmed.w >= 20 && trimmed.h >= 20) return { url: await source.renderRegion(trimmed.x, trimmed.y, trimmed.w, trimmed.h), box: trimmed };
+        }
+      }
+      return { url: url, box: cur };
+    }
+    return { url: await source.renderRegion(cur.x, cur.y, cur.w, cur.h), box: cur };
+  }
   function figBoxOverlap(a, b) {
     var ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
     var iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
@@ -963,7 +1017,7 @@
           // bords l'agrandit jusqu'à ce que plus aucun trait ne soit coupé.
           if ((f.tileH < s.h && f.h > f.tileH * 0.9) || (f.tileW < s.w && f.w > f.tileW * 0.9)) {
             var bp = Math.max(10, Math.min(f.w, f.h) * 0.04);
-            return cropUntilEdgesClear(s, { x: f.x - bp, y: f.y - bp, w: f.w + 2 * bp, h: f.h + 2 * bp }).then(function (res) {
+            return cropUntilEdgesClear(s, { x: f.x - bp, y: f.y - bp, w: f.w + 2 * bp, h: f.h + 2 * bp }).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) {
               if (res) { crops[i] = res.url; finals[i] = res.box; }
             });
           }
@@ -983,7 +1037,7 @@
                 }
                 var pad = Math.max(10, Math.min(box.w, box.h) * 0.04);
                 var r = { x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
-                return cropUntilEdgesClear(s, r).then(function (res) {
+                return cropUntilEdgesClear(s, r).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) {
                   if (res) { crops[i] = res.url; finals[i] = res.box; }
                 });
               });
@@ -7302,6 +7356,9 @@
             cleanImg.setAttribute("class", "rte-drawing");
             cleanImg.setAttribute("src", imgSrc);
             cleanImg.setAttribute("alt", "Dessin");
+            // Taille choisie par l'élève (barre − / + sur le dessin) : seul un pourcentage est gardé.
+            var imgW = child.style && child.style.width;
+            if (/^\d{1,3}%$/.test(imgW || "")) cleanImg.setAttribute("style", "width:" + imgW);
             node.replaceChild(cleanImg, child);
           } else {
             node.removeChild(child);
@@ -7912,6 +7969,7 @@
       img.className = "rte-drawing";
       img.src = dataUrl;
       img.alt = "Dessin";
+      img.style.width = "60%";
       wrap.appendChild(img);
       var after = document.createElement("div");
       after.innerHTML = "<br>";
@@ -7926,6 +7984,42 @@
       toast("Le dessin n'a pas pu être inséré");
     });
   }
+  // Redimensionner un dessin déjà inséré : un clic dessus (dans une zone de réponse) affiche une petite
+  // barre − / taille / + / 🗑, de 20 % à 100 % de la largeur de la réponse.
+  var drawingSizeBar = null;
+  function hideDrawingSizeBar() { if (drawingSizeBar) { drawingSizeBar.remove(); drawingSizeBar = null; } }
+  function showDrawingSizeBar(img) {
+    hideDrawingSizeBar();
+    var bar = document.createElement("div");
+    bar.className = "draw-size-bar";
+    var cur = function () { return parseInt(img.style.width, 10) || 60; };
+    var notify = function () { var ed = img.closest(".rte-editor"); if (ed) ed.dispatchEvent(new Event("input", { bubbles: true })); };
+    var place = function () {
+      var r = img.getBoundingClientRect();
+      bar.style.top = Math.max(8, r.top - 44) + "px";
+      bar.style.left = Math.max(8, r.left) + "px";
+      bar.querySelector(".draw-size-val").textContent = cur() + " %";
+    };
+    var setW = function (w) { img.style.width = Math.max(20, Math.min(100, w)) + "%"; notify(); place(); };
+    bar.innerHTML = '<button type="button" data-a="minus" title="Plus petit">−</button><span class="draw-size-val mono"></span><button type="button" data-a="plus" title="Plus grand">+</button><button type="button" data-a="del" title="Supprimer le dessin">🗑</button>';
+    bar.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    bar.addEventListener("click", function (e) {
+      var a = e.target.getAttribute && e.target.getAttribute("data-a");
+      if (a === "minus") setW(cur() - 10);
+      else if (a === "plus") setW(cur() + 10);
+      else if (a === "del") { var p = img.parentNode; img.remove(); if (p && p.tagName === "DIV" && !p.textContent.trim() && !p.querySelector("img")) p.remove(); notify(); hideDrawingSizeBar(); }
+    });
+    document.body.appendChild(bar);
+    drawingSizeBar = bar;
+    place();
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (drawingSizeBar && drawingSizeBar.contains(t)) return;
+    if (t && t.tagName === "IMG" && t.classList.contains("rte-drawing") && t.closest(".rte-editor")) { showDrawingSizeBar(t); return; }
+    hideDrawingSizeBar();
+  });
+  window.addEventListener("scroll", hideDrawingSizeBar, true);
   function rteInsertHtmlAtCaret(editor, html) {
     var sel = window.getSelection();
     var range = (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) ? sel.getRangeAt(0) : null;
