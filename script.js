@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1052,6 +1052,30 @@
       // 4. Deuxième chasse aux doublons, APRÈS le zoom : deux morceaux d'un même grand schéma (coupé dans
       // deux tranches) se recouvraient peu au repérage, mais le zoom les agrandit tous deux jusqu'au schéma
       // entier. On ne garde alors que la découpe la plus grande.
+      // 4a. Deux morceaux d'un même visuel (même légende, même page) qui se touchent ou se chevauchent :
+      // on les recolle en une seule découpe. Ex. une photo coupée par la limite entre deux tranches,
+      // repérée en deux moitiés qui portaient la même légende « Exercice 23 - Photo du Soleil ».
+      var normCap = function (c) { return String(c || "").toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, " ").trim(); };
+      for (var mergedAny = true; mergedAny;) {
+        mergedAny = false;
+        var idxs = kept.map(function (f, i) { return i; }).filter(function (i) { return crops[i]; });
+        for (var pa = 0; pa < idxs.length && !mergedAny; pa++) {
+          for (var pb = pa + 1; pb < idxs.length && !mergedAny; pb++) {
+            var ia = idxs[pa], ib = idxs[pb], A = finals[ia], B = finals[ib];
+            if (kept[ia].si !== kept[ib].si || !normCap(kept[ia].caption) || normCap(kept[ia].caption) !== normCap(kept[ib].caption)) continue;
+            var gapX = Math.max(A.x, B.x) - Math.min(A.x + A.w, B.x + B.w), gapY = Math.max(A.y, B.y) - Math.min(A.y + A.h, B.y + B.h);
+            var tol = 0.15 * Math.max(A.w, A.h, B.w, B.h);
+            if (gapX > tol || gapY > tol) continue;
+            var src = sources[kept[ia].si];
+            var ux = Math.min(A.x, B.x), uy = Math.min(A.y, B.y);
+            var u = { x: ux, y: uy, w: Math.max(A.x + A.w, B.x + B.w) - ux, h: Math.max(A.y + A.h, B.y + B.h) - uy };
+            crops[ia] = await src.renderRegion(u.x, u.y, u.w, u.h);
+            finals[ia] = u;
+            crops[ib] = null;
+            mergedAny = true;
+          }
+        }
+      }
       var order = kept.map(function (f, i) { return i; }).filter(function (i) { return crops[i]; })
         .sort(function (a, b) { return finals[b].w * finals[b].h - finals[a].w * finals[a].h; });
       var finalKeep = {};
@@ -1258,7 +1282,7 @@
     required: ["transcription", "explanation", "flashcards", "quizQuestions", "exercises", "figures"]
   };
 
-  function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription, pre) {
+  function buildCoursePrompt(title, subjectName, chapterName, imageCount, priorTranscription, pre, pagesText, addMode) {
     var step1;
     if (priorTranscription) {
       step1 = imageCount > 0
@@ -1274,7 +1298,15 @@
       step1 = "Aucune photo n'a été fournie : rédige à partir du seul titre un contenu de cours plausible, rigoureux et structuré en Markdown (## et ### pour les titres, - pour les listes, ** pour le gras).";
     } else if (imageCount === 1) {
       step1 = "Retranscris fidèlement et INTÉGRALEMENT le contenu visible sur la photo, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. C'est une vraie retranscription, pas une synthèse : ne garde pas seulement les points importants, reprends aussi les détails, exemples et remarques annexes QUI SONT RÉELLEMENT ÉCRITS SUR LA PHOTO (jamais un exemple ou un détail que tu inventerais toi-même pour illustrer — la transcription doit rester un reflet fidèle à 100% de ce que l'enseignant a écrit, rien de plus, rien de moins). Ne résume et ne saute rien : si la photo contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
-    } else {
+    }
+    // Retranscription déjà faite à part, page par page (voir transcribeDocumentPages) : la génération ne
+    // la refait pas, elle s'en sert pour l'explication, les flashcards, le contrôle et les exercices.
+    if (pagesText) {
+      step1 = (addMode
+        ? "Voici le contenu DÉJÀ CONNU de ce cours, donné UNIQUEMENT comme contexte (il est déjà traité) :\n\n" + (priorTranscription || "") + "\n\nEt voici le NOUVEAU contenu, déjà retranscrit page par page :\n\n"
+        : "Voici la retranscription intégrale du cours, déjà faite page par page :\n\n") +
+        pagesText + "\n\nNe refais PAS la retranscription : renvoie \"transcription\" vide (chaîne vide). Les étapes suivantes s'appuient sur ce texte.";
+    } else if (imageCount > 1 && !priorTranscription) {
       step1 = "Les " + imageCount + " photos fournies sont plusieurs pages du même cours, dans l'ordre. Retranscris-les fidèlement et INTÉGRALEMENT en un seul contenu cohérent et continu, en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). Corrige les fautes évidentes mais garde le sens exact. C'est une vraie retranscription, pas une synthèse : ne garde pas seulement les points importants, reprends aussi les détails, exemples et remarques annexes QUI SONT RÉELLEMENT ÉCRITS SUR LES PHOTOS (jamais un exemple ou un détail que tu inventerais toi-même pour illustrer — la transcription doit rester un reflet fidèle à 100% de ce que l'enseignant a écrit, rien de plus, rien de moins). Ne résume et ne saute rien : si le cours contient un tableau ou une liste de définitions/dates/formules, retranscris-le intégralement, ligne par ligne ou case par case, sans en omettre aucune.";
     }
     return "Tu es un assistant pédagogique pour un élève francophone. Voici un cours intitulé « " + title + " » (matière : " + subjectName + ", chapitre : " + chapterName + ").\n\n" +
@@ -1282,7 +1314,7 @@
       preFiguresPromptText(pre, "dans \"transcription\" (et aussi dans \"explanation\" là où c'est utile)") +
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article Wikipedia, site d'analyse littéraire, résumé de manuel, etc. — ce qui arrive souvent quand l'enseignant a lui-même repris une source en ligne), REFORMULE ce passage avec des mots différents en gardant strictement le même sens, la même structure et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel. Ce n'est pas à l'élève de rendre des comptes sur les sources utilisées par son enseignant.\n\n" +
       "1. " + step1 + "\n" +
-      (priorTranscription && imageCount > 0 ? "MODE AJOUT (prioritaire sur les consignes 2 à 6) : l'explication, les flashcards, les questions de révision et les exercices du contenu déjà connu EXISTENT DÉJÀ et sont conservés tels quels. \"explanation\", \"flashcards\", \"quizQuestions\" et \"exercises\" doivent donc porter UNIQUEMENT sur le contenu NOUVEAU que tu as mis dans \"transcription\" (en restant cohérents avec le reste du cours), sans reprendre ce qui est déjà couvert. Les nombres minimums indiqués plus bas ne s'appliquent pas : adapte-les à la quantité de contenu nouveau. Si \"transcription\" est vide, laisse-les tous vides.\n" : "") +
+      ((addMode || (priorTranscription && imageCount > 0)) ? "MODE AJOUT (prioritaire sur les consignes 2 à 6) : l'explication, les flashcards, les questions de révision et les exercices du contenu déjà connu EXISTENT DÉJÀ et sont conservés tels quels. \"explanation\", \"flashcards\", \"quizQuestions\" et \"exercises\" doivent donc porter UNIQUEMENT sur le contenu NOUVEAU que tu as mis dans \"transcription\" (en restant cohérents avec le reste du cours), sans reprendre ce qui est déjà couvert. Les nombres minimums indiqués plus bas ne s'appliquent pas : adapte-les à la quantité de contenu nouveau. Si \"transcription\" est vide, laisse-les tous vides.\n" : "") +
       "2. Rédige une VRAIE explication pédagogique approfondie, pas un résumé reformulé en plus simple. Pour CHAQUE notion du cours (pas seulement les principales) : explique le \"pourquoi\" avant/avec le \"quoi\" (d'où ça vient, à quoi ça sert, pourquoi c'est vrai ou pourquoi on en a besoin), donne au moins un exemple concret et chiffré/situé (jamais juste \"par exemple...\" vague), anticipe et lève explicitement la confusion ou l'erreur la plus fréquente sur cette notion précise (\"beaucoup d'élèves confondent X et Y, mais...\"), et relie la notion à celles qui précèdent/suivent dans le cours pour que l'ensemble forme un raisonnement cohérent plutôt qu'une liste de paragraphes indépendants. Structure-la en Markdown avec les mêmes ## et ### que la retranscription (une sous-section par grande notion), jamais un seul bloc de texte continu. Une explication qui se contente de reformuler la transcription avec des mots plus simples, sans profondeur ni exemple ni mise en garde, est un ÉCHEC — vise la longueur et la richesse qu'il faut pour que l'élève comprenne vraiment, pas un résumé expéditif.\n" +
       "3. Les vidéos YouTube recommandées sont gérées séparément après cette génération (recherche de vraies vidéos existantes) : ignore ce point ici.\n" +
       "4. Génère un nombre de flashcards (question / réponse courte) ADAPTÉ à la richesse réelle du cours (entre 5 et 20 au total) plutôt qu'un nombre fixe : pour un cours très court avec peu de notions, génère seulement 5 à 8 flashcards bien ciblées ; pour un cours long et dense couvrant beaucoup de notions, génère-en davantage, jusqu'à 20. Une notion distincte du cours = une flashcard, pas plus — ne crée jamais de flashcards redondantes ou artificielles juste pour atteindre un quota. Qualité exigée pour chaque flashcard : \"q\" doit être une question PRÉCISE et autonome (compréhensible sans relire le cours, jamais une question vague type \"à quoi ça sert ?\" sans préciser de quoi on parle) ; \"a\" doit être une réponse COMPLÈTE et formulée en vraie phrase (jamais un mot ou un fragment télégraphique isolé, sauf si la réponse est authentiquement un seul mot/une seule valeur comme une date ou un nombre) — une flashcard doit se suffire à elle-même pour réviser sans le cours sous les yeux.\n" +
@@ -1547,13 +1579,104 @@
     }
   }
 
-  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription, pre) {
+  async function generateCourseContent(imageDataUrls, title, subjectName, chapterName, priorTranscription, pre, pagesText, addMode) {
+    // Retranscription déjà faite page par page : les photos ne sont pas renvoyées (le texte suffit pour
+    // l'explication, les flashcards et le contrôle, et ça allège beaucoup l'appel).
+    if (pagesText) {
+      return callGemini([{ text: buildCoursePrompt(title, subjectName, chapterName, 0, priorTranscription, null, pagesText, addMode) }], COURSE_SCHEMA);
+    }
     var images = (imageDataUrls || []).map(function (url) {
       var m = /^data:(image\/[a-zA-Z+]+|application\/pdf);base64,(.+)$/.exec(url || "");
       return m ? { inline_data: { mime_type: m[1], data: m[2] } } : null;
     }).filter(Boolean);
     var parts = images.concat([{ text: buildCoursePrompt(title, subjectName, chapterName, images.length, priorTranscription, pre) }]);
     return callGemini(parts, COURSE_SCHEMA);
+  }
+
+  /* ---------------- Retranscription page par page ----------------
+     Avant, la retranscription se faisait dans le même gros appel que l'explication, les flashcards, le
+     contrôle et les exercices : avec beaucoup de pages (ex. 16 captures d'exercices), l'IA en sautait
+     une bonne partie pour finir. Elle est maintenant faite à part, quelques pages à la fois, puis
+     recollée dans l'ordre : chaque appel a peu de pages et doit tout recopier. */
+  var PAGE_TRANSCRIPTION_SCHEMA = {
+    type: "object",
+    properties: { transcription: { type: "string", description: "Retranscription intégrale et fidèle de ces pages, en Markdown." } },
+    required: ["transcription"]
+  };
+  function buildPageTranscriptionPrompt(title, subjectName, label, tokens, priorContext) {
+    return "Voici " + label + " d'un document de cours ou d'exercices intitulé « " + title + " » (matière : " + subjectName + ").\n\n" +
+      COURSE_LANGUAGE_RULE +
+      "Retranscris fidèlement et INTÉGRALEMENT tout le contenu de " + label + ", en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). C'est une vraie retranscription, pas un résumé :\n" +
+      "- N'oublie RIEN : chaque titre, chaque paragraphe, chaque définition, chaque exercice (avec son numéro et son titre, son énoncé complet, TOUTES ses questions numérotées ou lettrées, ses données et ses encadrés), même s'il y en a beaucoup et même si c'est long. Si la page contient plusieurs colonnes, retranscris une colonne entière puis la suivante, dans l'ordre de lecture.\n" +
+      "- Une question par ligne, numérotée comme dans le document, avec une ligne vide entre deux questions.\n" +
+      "- Corrige seulement les fautes évidentes, garde le sens et les valeurs exacts.\n" +
+      "- Si un passage correspond mot pour mot à un texte déjà public (manuel, site...), reformule légèrement sa formulation en gardant strictement les mêmes informations, données et questions.\n" +
+      "- Formules et notations en LaTeX entre $...$ (ou $$...$$), jamais de commande de couleur. Tableaux en vrai tableau Markdown (ligne d'en-tête, ligne |---|, puis les lignes).\n" +
+      COURSE_POSED_OPERATION_RULE +
+      (tokens.length
+        ? "Schémas déjà découpés à part (à insérer, chacun seul sur sa ligne, à l'endroit exact où il apparaît, uniquement s'il se trouve sur ces pages) :\n" + tokens.map(function (t) { return t.placeholder + " — " + (t.where || "") + " — " + t.caption; }).join("\n") + "\nNe décris jamais ces schémas en mots à leur place ; ne les mets qu'une fois.\n\n"
+        : "Ne décris pas en mots les photos ou dessins : ils sont gérés à part.\n\n") +
+      (priorContext ? "Ce contenu est AJOUTÉ à un cours qui contient déjà le texte ci-dessous : ne recopie pas une seconde fois un passage qui y figure déjà (même page reprise ou recoupée). S'il n'y a rien de nouveau, renvoie une retranscription vide.\n\nContenu déjà connu :\n" + String(priorContext).slice(0, 20000) + "\n\n" : "") +
+      "Réponds uniquement en respectant le schéma JSON fourni.";
+  }
+  function pdfPageCount(dataUrl) {
+    return loadPdfJs().then(function (lib) {
+      return fetch(dataUrl).then(function (r) { return r.arrayBuffer(); }).then(function (buf) { return lib.getDocument({ data: new Uint8Array(buf) }).promise; });
+    }).then(function (doc) { var n = doc.numPages; doc.destroy(); return n; });
+  }
+  // Renvoie { ok, text } ; ok=false si un morceau a échoué (on retombe alors sur l'ancienne méthode).
+  async function transcribeDocumentPages(images, pre, priorContext, title, subjectName, report) {
+    report = report || function () {};
+    var jobs = []; // { parts, label, fileIndex }
+    var batch = [];
+    var flush = function () {
+      if (!batch.length) return;
+      var files = batch.slice();
+      var parts = [];
+      files.forEach(function (f, k) { parts.push({ text: "Page " + (k + 1) + " :" }); parts = parts.concat(geminiImageParts([f.src])); });
+      jobs.push({ parts: parts, label: files.length > 1 ? "ces " + files.length + " pages (dans l'ordre)" : "cette page", fileIdx: files.map(function (f) { return f.i; }) });
+      batch = [];
+    };
+    for (var i = 0; i < images.length; i++) {
+      var src = images[i];
+      if (isPdfDataUrl(src)) {
+        flush();
+        var n = 0;
+        try { n = await pdfPageCount(src); } catch (e) { n = 0; }
+        // Nombre de pages inconnu (PDF illisible par pdf.js) : tout le PDF en une fois.
+        if (!n) jobs.push({ parts: geminiImageParts([src]), label: "ce PDF (toutes ses pages, dans l'ordre)", fileIdx: [i] });
+        for (var p = 1; p <= n; p += 3) {
+          var last = Math.min(n, p + 2);
+          jobs.push({ parts: geminiImageParts([src]), label: (p === last ? "la page " + p : "les pages " + p + " à " + last) + " de ce PDF (et UNIQUEMENT ces pages-là)", fileIdx: [i] });
+        }
+      } else {
+        batch.push({ src: src, i: i });
+        if (batch.length >= 2) flush();
+      }
+    }
+    flush();
+    if (!jobs.length) return { ok: false, text: "" };
+    var results = new Array(jobs.length), failed = false, done = 0;
+    var tokensFor = function (fileIdx) { return ((pre && pre.list) || []).filter(function (t) { return fileIdx.indexOf(t.imageIndex) !== -1; }); };
+    report(0, Math.min(1, 2 / jobs.length), "pageTranscript");
+    await runWithConcurrency(jobs.map(function (job, k) {
+      return function () {
+        var t0 = Date.now();
+        var prompt = buildPageTranscriptionPrompt(title, subjectName, job.label, tokensFor(job.fileIdx), priorContext);
+        return callGemini(job.parts.concat([{ text: prompt }]), PAGE_TRANSCRIPTION_SCHEMA, 32768, 150000).then(function (data) {
+          results[k] = String(data && data.transcription || "").trim();
+        }).catch(function (err) {
+          console.error("Retranscription d'une page :", err);
+          failed = true;
+        }).then(function () {
+          done++;
+          genLearn("pageTranscript", Date.now() - t0);
+          report(done / jobs.length, Math.min(2, jobs.length - done) / jobs.length, "pageTranscript");
+        });
+      };
+    }), 2);
+    if (failed) return { ok: false, text: "" };
+    return { ok: true, text: results.filter(Boolean).join("\n\n") };
   }
 
   var REVISION_SHEET_SCHEMA = {
@@ -1774,7 +1897,7 @@
      ex. nombre de pages : la durée apprise est ramenée à une unité, puis multipliée) ; genSub() donne
      l'avancement RÉEL à l'intérieur de la phase en cours quand il est connu. */
   var GEN_DURATIONS_KEY = "studino-gen-durations";
-  var GEN_DEFAULT_MS = { figTile: 20000, figZoom: 12000, figures: 60000, course: 90000, exerciseImport: 60000, podcastScript: 120000, ttsChunk: 45000, sheet: 70000, sheetSchema: 25000, methodo: 50000, examPlan: 40000, finish: 15000, step: 30000 };
+  var GEN_DEFAULT_MS = { pageTranscript: 35000, figTile: 20000, figZoom: 12000, figures: 60000, course: 90000, exerciseImport: 60000, podcastScript: 120000, ttsChunk: 45000, sheet: 70000, sheetSchema: 25000, methodo: 50000, examPlan: 40000, finish: 15000, step: 30000 };
   var genDurations = {};
   try { genDurations = JSON.parse(localStorage.getItem(GEN_DURATIONS_KEY) || "{}") || {}; } catch (e) {}
   function genExpected(type) { return genDurations[type] || GEN_DEFAULT_MS[type] || 60000; }
@@ -3842,8 +3965,9 @@
     course.error = null;
     var genImgs = (imagesOverride || course.images || []).length;
     genStart(course.id, [
-      { label: "Repérage et découpe des schémas", weight: genImgs ? 35 : 0, type: "figures", learn: false },
-      { label: "Rédaction du cours", weight: 55, type: "course", scale: Math.max(1, genImgs * 0.5 + (priorTranscription ? 0.5 : 0)) },
+      { label: "Repérage et découpe des schémas", weight: genImgs ? 25 : 0, type: "figures", learn: false },
+      { label: "Retranscription page par page", weight: genImgs ? 30 : 0, type: "pageTranscript", learn: false },
+      { label: "Rédaction du cours", weight: genImgs ? 35 : 90, type: "course", scale: Math.max(1, genImgs * 0.3 + (priorTranscription ? 0.5 : 0)) },
       { label: "Finitions", weight: 10, type: "finish" }
     ]);
     saveDB(); render();
@@ -3862,11 +3986,23 @@
     var keepExercises = (course.exercises || []).slice();
     var freshFromImages = !priorTranscription && images && images.length; // tout refait depuis les photos : les anciens schémas sont remplacés
     var pre = null;
+    var pagesText = null; // retranscription faite à part, page par page (null = ancienne méthode)
     prepareDocumentFigures(images, function (b, s, t) { genSub(course.id, b, s, t); }).then(function (p) {
       pre = p;
-      genPhase(course.id, "Rédaction du cours");
-      return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
+      if (!images || !images.length) {
+        genPhase(course.id, "Rédaction du cours");
+        return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p);
+      }
+      genPhase(course.id, "Retranscription page par page");
+      return transcribeDocumentPages(images, p, addMode ? keepTranscription : null, course.title, subjectName, function (b, s, t) { genSub(course.id, b, s, t); }).then(function (tr) {
+        genPhase(course.id, "Rédaction du cours");
+        if (!tr.ok) return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p); // ancienne méthode en secours
+        pagesText = tr.text;
+        if (addMode && !pagesText.trim()) return { transcription: "" }; // rien de nouveau : le cours reste tel quel
+        return generateCourseContent(images, course.title, subjectName, chapterName, priorTranscription, p, pagesText, addMode);
+      });
     }).then(function (data) {
+      if (pagesText !== null) data.transcription = pagesText;
       genPhase(course.id, "Finitions");
       // Ajout de documents qui ne contiennent rien de nouveau : le cours reste exactement tel quel.
       if (addMode && !String(data.transcription || "").trim()) {
