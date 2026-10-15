@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3271,6 +3271,86 @@
       "Renvoie un tableau \"variants\", une entrée par item, en reprenant EXACTEMENT le même \"id\" que celui fourni pour chacun.\n\n" +
       "Pour toute formule ou notation mathématique/scientifique, utilise du LaTeX délimité par $...$ ou $$...$$ — jamais de commande de couleur LaTeX.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si les éléments ci-dessus sont dans une langue étrangère (cours de langue), garde la même langue que ces éléments.";
+  }
+  /* ---------------- Exercices inédits de la prépa ----------------
+     Avant, la prépa reprenait les exercices générés avec le cours (souvent courts) et se contentait de
+     les reformuler quand on retombait dessus : changer quelques mots ne change pas l'exercice. Chaque
+     séance fait maintenant écrire des exercices NOUVEAUX, de vrais exercices de contrôle (un support
+     riche + plusieurs questions), différents de ceux du cours et des séances précédentes. */
+  var EXAM_PREP_FRESH_SCHEMA = {
+    type: "object",
+    properties: {
+      exercises: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            prompt: { type: "string", description: "Énoncé complet en Markdown : le support (texte, extrait, données, situation, document...) puis les questions numérotées." },
+            solution: { type: "string", description: "Corrigé complet et détaillé, question par question, avec toutes les réponses attendues." },
+            topic: { type: "string", description: "La notion du jour principalement travaillée, recopiée telle quelle depuis la liste fournie." }
+          },
+          required: ["prompt", "solution", "topic"]
+        }
+      }
+    },
+    required: ["exercises"]
+  };
+  function buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid) {
+    var mode = prep.revisionMode || "auto";
+    var share = typeof prep.practiceShare === "number" ? prep.practiceShare : 50;
+    var kindRule = mode === "cours" || share <= 20
+      ? "Ce sont des exercices de RESTITUTION du cours (l'élève révise surtout du par cœur) : chacun enchaîne plusieurs questions qui demandent de définir, expliquer, illustrer par un exemple, comparer, situer, justifier... sur un même thème, comme une vraie partie « questions de cours » d'un contrôle."
+      : "Ce sont des exercices d'APPLICATION : l'élève doit mettre en œuvre les notions, méthodes et savoir-faire du cours sur un support NOUVEAU.";
+    var source = courses.map(function (co) { return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || ""); }).join("\n\n");
+    return "Tu es un professeur qui prépare la séance de révision du jour d'un élève pour « " + prep.title + " ».\n" +
+      "Notions du jour : " + (dayEntry.topics || []).join(" ; ") + ". Objectif du jour : " + (dayEntry.focus || "") + "\n\n" +
+      COURSE_LANGUAGE_RULE +
+      "Crée EXACTEMENT " + count + " exercice(s) NOUVEAU(X), centrés sur les notions du jour. " + kindRule + "\n\n" +
+      "Règles :\n" +
+      "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 10 à 25 minutes de travail) : un support riche suivi de PLUSIEURS questions numérotées. JAMAIS une question unique et courte. Exemples : en français, pour des procédés stylistiques, un extrait de 6 à 12 lignes (écrit par toi dans l'esprit des textes du cours, ou une citation exacte du cours) qui contient PLUSIEURS procédés différents, avec des questions pour les repérer, les nommer, citer le passage et analyser l'effet de chacun ; en maths/physique-chimie, un problème à plusieurs étapes avec des données nouvelles ; en histoire-géographie, un document ou une situation à analyser avec plusieurs questions ; en langues, un texte avec compréhension et production.\n" +
+      "- VARIÉTÉ : les exercices de cette séance ont des formes et des supports DIFFÉRENTS entre eux (repérage + analyse, problème, étude de document, rédaction courte, vrai/faux justifié, mise en relation...). Ils ne doivent PAS être une simple reformulation des exercices déjà existants ou déjà donnés listés plus bas : autre support, autre situation, autres questions.\n" +
+      "- FIDÉLITÉ : uniquement des notions qui figurent dans le cours ci-dessous, au niveau de l'élève. N'invente aucun fait, aucune date, aucune définition qui n'y soit pas.\n" +
+      "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse).\n" +
+      "- Formules en LaTeX entre $...$, jamais de commande de couleur.\n" +
+      COURSE_POSED_OPERATION_RULE +
+      (avoid.length ? "Exercices déjà existants ou déjà donnés lors des séances précédentes (NE PAS refaire, même reformulés) :\n" + avoid.map(function (a) { return "- " + a; }).join("\n") + "\n\n" : "") +
+      "Voici le cours :\n\n" + source + "\n\n" +
+      "Réponds uniquement en respectant le schéma JSON fourni, en français (sauf ce que la RÈGLE DE LANGUE impose).";
+  }
+  // Remplace les exercices tirés du cours par des exercices inédits (même nombre, avec un minimum selon le
+  // type de révision). Ne bloque jamais la séance : en cas d'échec ou de lenteur, on garde le pool d'origine.
+  function addFreshExercises(prep, dayEntry, pool, progressKey) {
+    if (!getApiKey()) return Promise.resolve(pool);
+    var courses = epScopeCourses(prep.scope);
+    if (!courses.length) return Promise.resolve(pool);
+    var mode = prep.revisionMode || "auto";
+    var share = typeof prep.practiceShare === "number" ? prep.practiceShare : 50;
+    var fromCourse = pool.filter(function (it) { return it.kind === "exercise"; }).length;
+    var minimum = mode === "exos" ? 4 : mode === "cours" ? 2 : Math.max(1, Math.round(share / 100 * 4));
+    var count = Math.min(6, Math.max(fromCourse, minimum));
+    var avoid = [];
+    courses.forEach(function (co) { (co.exercises || []).forEach(function (ex) { avoid.push(String(ex.prompt || "").replace(/\s+/g, " ").slice(0, 160)); }); });
+    (prep.freshHistory || []).forEach(function (h) { avoid.push(h); });
+    avoid = avoid.slice(-40);
+    genStart(progressKey, [{ label: "Création d'exercices inédits pour ta séance", weight: 100, type: "prepExercises", scale: Math.max(1, count / 3) }]);
+    var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000);
+    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 120000); });
+    return Promise.race([task, timeout]).then(function (data) {
+      var fresh = (data && data.exercises || []).filter(function (ex) { return ex && ex.prompt && ex.solution; });
+      genEnd(progressKey, !!fresh.length);
+      if (!fresh.length) return pool;
+      prep.freshHistory = (prep.freshHistory || []).concat(fresh.map(function (ex) { return String(ex.prompt).replace(/\s+/g, " ").slice(0, 160); })).slice(-30);
+      var first = courses[0];
+      var freshItems = fresh.map(function (ex) {
+        var co = courses.find(function (c) { return String(ex.topic || "") && (c.title || "").toLowerCase().indexOf(String(ex.topic).toLowerCase()) !== -1; }) || first;
+        return { id: uid(), kind: "exercise", category: "", prompt: ex.prompt + (ex.topic ? "\n\n*Notion : " + ex.topic + "*" : ""), solution: ex.solution, figureSvg: "", courseId: co.id, courseTitle: co.title, fresh: true };
+      });
+      var rest = pool.filter(function (it) { return it.kind !== "exercise"; });
+      var merged = rest.concat(freshItems);
+      for (var j = merged.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = merged[j]; merged[j] = merged[k]; merged[k] = t; }
+      saveDB();
+      return merged;
+    }).catch(function () { genEnd(progressKey, false); return pool; });
   }
   function generateExamPrepVariants(items) {
     var parts = [{ text: buildExamPrepVariantPrompt(items) }];
@@ -6686,7 +6766,7 @@
       var todaySession = prep.sessions && prep.sessions[today];
       var readinessHtml = epReadinessBarHtml(epReadinessPercent(prep), false);
       var startingToday = epStartingSessionFor === (prep.id + "::" + today);
-      var loadingBtnHtml = '<button class="btn btn-ghost" style="width:auto" disabled>⏳ Préparation de séances variées…</button>';
+      var loadingBtnHtml = genProgressHtml(prep.id + "::" + today, "⏳ Préparation de la séance…");
       var resumable = prep.activeSession && !prep.activeSession.done;
       var cta;
       if (resumable) {
@@ -9582,7 +9662,7 @@
       // l'ajoute au pool juste avant de lancer la séance, sous le même sablier que la réécriture des
       // exercices déjà vus, pour étaler l'entraînement à l'écrit long sur toute la durée de la prépa.
       var methodo = prep.methodologyId ? methodoFind(prep.methodologyId) : null;
-      var finalizeLaunch = function (finalPool) {
+      var finalizeLaunchBase = function (finalPool) {
         if (!methodo || methodo.status !== "ready" || !getApiKey()) { launch(finalPool); return; }
         // La méthodologie n'est plus liée à une seule matière : ici on utilise la matière de LA PRÉPA
         // elle-même (celle dont le scope a été choisi à la création), puisque c'est elle qui détermine
@@ -9606,11 +9686,18 @@
           launch(finalPool);
         });
       };
+      // Exercices inédits de la séance (voir addFreshExercises), puis méthodologie éventuelle, puis lancement.
+      var finalizeLaunch = function (finalPool) {
+        epStartingSessionFor = prepId + "::" + date;
+        render();
+        addFreshExercises(prep, dayEntry, finalPool, prepId + "::" + date).then(finalizeLaunchBase);
+      };
       prep.itemUseCount = prep.itemUseCount || {};
       // Un item déjà rencontré lors d'une séance précédente de cette même prépa est réécrit (valeurs et
       // contexte différents, même notion) avant de démarrer, pour éviter de retomber mot pour mot sur le
       // même exercice à chaque répétition.
-      var repeats = picked.filter(function (it) { return (it.kind === "exercise" || it.kind === "open") && prep.itemUseCount[it.id]; });
+      // (Les exercices, eux, sont remplacés par des exercices inédits : inutile de les reformuler.)
+      var repeats = picked.filter(function (it) { return it.kind === "open" && prep.itemUseCount[it.id]; });
       picked.forEach(function (it) { prep.itemUseCount[it.id] = (prep.itemUseCount[it.id] || 0) + 1; });
       saveDB();
       if (!repeats.length || !getApiKey()) { finalizeLaunch(picked); return; }
