@@ -413,6 +413,7 @@
   .prose ul { max-width: 66ch; margin: 0 0 12px; padding-left: 20px; }
   .prose li { margin-bottom: 4px; }
   .prose table { width: 100%; max-width: 100%; border-collapse: collapse; margin: 4px 0 20px; font-size: 14px; display: block; overflow-x: auto; }
+  .md-pre { font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 15px; line-height: 1.45; white-space: pre; overflow-x: auto; max-width: 100%; margin: 6px 0 18px; padding: 12px 16px; background: var(--surface-2); border: 2px solid var(--border-soft); border-radius: 10px; display: block; width: fit-content; min-width: 0; }
   .prose th, .prose td { border: 2px solid var(--border-soft); padding: 10px 14px; text-align: left; line-height: 1.5; vertical-align: top; }
   .prose th { background: var(--surface-2); font-weight: 700; }
   .prose tbody tr:nth-child(even) td { background: var(--surface-2); }

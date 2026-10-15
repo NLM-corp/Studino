@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "10.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "10.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1244,6 +1244,7 @@
       "| Valeur A | Valeur B |\n" +
       "| Valeur C | Valeur D |\n\n" +
       "Le site sait afficher de vrais tableaux, alors n'hésite pas à t'en servir dès que c'est pertinent (dans la retranscription comme dans l'explication) — mais respecte bien ce format ligne par ligne, sans jamais oublier la ligne de séparation |---|---|.\n\n" +
+      COURSE_POSED_OPERATION_RULE +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf ce que la RÈGLE DE LANGUE du début impose de garder ou d'écrire dans une autre langue.";
   }
 
@@ -1542,6 +1543,7 @@
       "|---|---|\n" +
       "| Valeur A | Valeur B |\n\n" +
       "Le site sait afficher de vrais tableaux — respecte bien ce format ligne par ligne, sans oublier la ligne de séparation |---|---|.\n\n" +
+      COURSE_POSED_OPERATION_RULE +
       "Voici le contenu source :\n\n" + sourceBlocks + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf ce que la RÈGLE DE LANGUE du début impose de garder ou d'écrire dans une autre langue.";
   }
@@ -1904,6 +1906,8 @@
     if (mode === "bilingual") return "LANGUE : " + bilingual + script;
     return "LANGUE — choisis-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère → " + bilingual + " (c) cours en français, même avec quelques mots étrangers isolés → podcast en français, normalement." + script;
   }
+  // Opérations posées : affichées telles quelles dans un bloc ``` (police à chasse fixe, espaces gardés).
+  var COURSE_POSED_OPERATION_RULE = "Pour une opération POSÉE (addition, soustraction ou multiplication en colonnes, division posée, conversion par divisions successives...), écris-la dans un bloc de code délimité par une ligne ``` avant et une ligne ``` après, en alignant les chiffres à droite, colonne par colonne, avec des espaces (jamais de tabulation), la ligne du trait faite de tirets « - ». Exemple :\n```\n  A9\n+  1\n----\n  AA\n```\nN'utilise ce bloc QUE pour ces opérations posées (pas pour du texte ni pour des formules, qui restent en LaTeX).\n\n";
   // Même règle pour la génération du cours (retranscription, explication, flashcards, contrôle) et des fiches.
   var COURSE_LANGUAGE_RULE = "RÈGLE DE LANGUE (prioritaire sur toute consigne « en français » de ce message) — regarde d'abord dans quelle langue est rédigé le contenu source : " +
     "(a) contenu ENTIÈREMENT (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) : l'élève doit le maîtriser DANS cette langue. Ne traduis rien : la retranscription reste dans la langue d'origine ; l'explication est rédigée dans cette langue (claire, vocabulaire proche de celui du cours), avec seulement la traduction française entre parenthèses des mots ou expressions difficiles ; flashcards, questions et exercices sont posés ET corrigés dans cette langue. " +
@@ -7005,6 +7009,19 @@
     var inList = false;
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
+      // Bloc de code ``` : opérations posées (addition, soustraction, division en colonnes...) dont
+      // l'alignement des chiffres compte. Avant, chaque ligne devenait un paragraphe et perdait ses
+      // espaces : l'opération s'éparpillait. Rendu tel quel, en police à chasse fixe.
+      if (/^\s*```/.test(line)) {
+        if (inList) { html += "</ul>"; inList = false; }
+        var codeLines = [];
+        i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) { codeLines.push(lines[i].replace(/\s+$/, "")); i++; }
+        var indents = codeLines.filter(function (l) { return l.trim(); }).map(function (l) { return l.match(/^ */)[0].length; });
+        var minIndent = indents.length ? Math.min.apply(null, indents) : 0;
+        html += '<pre class="md-pre">' + codeLines.map(function (l) { return esc(l.slice(minIndent)); }).join("\n") + "</pre>";
+        continue;
+      }
       // Tableau : ligne d'en-tête suivie idéalement d'une ligne |---|---|, mais on l'accepte
       // aussi sans cette ligne de séparation (l'IA l'omet parfois) tant qu'au moins deux lignes
       // consécutives contiennent des pipes.
