@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -1245,6 +1245,7 @@
       "| Valeur C | Valeur D |\n\n" +
       "Le site sait afficher de vrais tableaux, alors n'hésite pas à t'en servir dès que c'est pertinent (dans la retranscription comme dans l'explication) — mais respecte bien ce format ligne par ligne, sans jamais oublier la ligne de séparation |---|---|.\n\n" +
       COURSE_POSED_OPERATION_RULE +
+      DRAWING_QUESTION_RULE +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — sauf ce que la RÈGLE DE LANGUE du début impose de garder ou d'écrire dans une autre langue.";
   }
 
@@ -1906,6 +1907,8 @@
     if (mode === "bilingual") return "LANGUE : " + bilingual + script;
     return "LANGUE — choisis-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère → " + bilingual + " (c) cours en français, même avec quelques mots étrangers isolés → podcast en français, normalement." + script;
   }
+  // Outil Dessin : l'IA peut demander un schéma à faire, et doit alors décrire ce qu'il doit contenir.
+  var DRAWING_QUESTION_RULE = "L'élève dispose d'un outil « Dessin » dans sa zone de réponse. Quand c'est vraiment utile pour la matière (schéma d'une expérience ou d'un montage, cycle, organe ou cellule légendés, croquis de géographie, figure géométrique, courbe ou graphique à tracer, frise...), tu peux poser une question du type « Fais le schéma légendé de... » ou « Représente... ». Dans la solution, décris alors précisément ce que le schéma doit contenir (éléments, légendes, flèches, allure) pour pouvoir le corriger. N'en abuse pas : seulement quand un dessin est la meilleure façon de répondre.\n\n";
   // Opérations posées : affichées telles quelles dans un bloc ``` (police à chasse fixe, espaces gardés).
   var COURSE_POSED_OPERATION_RULE = "Pour une opération POSÉE (addition, soustraction ou multiplication en colonnes, division posée, conversion par divisions successives...), écris-la dans un bloc de code délimité par une ligne ``` avant et une ligne ``` après, en alignant les chiffres à droite, colonne par colonne, avec des espaces (jamais de tabulation), la ligne du trait faite de tirets « - ». Exemple :\n```\n  A9\n+  1\n----\n  AA\n```\nN'utilise ce bloc QUE pour ces opérations posées (pas pour du texte ni pour des formules, qui restent en LaTeX).\n\n";
   // Même règle pour la génération du cours (retranscription, explication, flashcards, contrôle) et des fiches.
@@ -2767,7 +2770,10 @@
       "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si l'exercice est dans une langue étrangère (cours de langue), évalue la réponse dans cette langue (sens, vocabulaire, grammaire attendus), et cite les corrections dans cette langue.";
   }
   function gradeMethodologyAnswer(methodo, item, studentAnswer) {
-    var parts = [{ text: buildMethodologyGradePrompt(methodo, item, studentAnswer) }];
+    var drawn = drawingsForAnswer(studentAnswer);
+    var promptText = buildMethodologyGradePrompt(methodo, item, drawn.text);
+    if (drawn.images.length) promptText = DRAWING_GRADE_RULE + "\n" + promptText;
+    var parts = drawingParts(drawn.images).concat([{ text: promptText }]);
     return callGemini(parts, METHODOLOGY_GRADE_SCHEMA);
   }
   function submitMethodologyAnswer(methodo, item, answerHtml, answerText) {
@@ -3314,6 +3320,7 @@
       "- \"solution\" : corrigé complet question par question, avec toutes les réponses attendues (pour un repérage : chaque élément à trouver, sa citation et son analyse), une partie par question commençant par son numéro sur une nouvelle ligne, et à l'intérieur, CHAQUE étape ou élément (ex. chaque lettre d'une méthode, chaque procédé trouvé) sur sa propre ligne, en liste « - ».\n" +
       "- Formules en LaTeX entre $...$, jamais de commande de couleur.\n" +
       COURSE_POSED_OPERATION_RULE +
+      DRAWING_QUESTION_RULE +
       (avoid.length ? "Exercices déjà existants ou déjà donnés lors des séances précédentes (NE PAS refaire, même reformulés) :\n" + avoid.map(function (a) { return "- " + a; }).join("\n") + "\n\n" : "") +
       "Voici le cours :\n\n" + source + "\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français (sauf ce que la RÈGLE DE LANGUE impose).";
@@ -3534,7 +3541,11 @@
       "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si l'exercice est dans une langue étrangère (cours de langue), évalue la réponse dans cette langue (sens, vocabulaire, grammaire attendus), et cite les corrections dans cette langue.";
   }
   async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
-    var parts = [{ text: buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), studentAnswer) }];
+    // Dessins de l'élève (outil Dessin) : joints en images, et la consigne de correction les mentionne.
+    var drawn = drawingsForAnswer(studentAnswer);
+    var promptText = buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), drawn.text);
+    if (drawn.images.length) promptText = promptText.replace("Règles de correction :\n", "Règles de correction :\n" + DRAWING_GRADE_RULE);
+    var parts = drawingParts(drawn.images).concat([{ text: promptText }]);
     var result = await callGemini(parts, EXERCISE_GRADE_SCHEMA);
     result.mistakes = result.mistakes || [];
     result.level = gradeLevelFromMistakeCount(result.mistakes.length);
@@ -6896,7 +6907,8 @@
     for (var i = 0; i < COURSE_CHAT_MODELS.length; i++) {
       var model = COURSE_CHAT_MODELS[i];
       var url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":streamGenerateContent?alt=sse&key=" + encodeURIComponent(apiKey);
-      var body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { max_output_tokens: 4096 } });
+      // prompt : un texte, ou une liste de parts (texte + images des dessins de l'élève).
+      var body = JSON.stringify({ contents: [{ role: "user", parts: Array.isArray(prompt) ? prompt : [{ text: prompt }] }], generationConfig: { max_output_tokens: 4096 } });
       var res;
       try {
         res = await fetchWithTimeout(url, { method: "POST", headers: { "content-type": "application/json" }, body: body }, 45000);
@@ -6982,6 +6994,7 @@
       "- S'il te demande de l'interroger : pose UNE question à la fois sur le cours, attends sa réponse, puis corrige-la (ce qui est juste, ce qui manque) avant la question suivante.\n" +
       "- " + genderNote + "\n" +
       "- LANGUE : si le cours est entièrement dans une langue étrangère (anglais, espagnol, japonais...), réponds dans cette langue avec des phrases simples (l'élève doit maîtriser le cours dans cette langue), sauf s'il te demande explicitement une explication en français. Si le cours mélange français et langue étrangère, réponds en français en citant les mots et expressions dans la langue étrangère. Sinon, en français.\n" +
+      "- DESSINS : l'élève peut t'envoyer des dessins faits avec l'outil Dessin (images jointes, repérées dans la conversation). Regarde-les vraiment : explique ce qui est juste, ce qui est faux ou manque (éléments, légendes, flèches), et comment l'améliorer. Tu peux aussi lui demander de faire un schéma quand ça l'aide à apprendre.\n" +
       "- Formules en LaTeX entre $...$ (ou $$...$$ isolée), jamais de commande de couleur. Markdown simple autorisé (gras, listes, tableaux).\n\n" +
       "Voici le cours :\n\n" + content + "\n\n" +
       "Conversation jusqu'ici (le dernier message est celui auquel tu dois répondre maintenant) :\n\n" + convo + "\n\n" +
@@ -7281,6 +7294,20 @@
             return;
           }
         }
+        // Dessin inséré avec l'outil Dessin : seule une image en data URL est gardée, sans aucun autre attribut.
+        if (child.nodeType === 1 && child.tagName === "IMG") {
+          var imgSrc = child.getAttribute("src") || "";
+          if (/^data:image\/(png|jpeg|webp);base64,/i.test(imgSrc)) {
+            var cleanImg = doc.createElement("img");
+            cleanImg.setAttribute("class", "rte-drawing");
+            cleanImg.setAttribute("src", imgSrc);
+            cleanImg.setAttribute("alt", "Dessin");
+            node.replaceChild(cleanImg, child);
+          } else {
+            node.removeChild(child);
+          }
+          return;
+        }
         if (child.nodeType !== 1 || !RTE_ALLOWED_TAGS[child.tagName]) {
           var text = doc.createTextNode(child.textContent || "");
           node.replaceChild(text, child);
@@ -7493,6 +7520,7 @@
       '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openPeriodicTable(\'' + id + '\')">🧪 Tableau périodique</button>' +
       '<span class="rte-sep"></span>' +
       '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openTablePicker(\'' + id + '\')">▦ Tableau</button>' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openDrawing(\'' + id + '\')" title="Faire un schéma ou un dessin et l\'ajouter à ta réponse">✏️ Dessin</button>' +
       '</div>' +
       '<div class="rte-editor' + (tall ? " rte-editor-tall" : "") + '" id="' + id + '" contenteditable="true" data-placeholder="' + esc(placeholder || "") + '">' + (initialHtml || "") + '</div>';
   }
@@ -7603,6 +7631,16 @@
       if (child.nodeType !== 1) return;
       if (child.classList && child.classList.contains("math-chip")) {
         out += "$" + (child.getAttribute("data-latex") || "") + "$";
+        return;
+      }
+      if (child.tagName === "IMG") {
+        // Dessin : un repère dans le texte ; l'image elle-même est jointe à part à la correction.
+        var dsrc = child.getAttribute("src") || "";
+        if (dsrc.indexOf("data:image/") === 0) {
+          var did = "d" + hashText(dsrc);
+          drawingRegistry[did] = dsrc;
+          out += "\n[DESSIN:" + did + "]\n";
+        }
         return;
       }
       if (child.tagName === "BR") { out += "\n"; return; }
@@ -7752,6 +7790,140 @@
       var tpl = document.createElement("template");
       tpl.innerHTML = rtePlainTextToHtml(child.nodeValue);
       node.replaceChild(tpl.content, child);
+    });
+  }
+  /* ---------------- Dessin (Excalidraw) dans les réponses ----------------
+     Bouton « ✏️ Dessin » de l'éditeur : ouvre Excalidraw dans une fenêtre, et le dessin est inséré dans
+     la réponse comme image. À la correction, l'IA reçoit les dessins en images jointes (voir
+     drawingsForAnswer) et les corrige comme le reste de la réponse. Excalidraw (React) n'est chargé
+     qu'au premier clic. */
+  var EXCALIDRAW_VERSION = "0.17.6";
+  var excalidrawPromise = null;
+  function loadScriptOnce(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = src;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error("Impossible de charger " + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadExcalidraw() {
+    if (window.ExcalidrawLib && window.React && window.ReactDOM) return Promise.resolve(window.ExcalidrawLib);
+    if (!excalidrawPromise) {
+      window.EXCALIDRAW_ASSET_PATH = "https://unpkg.com/@excalidraw/excalidraw@" + EXCALIDRAW_VERSION + "/dist/";
+      excalidrawPromise = (window.React ? Promise.resolve() : loadScriptOnce("https://unpkg.com/react@18.2.0/umd/react.production.min.js"))
+        .then(function () { return window.ReactDOM ? null : loadScriptOnce("https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"); })
+        .then(function () { return loadScriptOnce("https://unpkg.com/@excalidraw/excalidraw@" + EXCALIDRAW_VERSION + "/dist/excalidraw.production.min.js"); })
+        .then(function () { if (!window.ExcalidrawLib) throw new Error("Excalidraw indisponible"); return window.ExcalidrawLib; })
+        .catch(function (err) { excalidrawPromise = null; throw err; });
+    }
+    return excalidrawPromise;
+  }
+  // Images des dessins, par id, pour la correction (le texte de la réponse ne contient qu'un repère [DESSIN:id]).
+  var drawingRegistry = {};
+  function drawingsForAnswer(text) {
+    var images = [];
+    var out = String(text || "").replace(/\[DESSIN:([A-Za-z0-9]+)\]/g, function (m, id) {
+      var url = drawingRegistry[id];
+      if (!url) return "[Dessin de l'élève (image non disponible)]";
+      images.push(url);
+      return "[Dessin n° " + images.length + " de l'élève : voir l'image jointe n° " + images.length + "]";
+    });
+    return { text: out, images: images };
+  }
+  // Images jointes à envoyer à l'IA, chacune précédée de son numéro.
+  function drawingParts(images) {
+    var parts = [];
+    (images || []).forEach(function (url, k) {
+      parts.push({ text: "Image jointe n° " + (k + 1) + " (dessin fait par l'élève dans sa réponse) :" });
+      parts = parts.concat(geminiImageParts([url]));
+    });
+    return parts;
+  }
+  var DRAWING_GRADE_RULE = "- DESSINS : si la réponse de l'élève contient des dessins (images jointes), ils font partie de sa réponse. Corrige-les avec la même exigence : vérifie chaque élément attendu (présence, exactitude, légendes, flèches, proportions ou position quand ça compte) et liste précisément dans les erreurs ce qui manque ou est faux dans le schéma. Un schéma juste mais mal soigné n'est pas une erreur ; un élément faux ou absent en est une.\n";
+  var drawingSession = null; // { editorId, savedRange, root, api, overlay }
+  function closeDrawing() {
+    var d = drawingSession;
+    drawingSession = null;
+    if (!d) return;
+    try { if (d.root) d.root.unmount(); } catch (e) {}
+    if (d.overlay) d.overlay.remove();
+  }
+  function openDrawing(editorId) {
+    var el = document.getElementById(editorId);
+    var savedRange = null;
+    if (el) {
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) savedRange = sel.getRangeAt(0).cloneRange();
+    }
+    closeDrawing();
+    var overlay = document.createElement("div");
+    overlay.className = "draw-overlay";
+    overlay.innerHTML = '<div class="draw-box"><div class="draw-head"><b>✏️ Dessin</b><span class="draw-hint">Dessine ton schéma, puis insère-le dans ta réponse.</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" style="width:auto" data-draw="cancel">Annuler</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" style="width:auto" data-draw="insert">Insérer dans ma réponse</button></div>' +
+      '<div class="draw-canvas"><div class="processing-box" style="height:100%">' + genLogo() + '<span>Chargement de l\'outil de dessin…</span></div></div></div>';
+    document.body.appendChild(overlay);
+    drawingSession = { editorId: editorId, savedRange: savedRange, overlay: overlay };
+    var session = drawingSession;
+    overlay.querySelector('[data-draw="cancel"]').onclick = closeDrawing;
+    overlay.querySelector('[data-draw="insert"]').onclick = function () { insertDrawing(session); };
+    loadExcalidraw().then(function (lib) {
+      if (drawingSession !== session) return;
+      var host = overlay.querySelector(".draw-canvas");
+      host.innerHTML = "";
+      session.root = window.ReactDOM.createRoot(host);
+      var dark = (document.documentElement.getAttribute("data-app-theme") || "light") === "dark";
+      session.root.render(window.React.createElement(lib.Excalidraw, {
+        excalidrawAPI: function (api) { session.api = api; },
+        langCode: "fr-FR",
+        theme: dark ? "dark" : "light",
+        initialData: { appState: { viewBackgroundColor: "#ffffff", currentItemFontFamily: 1 } },
+        UIOptions: { canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false } }
+      }));
+    }).catch(function () {
+      if (drawingSession !== session) return;
+      overlay.querySelector(".draw-canvas").innerHTML = '<div class="processing-box" style="height:100%"><span>⚠️ L\'outil de dessin n\'a pas pu se charger (connexion ?). Réessaie dans un instant.</span></div>';
+    });
+  }
+  function insertDrawing(session) {
+    var api = session.api, lib = window.ExcalidrawLib;
+    if (!api || !lib) { toast("L'outil de dessin n'est pas encore prêt"); return; }
+    var elements = api.getSceneElements().filter(function (e) { return !e.isDeleted; });
+    if (!elements.length) { toast("Dessine quelque chose avant de l'insérer"); return; }
+    lib.exportToBlob({
+      elements: elements,
+      appState: Object.assign({}, api.getAppState(), { exportBackground: true, viewBackgroundColor: "#ffffff", exportWithDarkMode: false }),
+      files: api.getFiles(),
+      mimeType: "image/png",
+      exportPadding: 16,
+      // Pas plus de 1200 px de large : assez net pour la correction, sans alourdir les données.
+      getDimensions: function (w, h) { var scale = Math.min(2, 1200 / Math.max(1, w)); return { width: Math.round(w * scale), height: Math.round(h * scale), scale: scale }; }
+    }).then(blobToDataUrl).then(function (dataUrl) {
+      var editor = document.getElementById(session.editorId);
+      closeDrawing();
+      if (!editor) return;
+      editor.focus();
+      var range = session.savedRange && editor.contains(session.savedRange.startContainer) ? session.savedRange : null;
+      if (!range) { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
+      var wrap = document.createElement("div");
+      var img = document.createElement("img");
+      img.className = "rte-drawing";
+      img.src = dataUrl;
+      img.alt = "Dessin";
+      wrap.appendChild(img);
+      var after = document.createElement("div");
+      after.innerHTML = "<br>";
+      range.deleteContents();
+      range.insertNode(after);
+      range.insertNode(wrap);
+      var sel = window.getSelection();
+      if (sel) { var r = document.createRange(); r.setStart(after, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    }).catch(function (err) {
+      console.error(err);
+      toast("Le dessin n'a pas pu être inséré");
     });
   }
   function rteInsertHtmlAtCaret(editor, html) {
@@ -8736,6 +8908,7 @@
       if (slot) slot.outerHTML = dinoCompanionHtml();
     },
 
+    openDrawing: function (editorId) { openDrawing(editorId); },
     openLatexPicker: function (editorId) {
       var el = document.getElementById(editorId);
       var savedRange = null;
@@ -9354,7 +9527,10 @@
           if (nearBottom) list.scrollTop = list.scrollHeight;
         });
       };
-      streamCourseChatReply(buildCourseChatPrompt(course, loc, history), onText).then(function (reply) {
+      // Dessins envoyés dans la conversation : joints en images, avec un repère à leur place dans le texte.
+      var chatDrawn = drawingsForAnswer(buildCourseChatPrompt(course, loc, history));
+      var chatParts = chatDrawn.images.length ? drawingParts(chatDrawn.images).concat([{ text: chatDrawn.text }]) : chatDrawn.text;
+      streamCourseChatReply(chatParts, onText).then(function (reply) {
         reply = String(reply || "").trim();
         course.chat.push({ role: "model", text: reply || "Hmm… je n'ai pas su quoi répondre, repose-moi ta question autrement.", at: Date.now() });
       }).catch(function (err) {
