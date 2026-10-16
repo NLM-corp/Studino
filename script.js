@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "12.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.2"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -5863,7 +5863,7 @@
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
       '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'"><img class="nav-icon-img" src="assets/objects/ui/Méthodologie.png" alt=""> Méthodologie</button>' +
       '<button class="nav-item ' + (parts[0] === "podcasts" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/podcasts\'"><img class="nav-icon-img" src="assets/objects/ui/Podcast.png" alt=""> Podcast</button>' +
-      '<button class="nav-item ' + (parts[0] === "calendar" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/calendar\'"><span class="nav-icon-img nav-icon-emoji" aria-hidden="true">📅</span> Calendrier</button>' +
+      '<button class="nav-item ' + (parts[0] === "calendar" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/calendar\'"><img class="nav-icon-img" src="assets/objects/ui/Calendrier.png" alt=""> Calendrier</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeMobileNav();App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -11564,7 +11564,7 @@
     title = title.charAt(0).toUpperCase() + title.slice(1);
     var modeBtn = function (m, label) { return '<button type="button" class="cal-mode-btn' + (v.mode === m ? " active" : "") + '" onclick="App.calSetMode(\'' + m + '\')">' + label + '</button>'; };
     var st = calSettings();
-    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">📅</span><h1 class="page-title">Calendrier</h1></div><p class="page-sub">Tes contrôles, tes séances de révision et ton emploi du temps. Révisions placées entre ' + st.studyStart.replace(":", "h") + ' et ' + st.studyEnd.replace(":", "h") + ', décalées si tu es occupé.</p></div>' +
+    var head = '<div class="page-head"><div><div class="page-title-row"><img class="page-title-logo" src="assets/objects/ui/Calendrier.png" alt=""><h1 class="page-title">Calendrier</h1></div><p class="page-sub">Tes contrôles, tes séances de révision et ton emploi du temps. Révisions placées entre ' + st.studyStart.replace(":", "h") + ' et ' + st.studyEnd.replace(":", "h") + ', décalées si tu es occupé.</p></div>' +
       '<div class="cal-gbar"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calOpenSettings()">⚙️ Heures de révision</button><button class="btn btn-primary" style="width:auto" onclick="App.calNewEvent()">' + icon("plus") + ' Événement</button></div></div>';
     var nav = '<div class="cal-nav"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(-1)" aria-label="Précédent">‹</button><h2 class="cal-month">' + esc(title) + '</h2><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(1)" aria-label="Suivant">›</button>' +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calToday()">Aujourd\'hui</button><div class="cal-modes">' + modeBtn("day", "Jour") + modeBtn("week", "Semaine") + modeBtn("month", "Mois") + '</div></div>';
