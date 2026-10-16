@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "12.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -7523,6 +7523,10 @@
             // Taille choisie par l'élève (barre − / + sur le dessin) : seul un pourcentage est gardé.
             var imgW = child.style && child.style.width;
             if (/^\d{1,3}%$/.test(imgW || "")) cleanImg.setAttribute("style", "width:" + imgW);
+            // De quoi rééditer le dessin/graphique (scène Excalidraw ou fichier GeoGebra), gardé tel quel.
+            var editSrc = child.getAttribute("data-src") || "";
+            if (/^(ex|gg):/.test(editSrc) && editSrc.length < 4000000) cleanImg.setAttribute("data-src", editSrc);
+            if (child.getAttribute("alt") === "Graphique") cleanImg.setAttribute("alt", "Graphique");
             node.replaceChild(cleanImg, child);
           } else {
             node.removeChild(child);
@@ -8072,7 +8076,8 @@
     try { if (d.root) d.root.unmount(); } catch (e) {}
     if (d.overlay) d.overlay.remove();
   }
-  function openDrawing(editorId) {
+  // edit (optionnel) : { img, scene } pour rééditer un dessin déjà inséré (double-clic dessus).
+  function openDrawing(editorId, edit) {
     var el = document.getElementById(editorId);
     var savedRange = null;
     if (el) {
@@ -8087,7 +8092,8 @@
       '<button type="button" class="btn btn-primary btn-sm" style="width:auto" data-draw="insert">Insérer dans ma réponse</button></div>' +
       '<div class="draw-canvas"><div class="processing-box" style="height:100%">' + genLogo() + '<span>Chargement de l\'outil de dessin…</span></div></div></div>';
     document.body.appendChild(overlay);
-    drawingSession = { editorId: editorId, savedRange: savedRange, overlay: overlay };
+    drawingSession = { editorId: editorId, savedRange: savedRange, overlay: overlay, editImg: edit ? edit.img : null };
+    if (edit) overlay.querySelector('[data-draw="insert"]').textContent = "Mettre à jour le dessin";
     var session = drawingSession;
     overlay.querySelector('[data-draw="cancel"]').onclick = closeDrawing;
     overlay.querySelector('[data-draw="insert"]').onclick = function () { insertDrawing(session); };
@@ -8101,7 +8107,9 @@
         excalidrawAPI: function (api) { session.api = api; },
         langCode: "fr-FR",
         theme: dark ? "dark" : "light",
-        initialData: { appState: { viewBackgroundColor: "#ffffff", currentItemFontFamily: 1 } },
+        initialData: edit && edit.scene
+          ? { elements: edit.scene.elements || [], files: edit.scene.files || {}, appState: { viewBackgroundColor: "#ffffff", currentItemFontFamily: 1 }, scrollToContent: true }
+          : { appState: { viewBackgroundColor: "#ffffff", currentItemFontFamily: 1 } },
         UIOptions: { canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false } }
       }));
     }).catch(function () {
@@ -8111,7 +8119,8 @@
   }
   // Insère une image (dessin ou graphique) dans une zone de réponse, à l'endroit du curseur mémorisé.
   // Elle devient une image « rte-drawing » : redimensionnable (barre − / +) et jointe à la correction.
-  function insertImageInEditor(editorId, savedRange, dataUrl, alt) {
+  // srcData : de quoi rééditer l'image plus tard (« ex: » + scène Excalidraw, « gg: » + fichier GeoGebra).
+  function insertImageInEditor(editorId, savedRange, dataUrl, alt, srcData) {
     var editor = document.getElementById(editorId);
     if (!editor) return;
     editor.focus();
@@ -8123,6 +8132,7 @@
     img.src = dataUrl;
     img.alt = alt || "Dessin";
     img.style.width = "60%";
+    if (srcData) img.setAttribute("data-src", srcData);
     wrap.appendChild(img);
     var after = document.createElement("div");
     after.innerHTML = "<br>";
@@ -8149,7 +8159,8 @@
     graphSession = null;
     if (g && g.overlay) g.overlay.remove();
   }
-  function openGraph(editorId) {
+  // edit (optionnel) : { img, ggb } pour rééditer un graphique déjà inséré (double-clic dessus).
+  function openGraph(editorId, edit) {
     var el = document.getElementById(editorId);
     var savedRange = null;
     if (el) {
@@ -8165,7 +8176,8 @@
       '<button type="button" class="btn btn-primary btn-sm" style="width:auto" data-graph="insert">Insérer dans ma réponse</button></div>' +
       '<div class="draw-canvas"><div id="' + hostId + '" class="ggb-host"><div class="processing-box" style="height:100%">' + genLogo() + '<span>Chargement de GeoGebra…</span></div></div></div></div>';
     document.body.appendChild(overlay);
-    graphSession = { editorId: editorId, savedRange: savedRange, overlay: overlay, api: null };
+    graphSession = { editorId: editorId, savedRange: savedRange, overlay: overlay, api: null, editImg: edit ? edit.img : null };
+    if (edit) overlay.querySelector('[data-graph="insert"]').textContent = "Mettre à jour le graphique";
     var session = graphSession;
     overlay.querySelector('[data-graph="cancel"]').onclick = closeGraph;
     overlay.querySelector('[data-graph="insert"]').onclick = function () {
@@ -8174,8 +8186,13 @@
       var b64 = "";
       try { b64 = api.getPNGBase64(1.5, false, 72); } catch (e) { b64 = ""; }
       if (!b64) { toast("Le graphique n'a pas pu être exporté"); return; }
+      // Fichier GeoGebra gardé avec l'image pour pouvoir le rééditer (double-clic).
+      var ggb = "";
+      try { ggb = api.getBase64() || ""; } catch (e) { ggb = ""; }
+      var srcData = ggb ? "gg:" + ggb : "";
       closeGraph();
-      insertImageInEditor(session.editorId, session.savedRange, "data:image/png;base64," + b64, "Graphique");
+      if (session.editImg && document.body.contains(session.editImg)) replaceEditorImage(session.editImg, "data:image/png;base64," + b64, srcData);
+      else insertImageInEditor(session.editorId, session.savedRange, "data:image/png;base64," + b64, "Graphique", srcData);
     };
     loadGeoGebra().then(function () {
       if (graphSession !== session) return;
@@ -8187,6 +8204,7 @@
         appName: "graphing", width: Math.max(320, Math.floor(box.width)), height: Math.max(320, Math.floor(box.height)),
         showToolBar: true, showAlgebraInput: true, showMenuBar: false, enableShiftDragZoom: true, enableRightClick: true,
         showResetIcon: false, language: "fr", borderColor: "#FFFFFF",
+        ggbBase64: edit && edit.ggb ? edit.ggb : undefined,
         appletOnLoad: function (api) { session.api = api || window.ggbApplet; }
       }, true);
       applet.inject(hostId);
@@ -8196,6 +8214,32 @@
       if (host) host.innerHTML = '<div class="processing-box" style="height:100%"><span>⚠️ GeoGebra n\'a pas pu se charger (connexion ?). Réessaie dans un instant.</span></div>';
     });
   }
+  // Remplace l'image d'un dessin/graphique réédité (même taille, même place).
+  function replaceEditorImage(img, dataUrl, srcData) {
+    img.src = dataUrl;
+    if (srcData) img.setAttribute("data-src", srcData);
+    var ed = img.closest(".rte-editor");
+    if (ed) ed.dispatchEvent(new Event("input", { bubbles: true }));
+    hideDrawingSizeBar();
+  }
+  // Double-clic sur un dessin ou un graphique d'une zone de réponse : on le rouvre pour le modifier.
+  document.addEventListener("dblclick", function (e) {
+    var img = e.target;
+    if (!img || img.tagName !== "IMG" || !img.classList.contains("rte-drawing")) return;
+    var editor = img.closest(".rte-editor");
+    if (!editor || !editor.id) return;
+    e.preventDefault();
+    var src = img.getAttribute("data-src") || "";
+    if (src.indexOf("ex:") === 0) {
+      var scene = null;
+      try { scene = JSON.parse(src.slice(3)); } catch (er) { scene = null; }
+      if (scene) { openDrawing(editor.id, { img: img, scene: scene }); return; }
+    } else if (src.indexOf("gg:") === 0) {
+      openGraph(editor.id, { img: img, ggb: src.slice(3) });
+      return;
+    }
+    toast("Ce dessin a été fait avant la mise à jour : il ne peut pas être modifié. Supprime-le et refais-le.");
+  });
   function insertDrawing(session) {
     var api = session.api, lib = window.ExcalidrawLib;
     if (!api || !lib) { toast("L'outil de dessin n'est pas encore prêt"); return; }
@@ -8210,8 +8254,11 @@
       // Pas plus de 1200 px de large : assez net pour la correction, sans alourdir les données.
       getDimensions: function (w, h) { var scale = Math.min(2, 1200 / Math.max(1, w)); return { width: Math.round(w * scale), height: Math.round(h * scale), scale: scale }; }
     }).then(blobToDataUrl).then(function (dataUrl) {
+      // Scène gardée avec l'image pour pouvoir la rééditer (double-clic).
+      var scene = "ex:" + JSON.stringify({ elements: elements, files: api.getFiles() });
       closeDrawing();
-      insertImageInEditor(session.editorId, session.savedRange, dataUrl, "Dessin");
+      if (session.editImg && document.body.contains(session.editImg)) replaceEditorImage(session.editImg, dataUrl, scene);
+      else insertImageInEditor(session.editorId, session.savedRange, dataUrl, "Dessin", scene);
     }).catch(function (err) {
       console.error(err);
       toast("Le dessin n'a pas pu être inséré");
