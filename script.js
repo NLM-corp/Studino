@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -793,7 +793,8 @@
     return "Voici " + count + " image(s), chacune précédée de son numéro (« Image 0 », « Image 1 »…), le numéro à renvoyer dans imageIndex : ce sont des morceaux d'un document de cours ou d'exercices (des tranches successives d'une même page, qui se chevauchent). Ta SEULE tâche : repérer les éléments VISUELS qui ne peuvent pas être retranscrits en texte et qui servent à comprendre le contenu.\n\n" +
       "À repérer : graphiques, courbes, schémas (cases, flèches, cercles, tableaux de bits dessinés...), diagrammes, montages, figures géométriques, structures chimiques, cartes, pictogrammes, photos qui apportent une information.\n" +
       "À NE PAS repérer : le texte normal, les calculs et développements écrits (même alignés ou posés en colonnes : ils seront retranscrits en texte), les tableaux de texte simples, les titres, les numéros, les logos, les décorations, les zones vides.\n\n" +
-      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER avec son titre et ses annotations, sans couper de bord, mais sans le texte normal autour. Si un visuel est coupé par un bord de l'image (haut, bas, gauche ou droite), donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
+      FIGURE_SCOPE_RULE + "\n" +
+      "Règles de zone : la zone [ymin, xmin, ymax, xmax] (0-1000, relative à l'image indiquée) doit contenir le visuel EN ENTIER, sans couper de bord, et rien de ce qui n'en fait pas partie. Si un visuel est coupé par un bord de l'image (haut, bas, gauche ou droite), donne quand même la partie visible avec cut=true (il sera reconstitué en entier ensuite) ; sinon cut=false. S'il apparaît en entier dans deux images, donne-le une seule fois. Si une image ne contient aucun visuel, ne renvoie rien pour elle.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français.";
   }
   var FIGURE_ZOOM_SCHEMA = {
@@ -804,9 +805,16 @@
     },
     required: ["found", "box"]
   };
+  // Ce qui appartient (ou pas) à un visuel : partagé par le repérage, le zoom et la vérification finale.
+  // Avant, « avec son titre » faisait garder le titre de l'EXERCICE (« 35 Cohésion d'un cristal de sel »)
+  // et le texte qui longe la photo, et rien ne demandait de signaler une photo coupée.
+  var FIGURE_SCOPE_RULE = "CE QUI FAIT PARTIE DU VISUEL : le dessin ou la photo lui-même, ses annotations (lettres, valeurs, flèches, axes, graduations, légende) et sa propre étiquette quand elle est collée au visuel (ex. « Doc. 1 Courbe d'étalonnage », « CHAMP DE GRAVITATION – LE LIVRE SCOLAIRE »), ainsi que son cadre s'il en a un. " +
+    "CE QUI N'EN FAIT PAS PARTIE (à exclure absolument) : le numéro et le titre de l'EXERCICE ou de la partie (ex. « 35 Cohésion d'un cristal de sel », « ✔ MATH : Calcul littéral »), les questions numérotées, et tout texte du cours ou de l'énoncé qui entoure le visuel, le longe ou s'enroule autour, même s'il est collé à lui. " +
+    "Pour une PHOTO : la zone suit exactement le bord rectangulaire de la photo ; si un bord de la photo n'est pas visible (la photo continue au-delà de l'image), elle est coupée de ce côté.";
   function buildFigureZoomPrompt(caption) {
     return "Cette image est un zoom sur une partie d'un document, autour d'un visuel décrit ainsi : « " + caption + " ».\n" +
-      "Donne la zone [ymin, xmin, ymax, xmax] (échelle 0-1000, relative à CETTE image) qui encadre ce visuel EN ENTIER, avec son titre et toutes ses annotations (lettres, chiffres, flèches, légende), sans en couper le moindre bord, mais en excluant le texte normal (phrases, calculs) qui l'entoure. Sois précis au pixel près.\n" +
+      "Donne la zone [ymin, xmin, ymax, xmax] (échelle 0-1000, relative à CETTE image) qui encadre ce visuel EN ENTIER, sans en couper le moindre bord. Sois précis au pixel près.\n" +
+      FIGURE_SCOPE_RULE + "\n" +
       "Si ce visuel n'est pas dans l'image (ou si ce n'est que du texte), mets found=false.\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni.";
   }
@@ -878,8 +886,9 @@
   };
   function buildFigureReviewPrompt(caption) {
     return "Cette image est une découpe qui doit contenir UNIQUEMENT ce visuel : « " + caption + " ».\n" +
-      "1. Si le visuel est coupé par un bord de l'image (une partie du dessin, du cadre ou de ses annotations continue au-delà), indique ce ou ces bords dans \"cutSides\".\n" +
-      "2. Donne dans \"box\" la zone [ymin, xmin, ymax, xmax] (0-1000, relative à cette image) qui contient TOUT le visuel — avec son titre, ses lettres, valeurs, flèches, légendes et son cadre s'il en a un — mais AUCUN morceau de texte du cours qui ne lui appartient pas (phrases, formules ou tableaux voisins, même coupés). Si l'image ne contient que le visuel, renvoie [0, 0, 1000, 1000].\n\n" +
+      FIGURE_SCOPE_RULE + "\n" +
+      "1. Si le visuel est coupé par un bord de l'image (une partie du dessin, de la photo, du cadre ou de ses annotations continue au-delà), indique ce ou ces bords dans \"cutSides\". Regarde chaque bord attentivement : une photo dont on ne voit pas le bord net est coupée.\n" +
+      "2. Donne dans \"box\" la zone [ymin, xmin, ymax, xmax] (0-1000, relative à cette image) qui contient TOUT le visuel mais RIEN de ce qui n'en fait pas partie (titre d'exercice, questions, texte voisin, même coupé ou collé au visuel). Si l'image ne contient que le visuel, renvoie [0, 0, 1000, 1000].\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni.";
   }
   async function reviewFigureCrop(source, box, caption) {
