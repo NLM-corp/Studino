@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -10465,6 +10465,11 @@
       } else {
         e[field] = value;
       }
+      // Champs de fin recalculés : on met juste à jour leur valeur affichée, sans toucher au champ en cours de saisie.
+      var setVal = function (id, val) { var el = document.getElementById(id); if (el && el !== document.activeElement && el.value !== val) el.value = val; };
+      if (field === "startDate") setVal("cal-ev-ed", e.endDate);
+      if (field === "startTime") setVal("cal-ev-et", e.endTime);
+      if (field === "endDate") setVal("cal-ev-ed", e.endDate);
       if (!silent) renderModal();
     },
     calSaveEvent: function () {
@@ -11483,9 +11488,11 @@
     return '<div class="cal-ev-modal">' +
       '<input class="cal-ev-title" placeholder="Ajouter un titre" value="' + esc(e.title || "") + '" oninput="App.calEvField(\'title\', this.value, true)" autofocus>' +
       '<div class="cal-row">' +
-      '<input type="date" value="' + e.startDate + '" onchange="App.calEvField(\'startDate\', this.value)">' +
-      (e.allDay ? "" : '<input type="time" value="' + e.startTime + '" onchange="App.calEvField(\'startTime\', this.value)"><span>–</span><input type="time" value="' + e.endTime + '" onchange="App.calEvField(\'endTime\', this.value)">') +
-      '<input type="date" value="' + e.endDate + '" onchange="App.calEvField(\'endDate\', this.value)"></div>' +
+      // Dates et heures : mise à jour SANS redessiner la fenêtre (sinon chaque chiffre tapé effaçait le
+      // champ en cours de saisie) ; les champs liés (fin) sont mis à jour directement.
+      '<input type="date" id="cal-ev-sd" value="' + e.startDate + '" onchange="App.calEvField(\'startDate\', this.value, true)">' +
+      (e.allDay ? "" : '<input type="time" id="cal-ev-st" value="' + e.startTime + '" onchange="App.calEvField(\'startTime\', this.value, true)"><span>–</span><input type="time" id="cal-ev-et" value="' + e.endTime + '" onchange="App.calEvField(\'endTime\', this.value, true)">') +
+      '<input type="date" id="cal-ev-ed" value="' + e.endDate + '" onchange="App.calEvField(\'endDate\', this.value, true)"></div>' +
       '<div class="cal-row"><label class="cal-check"><input type="checkbox"' + (e.allDay ? " checked" : "") + ' onchange="App.calEvField(\'allDay\', this.checked)"> Toute la journée</label>' +
       '<select onchange="App.calEvField(\'repeat\', this.value)">' + CAL_REPEATS.map(function (r) { return '<option value="' + r[0] + '"' + ((e.repeat || "none") === r[0] ? " selected" : "") + '>' + r[1] + '</option>'; }).join("") + '</select></div>' +
       '<div class="field"><input placeholder="📍 Ajouter un lieu" value="' + esc(e.location || "") + '" oninput="App.calEvField(\'location\', this.value, true)"></div>' +
