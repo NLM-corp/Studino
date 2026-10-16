@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.0"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -2094,7 +2094,7 @@
     return "LANGUE — choisis-la toi-même AVANT d'écrire, en regardant dans quelle langue est rédigé le cours : (a) cours entièrement (ou presque) dans une langue étrangère (anglais, espagnol, allemand, japonais...) → " + target + " (b) cours qui mélange le français et une langue étrangère → " + bilingual + " (c) cours en français, même avec quelques mots étrangers isolés → podcast en français, normalement." + script;
   }
   // Outil Dessin : l'IA peut demander un schéma à faire, et doit alors décrire ce qu'il doit contenir.
-  var DRAWING_QUESTION_RULE = "L'élève dispose d'un outil « Dessin » dans sa zone de réponse. Quand c'est vraiment utile pour la matière (schéma d'une expérience ou d'un montage, cycle, organe ou cellule légendés, croquis de géographie, figure géométrique, courbe ou graphique à tracer, frise...), tu peux poser une question du type « Fais le schéma légendé de... » ou « Représente... ». Dans la solution, décris alors précisément ce que le schéma doit contenir (éléments, légendes, flèches, allure) pour pouvoir le corriger. N'en abuse pas : seulement quand un dessin est la meilleure façon de répondre.\n\n";
+  var DRAWING_QUESTION_RULE = "L'élève dispose dans sa zone de réponse d'un outil « Dessin » et d'un outil « Graphique » (GeoGebra : tracer des fonctions, points, droites, courbes). Pour un graphique à tracer, tu peux donc demander « Trace la courbe de... » et décrire dans la solution l'allure et les points attendus. Quand c'est vraiment utile pour la matière (schéma d'une expérience ou d'un montage, cycle, organe ou cellule légendés, croquis de géographie, figure géométrique, courbe ou graphique à tracer, frise...), tu peux poser une question du type « Fais le schéma légendé de... » ou « Représente... ». Dans la solution, décris alors précisément ce que le schéma doit contenir (éléments, légendes, flèches, allure) pour pouvoir le corriger. N'en abuse pas : seulement quand un dessin est la meilleure façon de répondre.\n\n";
   // Opérations posées : affichées telles quelles dans un bloc ``` (police à chasse fixe, espaces gardés).
   var COURSE_POSED_OPERATION_RULE = "Pour une opération POSÉE (addition, soustraction ou multiplication en colonnes, division posée, conversion par divisions successives...), écris-la dans un bloc de code délimité par une ligne ``` avant et une ligne ``` après, en alignant les chiffres à droite, colonne par colonne, avec des espaces (jamais de tabulation), la ligne du trait faite de tirets « - ». Exemple :\n```\n  A9\n+  1\n----\n  AA\n```\nN'utilise ce bloc QUE pour ces opérations posées (pas pour du texte ni pour des formules, qui restent en LaTeX).\n\n";
   // Même règle pour la génération du cours (retranscription, explication, flashcards, contrôle) et des fiches.
@@ -7742,6 +7742,7 @@
       '<span class="rte-sep"></span>' +
       '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openTablePicker(\'' + id + '\')">▦ Tableau</button>' +
       '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openDrawing(\'' + id + '\')" title="Faire un schéma ou un dessin et l\'ajouter à ta réponse">✏️ Dessin</button>' +
+      '<button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="App.openGraph(\'' + id + '\')" title="Tracer un graphique (fonctions, points, droites) avec GeoGebra et l\'ajouter à ta réponse">📈 Graphique</button>' +
       '</div>' +
       '<div class="rte-editor' + (tall ? " rte-editor-tall" : "") + '" id="' + id + '" contenteditable="true" data-placeholder="' + esc(placeholder || "") + '">' + (initialHtml || "") + '</div>';
   }
@@ -8062,7 +8063,7 @@
     });
     return parts;
   }
-  var DRAWING_GRADE_RULE = "- DESSINS : si la réponse de l'élève contient des dessins (images jointes), ils font partie de sa réponse. Corrige-les avec la même exigence : vérifie chaque élément attendu (présence, exactitude, légendes, flèches, proportions ou position quand ça compte) et liste précisément dans les erreurs ce qui manque ou est faux dans le schéma. Un schéma juste mais mal soigné n'est pas une erreur ; un élément faux ou absent en est une.\n";
+  var DRAWING_GRADE_RULE = "- DESSINS ET GRAPHIQUES : si la réponse de l'élève contient des dessins ou des graphiques tracés avec GeoGebra (images jointes), ils font partie de sa réponse. Corrige-les avec la même exigence : vérifie chaque élément attendu (présence, exactitude, légendes, flèches, proportions ou position quand ça compte ; pour un graphique : bonne fonction, allure, points remarquables, axes et échelle adaptés) et liste précisément dans les erreurs ce qui manque ou est faux dans le schéma. Un schéma juste mais mal soigné n'est pas une erreur ; un élément faux ou absent en est une.\n";
   var drawingSession = null; // { editorId, savedRange, root, api, overlay }
   function closeDrawing() {
     var d = drawingSession;
@@ -8108,6 +8109,93 @@
       overlay.querySelector(".draw-canvas").innerHTML = '<div class="processing-box" style="height:100%"><span>⚠️ L\'outil de dessin n\'a pas pu se charger (connexion ?). Réessaie dans un instant.</span></div>';
     });
   }
+  // Insère une image (dessin ou graphique) dans une zone de réponse, à l'endroit du curseur mémorisé.
+  // Elle devient une image « rte-drawing » : redimensionnable (barre − / +) et jointe à la correction.
+  function insertImageInEditor(editorId, savedRange, dataUrl, alt) {
+    var editor = document.getElementById(editorId);
+    if (!editor) return;
+    editor.focus();
+    var range = savedRange && editor.contains(savedRange.startContainer) ? savedRange : null;
+    if (!range) { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
+    var wrap = document.createElement("div");
+    var img = document.createElement("img");
+    img.className = "rte-drawing";
+    img.src = dataUrl;
+    img.alt = alt || "Dessin";
+    img.style.width = "60%";
+    wrap.appendChild(img);
+    var after = document.createElement("div");
+    after.innerHTML = "<br>";
+    range.deleteContents();
+    range.insertNode(after);
+    range.insertNode(wrap);
+    var sel = window.getSelection();
+    if (sel) { var r = document.createRange(); r.setStart(after, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  /* ---------------- Graphique (GeoGebra) dans les réponses ----------------
+     Bouton « 📈 Graphique » : ouvre GeoGebra (calculatrice graphique) ; on trace des fonctions, des
+     points, des droites... puis le graphique est inséré dans la réponse comme image (même rendu, même
+     redimensionnement et même correction par l'IA que les dessins). GeoGebra n'est chargé qu'au besoin. */
+  var geogebraPromise = null;
+  function loadGeoGebra() {
+    if (window.GGBApplet) return Promise.resolve();
+    if (!geogebraPromise) geogebraPromise = loadScriptOnce("https://www.geogebra.org/apps/deployggb.js").catch(function (err) { geogebraPromise = null; throw err; });
+    return geogebraPromise;
+  }
+  var graphSession = null;
+  function closeGraph() {
+    var g = graphSession;
+    graphSession = null;
+    if (g && g.overlay) g.overlay.remove();
+  }
+  function openGraph(editorId) {
+    var el = document.getElementById(editorId);
+    var savedRange = null;
+    if (el) {
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) savedRange = sel.getRangeAt(0).cloneRange();
+    }
+    closeGraph();
+    var hostId = "ggb-host-" + Date.now();
+    var overlay = document.createElement("div");
+    overlay.className = "draw-overlay";
+    overlay.innerHTML = '<div class="draw-box"><div class="draw-head"><b>📈 Graphique</b><span class="draw-hint">Tape une fonction à gauche (ex. f(x) = x^2 - 3x + 1) ou utilise les outils, puis insère le graphique.</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" style="width:auto" data-graph="cancel">Annuler</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" style="width:auto" data-graph="insert">Insérer dans ma réponse</button></div>' +
+      '<div class="draw-canvas"><div id="' + hostId + '" class="ggb-host"><div class="processing-box" style="height:100%">' + genLogo() + '<span>Chargement de GeoGebra…</span></div></div></div></div>';
+    document.body.appendChild(overlay);
+    graphSession = { editorId: editorId, savedRange: savedRange, overlay: overlay, api: null };
+    var session = graphSession;
+    overlay.querySelector('[data-graph="cancel"]').onclick = closeGraph;
+    overlay.querySelector('[data-graph="insert"]').onclick = function () {
+      var api = session.api;
+      if (!api) { toast("GeoGebra n'est pas encore prêt"); return; }
+      var b64 = "";
+      try { b64 = api.getPNGBase64(1.5, false, 72); } catch (e) { b64 = ""; }
+      if (!b64) { toast("Le graphique n'a pas pu être exporté"); return; }
+      closeGraph();
+      insertImageInEditor(session.editorId, session.savedRange, "data:image/png;base64," + b64, "Graphique");
+    };
+    loadGeoGebra().then(function () {
+      if (graphSession !== session) return;
+      var host = document.getElementById(hostId);
+      if (!host) return;
+      var box = host.parentNode.getBoundingClientRect();
+      host.innerHTML = "";
+      var applet = new window.GGBApplet({
+        appName: "graphing", width: Math.max(320, Math.floor(box.width)), height: Math.max(320, Math.floor(box.height)),
+        showToolBar: true, showAlgebraInput: true, showMenuBar: false, enableShiftDragZoom: true, enableRightClick: true,
+        showResetIcon: false, language: "fr", borderColor: "#FFFFFF",
+        appletOnLoad: function (api) { session.api = api || window.ggbApplet; }
+      }, true);
+      applet.inject(hostId);
+    }).catch(function () {
+      if (graphSession !== session) return;
+      var host = document.getElementById(hostId);
+      if (host) host.innerHTML = '<div class="processing-box" style="height:100%"><span>⚠️ GeoGebra n\'a pas pu se charger (connexion ?). Réessaie dans un instant.</span></div>';
+    });
+  }
   function insertDrawing(session) {
     var api = session.api, lib = window.ExcalidrawLib;
     if (!api || !lib) { toast("L'outil de dessin n'est pas encore prêt"); return; }
@@ -8122,27 +8210,8 @@
       // Pas plus de 1200 px de large : assez net pour la correction, sans alourdir les données.
       getDimensions: function (w, h) { var scale = Math.min(2, 1200 / Math.max(1, w)); return { width: Math.round(w * scale), height: Math.round(h * scale), scale: scale }; }
     }).then(blobToDataUrl).then(function (dataUrl) {
-      var editor = document.getElementById(session.editorId);
       closeDrawing();
-      if (!editor) return;
-      editor.focus();
-      var range = session.savedRange && editor.contains(session.savedRange.startContainer) ? session.savedRange : null;
-      if (!range) { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
-      var wrap = document.createElement("div");
-      var img = document.createElement("img");
-      img.className = "rte-drawing";
-      img.src = dataUrl;
-      img.alt = "Dessin";
-      img.style.width = "60%";
-      wrap.appendChild(img);
-      var after = document.createElement("div");
-      after.innerHTML = "<br>";
-      range.deleteContents();
-      range.insertNode(after);
-      range.insertNode(wrap);
-      var sel = window.getSelection();
-      if (sel) { var r = document.createRange(); r.setStart(after, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      insertImageInEditor(session.editorId, session.savedRange, dataUrl, "Dessin");
     }).catch(function (err) {
       console.error(err);
       toast("Le dessin n'a pas pu être inséré");
@@ -9171,6 +9240,7 @@
     },
 
     openDrawing: function (editorId) { openDrawing(editorId); },
+    openGraph: function (editorId) { openGraph(editorId); },
     openLatexPicker: function (editorId) {
       var el = document.getElementById(editorId);
       var savedRange = null;
