@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -5808,6 +5808,8 @@
         var meth = methodoFind(parts[1]);
         if (meth) trail.push({ label: meth.title });
       }
+    } else if (parts[0] === "calendar") {
+      trail.push({ label: "Calendrier" });
     } else if (parts[0] === "podcasts") {
       trail.push({ label: "Podcast", hash: "#/podcasts" });
       if (parts[1] === "lib") {
@@ -5860,6 +5862,7 @@
       '<button class="nav-item ' + (parts[0] === "examprep" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/examprep\'"><img class="nav-icon-img" src="assets/objects/ui/MissionControle.png" alt=""> Mission Contrôle</button>' +
       '<button class="nav-item ' + (parts[0] === "methodologies" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/methodologies\'"><img class="nav-icon-img" src="assets/objects/ui/Méthodologie.png" alt=""> Méthodologie</button>' +
       '<button class="nav-item ' + (parts[0] === "podcasts" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/podcasts\'"><img class="nav-icon-img" src="assets/objects/ui/Podcast.png" alt=""> Podcast</button>' +
+      '<button class="nav-item ' + (parts[0] === "calendar" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/calendar\'"><span class="nav-icon-img nav-icon-emoji" aria-hidden="true">📅</span> Calendrier</button>' +
       '<div class="sidebar-bottom">' +
       '<div class="theme-row"><span class="theme-label">Paramètres</span><button class="btn btn-sm btn-ghost" style="width:auto" onclick="App.closeMobileNav();App.openSettingsModal()">⚙️ Ouvrir</button></div>' +
       '<div class="user-row"><div class="avatar">' + esc(user.slice(0, 1).toUpperCase()) + '</div><div><div class="user-name">' + esc(user) + '</div><button class="logout-link" onclick="App.logout()">Se déconnecter</button></div></div>' +
@@ -8786,6 +8789,8 @@
         '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
         '</form>';
+    } else if (modal.type === "gcalSetup") {
+      inner = gcalSetupModalHtml();
     } else if (modal.type === "apiKey") {
       inner = '<h3>Clé API Gemini</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Stockée uniquement dans le stockage local de ce navigateur, envoyée uniquement à l\'API Google Gemini pour générer tes cours.</p>' +
@@ -10396,6 +10401,21 @@
       printAndDownload(html, entry.title);
     },
     openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
+    calSelect: function (ds) { calEnsureView().selected = ds; var d = new Date(ds + "T00:00:00"); if (d.getMonth() !== calView.month) { calView.month = d.getMonth(); calView.year = d.getFullYear(); } render(); },
+    calMove: function (delta) { var v = calEnsureView(); var d = new Date(v.year, v.month + delta, 1); v.year = d.getFullYear(); v.month = d.getMonth(); v.selected = calDateStr(d); render(); },
+    calToday: function () { calView = null; calEnsureView(); render(); },
+    gcalConnect: function () { gcalConnect(); },
+    gcalDisconnect: function () { gcalDisconnect(); },
+    gcalRefresh: function () { gcalCache = {}; render(); },
+    gcalSaveClientId: function () {
+      var el = document.getElementById("gcal-client-input");
+      var v = el ? el.value.trim() : "";
+      if (!/\.apps\.googleusercontent\.com$/.test(v)) { toast("Colle un ID client qui finit par .apps.googleusercontent.com"); return; }
+      try { localStorage.setItem(GCAL_CLIENT_KEY, v); } catch (e) {}
+      modal = null;
+      render();
+      gcalConnect();
+    },
     openSettingsModal: function () { modal = { type: "settings" }; refreshStorageEstimate(); render(); },
     setVolumeMusic: function (v) { localStorage.setItem(VOLUME_MUSIC_STORAGE, String(v)); },
     setVolumeSfx: function (v) { localStorage.setItem(VOLUME_SFX_STORAGE, String(v)); },
@@ -11095,6 +11115,202 @@
     }
   };
 
+  /* ---------------- Calendrier ----------------
+     Mois en grille : dates de contrôle et séances de révision des prépas (toujours dispo), plus les
+     événements de Google Agenda une fois connecté. Le site n'a pas de serveur : la connexion passe par
+     OAuth directement dans le navigateur (Google Identity Services), avec un identifiant client que
+     l'élève crée une fois dans Google Cloud (guide dans la fenêtre « Connecter Google Agenda »). Lecture
+     seule, jeton gardé seulement pour la session. */
+  var GCAL_CLIENT_KEY = "studino-google-client-id";
+  var GCAL_TOKEN_KEY = "studino-google-token";
+  var GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+  var MONTH_NAMES = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+  var calView = null; // { year, month (0-11), selected: "AAAA-MM-JJ" }
+  var gcalCache = {}; // "AAAA-MM" → { status: "loading"|"ready"|"error", events: [], error }
+  var gcalTokenClient = null;
+  function gcalClientId() { try { return localStorage.getItem(GCAL_CLIENT_KEY) || ""; } catch (e) { return ""; } }
+  function gcalToken() {
+    try {
+      var t = JSON.parse(sessionStorage.getItem(GCAL_TOKEN_KEY) || "null");
+      return t && t.expiresAt > Date.now() + 60000 ? t.accessToken : "";
+    } catch (e) { return ""; }
+  }
+  function gcalWasConnected() { try { return localStorage.getItem("studino-google-connected") === "1"; } catch (e) { return false; } }
+  function calDateStr(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function calEnsureView() {
+    if (!calView) { var t = new Date(); calView = { year: t.getFullYear(), month: t.getMonth(), selected: calDateStr(t) }; }
+    return calView;
+  }
+  // Première et dernière case de la grille (semaines du lundi au dimanche).
+  function calGridRange(year, month) {
+    var first = new Date(year, month, 1);
+    var start = new Date(year, month, 1 - ((first.getDay() + 6) % 7));
+    var last = new Date(year, month + 1, 0);
+    var end = new Date(year, month + 1, 0 + (6 - ((last.getDay() + 6) % 7)));
+    return { start: start, end: end };
+  }
+  function calLocalEvents() {
+    var out = [];
+    (userData().examPreps || []).forEach(function (p) {
+      if (p.examDate) out.push({ date: p.examDate, title: "Contrôle : " + p.title, kind: "exam", hash: "#/examprep/" + p.id });
+      (p.days || []).forEach(function (d) {
+        if (d.date && d.date < p.examDate) out.push({ date: d.date, title: "Révision : " + p.title, detail: d.focus || "", kind: "session", hash: "#/examprep/" + p.id, done: !!(p.sessions && p.sessions[d.date] && p.sessions[d.date].status === "done") });
+      });
+    });
+    return out;
+  }
+  function loadGoogleIdentity() {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
+    return loadScriptOnce("https://accounts.google.com/gsi/client");
+  }
+  function gcalConnect() {
+    var clientId = gcalClientId();
+    if (!clientId) { modal = { type: "gcalSetup", clientId: "" }; render(); return; }
+    loadGoogleIdentity().then(function () {
+      if (!gcalTokenClient || gcalTokenClient.__cid !== clientId) {
+        gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: GCAL_SCOPE,
+          callback: function (resp) {
+            if (!resp || resp.error || !resp.access_token) { toast("Connexion à Google Agenda refusée ou annulée."); return; }
+            try { sessionStorage.setItem(GCAL_TOKEN_KEY, JSON.stringify({ accessToken: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 })); } catch (e) {}
+            try { localStorage.setItem("studino-google-connected", "1"); } catch (e) {}
+            gcalCache = {};
+            toast("📅 Google Agenda connecté");
+            render();
+          },
+          error_callback: function (err) {
+            toast("Connexion à Google Agenda impossible" + (err && err.type ? " (" + err.type + ")" : "") + ". Vérifie l'identifiant client et l'origine autorisée.");
+          }
+        });
+        gcalTokenClient.__cid = clientId;
+      }
+      gcalTokenClient.requestAccessToken({ prompt: gcalWasConnected() ? "" : "consent" });
+    }).catch(function () { toast("Impossible de charger la connexion Google (connexion internet ?)."); });
+  }
+  function gcalDisconnect() {
+    var t = gcalToken();
+    try { sessionStorage.removeItem(GCAL_TOKEN_KEY); localStorage.removeItem("studino-google-connected"); } catch (e) {}
+    if (t && window.google && window.google.accounts && window.google.accounts.oauth2) { try { window.google.accounts.oauth2.revoke(t, function () {}); } catch (e) {} }
+    gcalCache = {};
+    toast("Google Agenda déconnecté");
+    render();
+  }
+  function gcalFetch(url, token) {
+    return fetch(url, { headers: { Authorization: "Bearer " + token } }).then(function (r) {
+      if (r.status === 401) { try { sessionStorage.removeItem(GCAL_TOKEN_KEY); } catch (e) {} throw new Error("Session Google expirée : reconnecte-toi."); }
+      if (!r.ok) return r.text().then(function (t) { throw new Error("Google Agenda : erreur " + r.status + (t ? " — " + t.slice(0, 160) : "")); });
+      return r.json();
+    });
+  }
+  function gcalLoadMonth(year, month) {
+    var key = year + "-" + String(month + 1).padStart(2, "0");
+    var token = gcalToken();
+    if (!token || gcalCache[key]) return;
+    gcalCache[key] = { status: "loading", events: [] };
+    var range = calGridRange(year, month);
+    var timeMin = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).toISOString();
+    var timeMax = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1).toISOString();
+    var base = "https://www.googleapis.com/calendar/v3";
+    gcalFetch(base + "/users/me/calendarList?minAccessRole=reader", token).then(function (list) {
+      var cals = (list.items || []).filter(function (c) { return c.selected !== false || c.primary; });
+      return Promise.all(cals.map(function (c) {
+        var url = base + "/calendars/" + encodeURIComponent(c.id) + "/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin=" + encodeURIComponent(timeMin) + "&timeMax=" + encodeURIComponent(timeMax);
+        return gcalFetch(url, token).then(function (res) {
+          var out = [];
+          (res.items || []).forEach(function (ev) {
+            if (ev.status === "cancelled") return;
+            var allDay = !!(ev.start && ev.start.date);
+            var startD = allDay ? new Date(ev.start.date + "T00:00:00") : new Date(ev.start && ev.start.dateTime);
+            var endD = allDay ? new Date(ev.end.date + "T00:00:00") : new Date(ev.end && ev.end.dateTime);
+            if (isNaN(startD)) return;
+            var time = allDay ? "" : String(startD.getHours()).padStart(2, "0") + ":" + String(startD.getMinutes()).padStart(2, "0");
+            // Un événement sur plusieurs jours apparaît chaque jour (fin exclusive pour une journée entière).
+            var d = new Date(startD.getFullYear(), startD.getMonth(), startD.getDate());
+            var lastDay = allDay ? new Date(endD.getFullYear(), endD.getMonth(), endD.getDate() - 1) : new Date(endD.getFullYear(), endD.getMonth(), endD.getDate());
+            for (var k = 0; k < 60 && d <= lastDay; k++) {
+              out.push({ date: calDateStr(d), title: ev.summary || "(sans titre)", time: k === 0 ? time : "", kind: "google", color: c.backgroundColor || "", calendar: c.summaryOverride || c.summary || "", link: ev.htmlLink || "", location: ev.location || "" });
+              d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+            }
+          });
+          return out;
+        }).catch(function () { return []; });
+      }));
+    }).then(function (lists) {
+      gcalCache[key] = { status: "ready", events: [].concat.apply([], lists) };
+      if (parseHash()[0] === "calendar") render();
+    }).catch(function (err) {
+      gcalCache[key] = { status: "error", events: [], error: err.message || "Erreur" };
+      if (parseHash()[0] === "calendar") render();
+    });
+  }
+  function calEventChip(ev, short) {
+    var style = ev.kind === "google" && ev.color ? ' style="--cal-color:' + esc(ev.color) + '"' : "";
+    var icon = ev.kind === "exam" ? "🎯 " : ev.kind === "session" ? (ev.done ? "✅ " : "📖 ") : "";
+    return '<span class="cal-chip cal-chip-' + ev.kind + '"' + style + ' title="' + esc((ev.time ? ev.time + " " : "") + ev.title) + '">' + icon + (ev.time && !short ? '<b>' + ev.time + '</b> ' : "") + esc(ev.title) + '</span>';
+  }
+  function renderCalendarPage() {
+    var v = calEnsureView();
+    var connected = !!gcalToken();
+    if (connected) gcalLoadMonth(v.year, v.month);
+    var key = v.year + "-" + String(v.month + 1).padStart(2, "0");
+    var g = gcalCache[key];
+    var events = calLocalEvents().concat(connected && g ? g.events : []);
+    var byDate = {};
+    events.forEach(function (ev) { (byDate[ev.date] = byDate[ev.date] || []).push(ev); });
+    var order = { exam: 0, session: 1, google: 2 };
+    Object.keys(byDate).forEach(function (d) { byDate[d].sort(function (a, b) { return (order[a.kind] - order[b.kind]) || String(a.time || "").localeCompare(String(b.time || "")); }); });
+    var range = calGridRange(v.year, v.month);
+    var today = calDateStr(new Date());
+    var cells = "";
+    for (var d = new Date(range.start); d <= range.end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
+      var ds = calDateStr(d), list = byDate[ds] || [];
+      var cls = "cal-cell" + (d.getMonth() !== v.month ? " cal-out" : "") + (ds === today ? " cal-today" : "") + (ds === v.selected ? " cal-selected" : "") + (list.some(function (e) { return e.kind === "exam"; }) ? " cal-has-exam" : "");
+      cells += '<button type="button" class="' + cls + '" onclick="App.calSelect(\'' + ds + '\')"><span class="cal-daynum">' + d.getDate() + '</span>' +
+        list.slice(0, 3).map(function (e) { return calEventChip(e, true); }).join("") +
+        (list.length > 3 ? '<span class="cal-more">+' + (list.length - 3) + '</span>' : "") + '</button>';
+    }
+    var sel = byDate[v.selected] || [];
+    var selDate = new Date(v.selected + "T00:00:00");
+    var selLabel = selDate.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    var dayList = sel.length ? sel.map(function (e) {
+      var link = e.hash ? ' onclick="location.hash=\'' + e.hash + '\'"' : (e.link ? ' onclick="window.open(\'' + esc(e.link) + '\', \'_blank\')"' : "");
+      return '<div class="cal-day-item cal-day-' + e.kind + '"' + (e.kind === "google" && e.color ? ' style="--cal-color:' + esc(e.color) + '"' : "") + link + '>' +
+        '<div class="cal-day-time mono">' + (e.time || (e.kind === "google" ? "Journée" : "")) + '</div>' +
+        '<div style="min-width:0"><div class="cal-day-title">' + calEventChip(e, false) + '</div>' +
+        (e.detail ? '<div class="cal-day-sub">' + esc(e.detail) + '</div>' : "") +
+        (e.calendar ? '<div class="cal-day-sub">' + esc(e.calendar) + (e.location ? " · " + esc(e.location) : "") + '</div>' : "") + '</div></div>';
+    }).join("") : '<p class="cal-empty">Rien de prévu ce jour-là.</p>';
+    var gStatus = !gcalClientId() || !connected
+      ? '<button class="btn btn-primary" style="width:auto" onclick="App.gcalConnect()">🔗 ' + (gcalWasConnected() && gcalClientId() ? "Reconnecter Google Agenda" : "Connecter Google Agenda") + '</button>'
+      : '<span class="cal-gstatus">✓ Google Agenda connecté' + (g && g.status === "loading" ? " · chargement…" : "") + '</span>' +
+        '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.gcalRefresh()">🔄 Actualiser</button>' +
+        '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.gcalDisconnect()">Déconnecter</button>';
+    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">📅</span><h1 class="page-title">Calendrier</h1></div><p class="page-sub">Tes contrôles et séances de révision' + (connected ? ", avec ton Google Agenda." : ". Connecte Google Agenda pour y voir aussi tes autres événements.") + '</p></div><div class="cal-gbar">' + gStatus + '</div></div>';
+    var monthLabel = MONTH_NAMES[v.month] + " " + v.year;
+    var body = (g && g.status === "error" ? '<p class="modal-warn" style="margin-bottom:12px">⚠️ ' + esc(g.error) + '</p>' : "") +
+      '<div class="cal-wrap"><div class="cal-main">' +
+      '<div class="cal-nav"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(-1)" aria-label="Mois précédent">‹</button><h2 class="cal-month">' + monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1) + '</h2><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(1)" aria-label="Mois suivant">›</button><button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto" onclick="App.calToday()">Aujourd\'hui</button></div>' +
+      '<div class="cal-grid">' + ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map(function (n) { return '<div class="cal-head">' + n + '</div>'; }).join("") + cells + '</div>' +
+      '<div class="cal-legend"><span class="cal-chip cal-chip-exam">🎯 Contrôle</span><span class="cal-chip cal-chip-session">📖 Séance de révision</span>' + (connected ? '<span class="cal-chip cal-chip-google">Google Agenda</span>' : "") + '</div>' +
+      '</div><aside class="cal-side"><h3 class="cal-side-title">' + selLabel.charAt(0).toUpperCase() + selLabel.slice(1) + '</h3>' + dayList + '</aside></div>';
+    renderShell(["calendar"], head + body);
+  }
+  function gcalSetupModalHtml() {
+    var origin = location.origin;
+    return '<h3>📅 Connecter Google Agenda</h3>' +
+      '<p class="modal-warn" style="margin-bottom:12px">Studino n\'a pas de serveur : pour lire ton agenda, Google demande un « identifiant client » à toi. À faire une seule fois, gratuit, environ 5 minutes (lecture seule, Studino ne modifie jamais ton agenda).</p>' +
+      '<ol class="gcal-steps">' +
+      '<li>Va sur <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> et choisis un projet (celui de ta clé Gemini convient) ou crées-en un.</li>' +
+      '<li>Menu « API et services » → « Bibliothèque » → cherche <b>Google Calendar API</b> → <b>Activer</b>.</li>' +
+      '<li>« API et services » → « Écran de consentement OAuth » : type <b>Externe</b>, remplis le nom de l\'appli et ton e-mail, puis dans « Utilisateurs test » ajoute <b>ton adresse Gmail</b>.</li>' +
+      '<li>« API et services » → « Identifiants » → « Créer des identifiants » → <b>ID client OAuth</b> → type <b>Application Web</b>. Dans « Origines JavaScript autorisées », ajoute exactement : <code class="gcal-origin">' + esc(origin) + '</code></li>' +
+      '<li>Copie l\'<b>ID client</b> (il finit par <code>.apps.googleusercontent.com</code>) et colle-le ci-dessous.</li>' +
+      '</ol>' +
+      '<div class="field"><label>ID client OAuth</label><input id="gcal-client-input" value="' + esc(modal.clientId || gcalClientId()) + '" placeholder="xxxxxxxx.apps.googleusercontent.com"></div>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.gcalSaveClientId()">Enregistrer et connecter</button></div>';
+  }
+
   /* ---------------- Root render / router ---------------- */
   function render() {
     // Le nettoyage des overlays passe AVANT tout le reste (et hors du try/catch) : même si une erreur
@@ -11129,6 +11345,7 @@
       if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
       if (parts[0] === "methodologies" && parts[1]) { renderMethodologyDetailPage(parts[1]); return; }
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
+      if (parts[0] === "calendar") { renderCalendarPage(); return; }
       if (parts[0] === "podcasts" && parts[1] === "lib") { renderPodcastLibraryPage(parts[2], parts[3], parts[4]); return; }
       if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
       if (parts[0] === "podcasts") { renderPodcastListPage(); return; }
