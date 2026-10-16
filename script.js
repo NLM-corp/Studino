@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "11.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "11.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -4201,6 +4201,7 @@
     merged.importedExercises = mergeArraysById(merged.importedExercises, loser.importedExercises);
     merged.revisionSheets = mergeArraysById(merged.revisionSheets, loser.revisionSheets);
     merged.examPreps = mergeArraysById(merged.examPreps, loser.examPreps);
+    merged.calendarEvents = mergeArraysById(merged.calendarEvents || [], loser.calendarEvents || []);
     // Dino Park n'est pas qu'un objet à prendre en bloc d'un seul côté : dinosaures/œufs/enclos ont
     // chacun un id stable (jamais régénéré), donc on peut — et on doit — les fusionner comme le reste,
     // sinon un dino attrapé UNIQUEMENT sur l'appareil "perdant" serait purement et simplement perdu à
@@ -8789,8 +8790,10 @@
         '<div class="field"><label>Nom</label><input name="name" value="' + esc(modal.currentName) + '" required autofocus></div>' +
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="submit" class="btn btn-primary">Enregistrer</button></div>' +
         '</form>';
-    } else if (modal.type === "gcalSetup") {
-      inner = gcalSetupModalHtml();
+    } else if (modal.type === "calEvent") {
+      inner = calEventModalHtml();
+    } else if (modal.type === "calSettings") {
+      inner = calSettingsModalHtml();
     } else if (modal.type === "apiKey") {
       inner = '<h3>Clé API Gemini</h3>' +
         '<p class="modal-warn" style="margin-bottom:14px">Stockée uniquement dans le stockage local de ce navigateur, envoyée uniquement à l\'API Google Gemini pour générer tes cours.</p>' +
@@ -8998,7 +9001,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="submit" class="btn btn-primary">Insérer</button></div>' +
         '</form>';
     }
-    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "backupApiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
+    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "calEvent" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "backupApiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
     document.body.appendChild(overlay);
   }
 
@@ -10401,20 +10404,109 @@
       printAndDownload(html, entry.title);
     },
     openApiKeyModal: function () { modal = { type: "apiKey" }; render(); },
-    calSelect: function (ds) { calEnsureView().selected = ds; var d = new Date(ds + "T00:00:00"); if (d.getMonth() !== calView.month) { calView.month = d.getMonth(); calView.year = d.getFullYear(); } render(); },
-    calMove: function (delta) { var v = calEnsureView(); var d = new Date(v.year, v.month + delta, 1); v.year = d.getFullYear(); v.month = d.getMonth(); v.selected = calDateStr(d); render(); },
-    calToday: function () { calView = null; calEnsureView(); render(); },
-    gcalConnect: function () { gcalConnect(); },
-    gcalDisconnect: function () { gcalDisconnect(); },
-    gcalRefresh: function () { gcalCache = {}; render(); },
-    gcalSaveClientId: function () {
-      var el = document.getElementById("gcal-client-input");
-      var v = el ? el.value.trim() : "";
-      if (!/\.apps\.googleusercontent\.com$/.test(v)) { toast("Colle un ID client qui finit par .apps.googleusercontent.com"); return; }
-      try { localStorage.setItem(GCAL_CLIENT_KEY, v); } catch (e) {}
+    calSelect: function (ds) { calEnsureView().date = ds; render(); },
+    calSetMode: function (mode, ds) {
+      var v = calEnsureView();
+      v.mode = mode;
+      if (ds) v.date = ds;
+      try { localStorage.setItem("studino-cal-mode", mode); } catch (e) {}
+      render();
+    },
+    calMove: function (delta) {
+      var v = calEnsureView();
+      if (v.mode === "month") { var d = calParse(v.date); v.date = calDateStr(new Date(d.getFullYear(), d.getMonth() + delta, 1)); }
+      else v.date = calAddDays(v.date, delta * (v.mode === "week" ? 7 : 1));
+      render();
+    },
+    calToday: function () { calEnsureView().date = calDateStr(new Date()); render(); },
+    calNewEvent: function (ds, startMin) {
+      var v = calEnsureView();
+      var date = ds || v.date;
+      var s = typeof startMin === "number" ? startMin : 18 * 60;
+      modal = { type: "calEvent", editId: null, ev: { title: "", startDate: date, endDate: date, startTime: calFromMin(s), endTime: calFromMin(Math.min(s + 60, 23 * 60 + 59)), allDay: false, repeat: "none", location: "", notify: null, notifyValue: 30, notifyUnit: "min", color: CAL_COLORS[1], busy: true, description: "" } };
+      render();
+    },
+    // Clic sur un créneau vide (vue Semaine / Jour) : nouvel événement à cette heure (arrondie à la demi-heure).
+    calSlotClick: function (e, ds) {
+      var col = e.currentTarget;
+      if (!col || e.target !== col) return;
+      var y = e.clientY - col.getBoundingClientRect().top;
+      var min = CAL_HOUR_START * 60 + Math.floor((y / CAL_HOUR_PX) * 2) * 30;
+      App.calNewEvent(ds, Math.max(0, Math.min(23 * 60, min)));
+    },
+    calEditEvent: function (id) {
+      var ev = calEvents().find(function (x) { return x.id === id; });
+      if (!ev) return;
+      modal = { type: "calEvent", editId: id, ev: JSON.parse(JSON.stringify(ev)) };
+      render();
+    },
+    calEvField: function (field, value, silent) {
+      if (!modal || modal.type !== "calEvent") return;
+      var e = modal.ev;
+      var desc = document.getElementById("cal-ev-desc");
+      if (desc) e.description = rteValue("cal-ev-desc");
+      if (field === "notify") {
+        if (value === null) e.notify = null;
+        else {
+          e.notify = true;
+          e.notifyValue = e.notifyValue || 30;
+          try { if (window.Notification && Notification.permission === "default") Notification.requestPermission(); } catch (er) {}
+        }
+      } else if (field === "startDate") {
+        var span = Math.max(0, Math.round((calParse(e.endDate) - calParse(e.startDate)) / 86400000));
+        e.startDate = value;
+        e.endDate = calAddDays(value, span);
+      } else if (field === "startTime") {
+        var dur = calToMin(e.endTime) - calToMin(e.startTime);
+        e.startTime = value;
+        if (e.startDate === e.endDate) e.endTime = calFromMin(Math.min(23 * 60 + 59, calToMin(value) + Math.max(15, dur)));
+      } else if (field === "endDate") {
+        e.endDate = value < e.startDate ? e.startDate : value;
+      } else {
+        e[field] = value;
+      }
+      if (!silent) renderModal();
+    },
+    calSaveEvent: function () {
+      if (!modal || modal.type !== "calEvent") return;
+      var e = modal.ev;
+      if (document.getElementById("cal-ev-desc")) e.description = rteValue("cal-ev-desc");
+      e.title = String(e.title || "").trim();
+      if (!e.title) { toast("Donne un titre à l'événement"); return; }
+      if (e.endDate < e.startDate) e.endDate = e.startDate;
+      if (!e.allDay && e.startDate === e.endDate && calToMin(e.endTime) <= calToMin(e.startTime)) e.endTime = calFromMin(Math.min(23 * 60 + 59, calToMin(e.startTime) + 60));
+      var list = calEvents();
+      if (modal.editId) {
+        var idx = list.findIndex(function (x) { return x.id === modal.editId; });
+        if (idx !== -1) { e.id = modal.editId; list[idx] = e; }
+      } else {
+        e.id = uid();
+        list.push(e);
+      }
+      saveDB();
+      modal = null;
+      toast("📅 Événement enregistré" + (e.busy !== false ? " · les révisions se replacent autour" : ""));
+      render();
+    },
+    calDeleteEvent: function () {
+      if (!modal || !modal.editId) return;
+      var d = userData();
+      d.calendarEvents = calEvents().filter(function (x) { return x.id !== modal.editId; });
+      saveDB();
+      modal = null;
+      toast("Événement supprimé");
+      render();
+    },
+    calOpenSettings: function () { modal = { type: "calSettings" }; render(); },
+    calSaveSettings: function () {
+      var a = document.getElementById("cal-st-start"), b = document.getElementById("cal-st-end");
+      var s = a && a.value, en = b && b.value;
+      if (!s || !en || calToMin(en) <= calToMin(s)) { toast("L'heure de fin doit être après l'heure de début"); return; }
+      var st = calSettings();
+      st.studyStart = s; st.studyEnd = en;
+      saveDB();
       modal = null;
       render();
-      gcalConnect();
     },
     openSettingsModal: function () { modal = { type: "settings" }; refreshStorageEstimate(); render(); },
     setVolumeMusic: function (v) { localStorage.setItem(VOLUME_MUSIC_STORAGE, String(v)); },
@@ -11116,200 +11208,322 @@
   };
 
   /* ---------------- Calendrier ----------------
-     Mois en grille : dates de contrôle et séances de révision des prépas (toujours dispo), plus les
-     événements de Google Agenda une fois connecté. Le site n'a pas de serveur : la connexion passe par
-     OAuth directement dans le navigateur (Google Identity Services), avec un identifiant client que
-     l'élève crée une fois dans Google Cloud (guide dans la fenêtre « Connecter Google Agenda »). Lecture
-     seule, jeton gardé seulement pour la session. */
-  var GCAL_CLIENT_KEY = "studino-google-client-id";
-  var GCAL_TOKEN_KEY = "studino-google-token";
-  var GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+     Vues Mois / Semaine / Jour. On y voit les contrôles, les séances de révision des prépas et les
+     événements ajoutés par l'élève (cours de guitare, sport...). Les événements de l'élève sont
+     PRIORITAIRES : chaque séance de révision reçoit un créneau dans les « heures de révision » (réglables),
+     et si un événement « Occupé » tombe dessus, la séance est décalée au premier créneau libre du jour, ou
+     à défaut sur un autre jour avant le contrôle. Ce placement est recalculé à chaque affichage : ajouter,
+     déplacer ou supprimer un événement replace aussitôt les révisions. */
   var MONTH_NAMES = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
-  var calView = null; // { year, month (0-11), selected: "AAAA-MM-JJ" }
-  var gcalCache = {}; // "AAAA-MM" → { status: "loading"|"ready"|"error", events: [], error }
-  var gcalTokenClient = null;
-  function gcalClientId() { try { return localStorage.getItem(GCAL_CLIENT_KEY) || ""; } catch (e) { return ""; } }
-  function gcalToken() {
-    try {
-      var t = JSON.parse(sessionStorage.getItem(GCAL_TOKEN_KEY) || "null");
-      return t && t.expiresAt > Date.now() + 60000 ? t.accessToken : "";
-    } catch (e) { return ""; }
-  }
-  function gcalWasConnected() { try { return localStorage.getItem("studino-google-connected") === "1"; } catch (e) { return false; } }
+  var CAL_DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+  var CAL_HOUR_START = 6, CAL_HOUR_END = 24, CAL_HOUR_PX = 48;
+  var CAL_COLORS = ["#4C8C4A", "#2F7FC1", "#D9A51B", "#D44C80", "#7A4FC4", "#D14B35", "#E8862B", "#5B6770"];
+  var CAL_REPEATS = [["none", "Une seule fois"], ["daily", "Tous les jours"], ["weekdays", "Du lundi au vendredi"], ["weekly", "Toutes les semaines"], ["monthly", "Tous les mois"], ["yearly", "Tous les ans"]];
+  var calView = null; // { mode: "month"|"week"|"day", date: "AAAA-MM-JJ" (jour de référence / sélectionné) }
   function calDateStr(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function calParse(ds) { return new Date(ds + "T00:00:00"); }
+  function calAddDays(ds, n) { var d = calParse(ds); d.setDate(d.getDate() + n); return calDateStr(d); }
+  function calToMin(hhmm) { var m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ""); return m ? (+m[1]) * 60 + (+m[2]) : 0; }
+  function calFromMin(min) { min = Math.max(0, Math.min(24 * 60, Math.round(min))); return String(Math.floor(min / 60)).padStart(2, "0") + ":" + String(min % 60).padStart(2, "0"); }
   function calEnsureView() {
-    if (!calView) { var t = new Date(); calView = { year: t.getFullYear(), month: t.getMonth(), selected: calDateStr(t) }; }
+    if (!calView) {
+      var saved = null;
+      try { saved = localStorage.getItem("studino-cal-mode"); } catch (e) {}
+      calView = { mode: saved === "week" || saved === "day" ? saved : "month", date: calDateStr(new Date()) };
+    }
     return calView;
   }
-  // Première et dernière case de la grille (semaines du lundi au dimanche).
-  function calGridRange(year, month) {
-    var first = new Date(year, month, 1);
-    var start = new Date(year, month, 1 - ((first.getDay() + 6) % 7));
-    var last = new Date(year, month + 1, 0);
-    var end = new Date(year, month + 1, 0 + (6 - ((last.getDay() + 6) % 7)));
-    return { start: start, end: end };
+  function calEvents() { var d = userData(); if (!d.calendarEvents) d.calendarEvents = []; return d.calendarEvents; }
+  function calSettings() {
+    var d = userData();
+    if (!d.calendarSettings) d.calendarSettings = { studyStart: "17:00", studyEnd: "21:00" };
+    return d.calendarSettings;
   }
-  function calLocalEvents() {
+  // Occurrences des événements de l'élève sur [fromDs, toDs] (inclus), répétitions comprises.
+  function calExpandUserEvents(fromDs, toDs) {
     var out = [];
-    (userData().examPreps || []).forEach(function (p) {
-      if (p.examDate) out.push({ date: p.examDate, title: "Contrôle : " + p.title, kind: "exam", hash: "#/examprep/" + p.id });
-      (p.days || []).forEach(function (d) {
-        if (d.date && d.date < p.examDate) out.push({ date: d.date, title: "Révision : " + p.title, detail: d.focus || "", kind: "session", hash: "#/examprep/" + p.id, done: !!(p.sessions && p.sessions[d.date] && p.sessions[d.date].status === "done") });
-      });
+    calEvents().forEach(function (ev) {
+      var startDs = ev.startDate, endDs = ev.endDate || ev.startDate;
+      var spanDays = Math.max(0, Math.round((calParse(endDs) - calParse(startDs)) / 86400000));
+      var push = function (ds) {
+        for (var k = 0; k <= spanDays; k++) {
+          var day = calAddDays(ds, k);
+          if (day < fromDs || day > toDs) continue;
+          out.push({
+            kind: "user", ev: ev, date: day, title: ev.title || "(sans titre)", color: ev.color || CAL_COLORS[1],
+            allDay: !!ev.allDay, busy: ev.busy !== false,
+            startMin: ev.allDay ? 0 : (k === 0 ? calToMin(ev.startTime) : 0),
+            endMin: ev.allDay ? 24 * 60 : (k === spanDays ? calToMin(ev.endTime) : 24 * 60),
+            time: ev.allDay || k > 0 ? "" : ev.startTime, location: ev.location || ""
+          });
+        }
+      };
+      var rep = ev.repeat || "none";
+      if (rep === "none") { push(startDs); return; }
+      var cur = startDs, guard = 0;
+      // On démarre assez tôt pour attraper une occurrence de plusieurs jours qui déborde sur la période.
+      var from = calAddDays(fromDs, -spanDays);
+      if (rep === "daily" || rep === "weekdays") { if (cur < from) cur = from; }
+      while (cur <= toDs && guard++ < 800) {
+        var d = calParse(cur);
+        var ok = cur >= startDs && (rep !== "weekdays" || (d.getDay() !== 0 && d.getDay() !== 6));
+        if (ok && cur >= from) push(cur);
+        if (rep === "daily" || rep === "weekdays") cur = calAddDays(cur, 1);
+        else if (rep === "weekly") cur = calAddDays(cur, 7);
+        else if (rep === "monthly") { var s = calParse(startDs); var n = new Date(d.getFullYear(), d.getMonth() + 1, s.getDate()); cur = calDateStr(n); }
+        else if (rep === "yearly") { var s2 = calParse(startDs); cur = calDateStr(new Date(d.getFullYear() + 1, s2.getMonth(), s2.getDate())); }
+        else break;
+      }
     });
     return out;
   }
-  function loadGoogleIdentity() {
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
-    return loadScriptOnce("https://accounts.google.com/gsi/client");
+  // Créneaux occupés d'un jour (minutes), pour placer les révisions.
+  function calBusyIntervals(list) {
+    return list.filter(function (o) { return o.busy; }).map(function (o) { return [o.startMin, o.endMin]; }).sort(function (a, b) { return a[0] - b[0]; });
   }
-  function gcalConnect() {
-    var clientId = gcalClientId();
-    if (!clientId) { modal = { type: "gcalSetup", clientId: "" }; render(); return; }
-    loadGoogleIdentity().then(function () {
-      if (!gcalTokenClient || gcalTokenClient.__cid !== clientId) {
-        gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: GCAL_SCOPE,
-          callback: function (resp) {
-            if (!resp || resp.error || !resp.access_token) { toast("Connexion à Google Agenda refusée ou annulée."); return; }
-            try { sessionStorage.setItem(GCAL_TOKEN_KEY, JSON.stringify({ accessToken: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 })); } catch (e) {}
-            try { localStorage.setItem("studino-google-connected", "1"); } catch (e) {}
-            gcalCache = {};
-            toast("📅 Google Agenda connecté");
-            render();
-          },
-          error_callback: function (err) {
-            toast("Connexion à Google Agenda impossible" + (err && err.type ? " (" + err.type + ")" : "") + ". Vérifie l'identifiant client et l'origine autorisée.");
-          }
-        });
-        gcalTokenClient.__cid = clientId;
-      }
-      gcalTokenClient.requestAccessToken({ prompt: gcalWasConnected() ? "" : "consent" });
-    }).catch(function () { toast("Impossible de charger la connexion Google (connexion internet ?)."); });
+  function calFindSlot(busy, winStart, winEnd, duration) {
+    var t = winStart;
+    for (var i = 0; i < busy.length; i++) {
+      var b = busy[i];
+      if (b[1] <= t) continue;
+      if (b[0] >= t + duration) break;
+      t = Math.max(t, b[1]);
+    }
+    return t + duration <= winEnd ? t : -1;
   }
-  function gcalDisconnect() {
-    var t = gcalToken();
-    try { sessionStorage.removeItem(GCAL_TOKEN_KEY); localStorage.removeItem("studino-google-connected"); } catch (e) {}
-    if (t && window.google && window.google.accounts && window.google.accounts.oauth2) { try { window.google.accounts.oauth2.revoke(t, function () {}); } catch (e) {} }
-    gcalCache = {};
-    toast("Google Agenda déconnecté");
-    render();
-  }
-  function gcalFetch(url, token) {
-    return fetch(url, { headers: { Authorization: "Bearer " + token } }).then(function (r) {
-      if (r.status === 401) { try { sessionStorage.removeItem(GCAL_TOKEN_KEY); } catch (e) {} throw new Error("Session Google expirée : reconnecte-toi."); }
-      if (!r.ok) return r.text().then(function (t) { throw new Error("Google Agenda : erreur " + r.status + (t ? " — " + t.slice(0, 160) : "")); });
-      return r.json();
+  // Place chaque séance de révision (et les contrôles) ; renvoie toutes les occurrences sur [fromDs, toDs].
+  function calScheduledRevisions(fromDs, toDs) {
+    var st = calSettings();
+    var winStart = calToMin(st.studyStart), winEnd = calToMin(st.studyEnd);
+    if (winEnd <= winStart) winEnd = winStart + 120;
+    var today = calDateStr(new Date());
+    var sessions = [];
+    var lo = fromDs, hi = toDs;
+    (userData().examPreps || []).forEach(function (p) {
+      (p.days || []).forEach(function (d) {
+        if (!d.date || !p.examDate || d.date >= p.examDate) return;
+        sessions.push({ prep: p, day: d, done: !!(p.sessions && p.sessions[d.date] && p.sessions[d.date].status === "done") });
+        if (d.date < lo) lo = d.date;
+      });
+      if (p.examDate > hi) hi = p.examDate;
     });
-  }
-  function gcalLoadMonth(year, month) {
-    var key = year + "-" + String(month + 1).padStart(2, "0");
-    var token = gcalToken();
-    if (!token || gcalCache[key]) return;
-    gcalCache[key] = { status: "loading", events: [] };
-    var range = calGridRange(year, month);
-    var timeMin = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).toISOString();
-    var timeMax = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1).toISOString();
-    var base = "https://www.googleapis.com/calendar/v3";
-    gcalFetch(base + "/users/me/calendarList?minAccessRole=reader", token).then(function (list) {
-      var cals = (list.items || []).filter(function (c) { return c.selected !== false || c.primary; });
-      return Promise.all(cals.map(function (c) {
-        var url = base + "/calendars/" + encodeURIComponent(c.id) + "/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin=" + encodeURIComponent(timeMin) + "&timeMax=" + encodeURIComponent(timeMax);
-        return gcalFetch(url, token).then(function (res) {
-          var out = [];
-          (res.items || []).forEach(function (ev) {
-            if (ev.status === "cancelled") return;
-            var allDay = !!(ev.start && ev.start.date);
-            var startD = allDay ? new Date(ev.start.date + "T00:00:00") : new Date(ev.start && ev.start.dateTime);
-            var endD = allDay ? new Date(ev.end.date + "T00:00:00") : new Date(ev.end && ev.end.dateTime);
-            if (isNaN(startD)) return;
-            var time = allDay ? "" : String(startD.getHours()).padStart(2, "0") + ":" + String(startD.getMinutes()).padStart(2, "0");
-            // Un événement sur plusieurs jours apparaît chaque jour (fin exclusive pour une journée entière).
-            var d = new Date(startD.getFullYear(), startD.getMonth(), startD.getDate());
-            var lastDay = allDay ? new Date(endD.getFullYear(), endD.getMonth(), endD.getDate() - 1) : new Date(endD.getFullYear(), endD.getMonth(), endD.getDate());
-            for (var k = 0; k < 60 && d <= lastDay; k++) {
-              out.push({ date: calDateStr(d), title: ev.summary || "(sans titre)", time: k === 0 ? time : "", kind: "google", color: c.backgroundColor || "", calendar: c.summaryOverride || c.summary || "", link: ev.htmlLink || "", location: ev.location || "" });
-              d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    // Les occupations de l'élève sur toute la période utile (un décalage peut changer de jour).
+    var userAll = calExpandUserEvents(calAddDays(lo, -1), calAddDays(hi, 1));
+    var busyByDate = {};
+    userAll.forEach(function (o) { if (o.busy) (busyByDate[o.date] = busyByDate[o.date] || []).push(o); });
+    var placedByDate = {}; // révisions déjà placées, pour ne pas en mettre deux au même moment
+    var busyOf = function (ds) { return calBusyIntervals((busyByDate[ds] || []).concat(placedByDate[ds] || [])); };
+    sessions.sort(function (a, b) { return a.day.date < b.day.date ? -1 : a.day.date > b.day.date ? 1 : 0; });
+    var out = [];
+    sessions.forEach(function (s) {
+      var dur = Math.max(15, Math.min(winEnd - winStart, s.day.minutes || 30));
+      var date = s.day.date, start = -1, moved = false;
+      // Séance passée ou faite : affichée à sa place d'origine, on ne la déplace plus.
+      if (s.done || date < today) {
+        start = calFindSlot(busyOf(date), winStart, winEnd, dur);
+        if (start < 0) start = winStart;
+      } else {
+        start = calFindSlot(busyOf(date), winStart, winEnd, dur);
+        if (start < 0) {
+          // Pas de place ce jour-là : jour le plus proche avant le contrôle (d'abord la veille, puis le lendemain...).
+          for (var k = 1; k <= 10 && start < 0; k++) {
+            var cands = [calAddDays(s.day.date, -k), calAddDays(s.day.date, k)];
+            for (var c = 0; c < cands.length && start < 0; c++) {
+              var cd = cands[c];
+              if (cd < today || cd >= s.prep.examDate) continue;
+              var t = calFindSlot(busyOf(cd), winStart, winEnd, dur);
+              if (t >= 0) { start = t; date = cd; moved = true; }
             }
-          });
-          return out;
-        }).catch(function () { return []; });
-      }));
-    }).then(function (lists) {
-      gcalCache[key] = { status: "ready", events: [].concat.apply([], lists) };
-      if (parseHash()[0] === "calendar") render();
-    }).catch(function (err) {
-      gcalCache[key] = { status: "error", events: [], error: err.message || "Erreur" };
-      if (parseHash()[0] === "calendar") render();
+          }
+          if (start < 0) { start = winStart; moved = false; }
+        } else if (start !== winStart) {
+          moved = true;
+        }
+      }
+      var occ = { kind: "session", date: date, startMin: start, endMin: start + dur, time: calFromMin(start), title: "Révision : " + s.prep.title, detail: s.day.focus || "", hash: "#/examprep/" + s.prep.id, done: s.done, moved: moved && date !== s.day.date ? "Déplacée du " + calParse(s.day.date).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }) + " (pas de créneau libre)" : (moved ? "Décalée à cause d'un autre événement" : ""), busy: true };
+      (placedByDate[date] = placedByDate[date] || []).push(occ);
+      if (date >= fromDs && date <= toDs) out.push(occ);
     });
+    (userData().examPreps || []).forEach(function (p) {
+      if (p.examDate && p.examDate >= fromDs && p.examDate <= toDs) out.push({ kind: "exam", date: p.examDate, allDay: true, startMin: 0, endMin: 0, title: "Contrôle : " + p.title, hash: "#/examprep/" + p.id });
+    });
+    return out;
   }
-  function calEventChip(ev, short) {
-    var style = ev.kind === "google" && ev.color ? ' style="--cal-color:' + esc(ev.color) + '"' : "";
-    var icon = ev.kind === "exam" ? "🎯 " : ev.kind === "session" ? (ev.done ? "✅ " : "📖 ") : "";
-    return '<span class="cal-chip cal-chip-' + ev.kind + '"' + style + ' title="' + esc((ev.time ? ev.time + " " : "") + ev.title) + '">' + icon + (ev.time && !short ? '<b>' + ev.time + '</b> ' : "") + esc(ev.title) + '</span>';
+  function calRangeFor(v) {
+    var ref = calParse(v.date);
+    if (v.mode === "day") return { from: v.date, to: v.date };
+    if (v.mode === "week") { var mon = calAddDays(v.date, -((ref.getDay() + 6) % 7)); return { from: mon, to: calAddDays(mon, 6) }; }
+    var first = new Date(ref.getFullYear(), ref.getMonth(), 1);
+    var start = calAddDays(calDateStr(first), -((first.getDay() + 6) % 7));
+    var last = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+    return { from: start, to: calAddDays(calDateStr(last), 6 - ((last.getDay() + 6) % 7)) };
+  }
+  function calAllOccurrences(from, to) {
+    return calExpandUserEvents(from, to).concat(calScheduledRevisions(from, to));
+  }
+  function calChip(o, short) {
+    var style = o.kind === "user" ? ' style="--cal-color:' + esc(o.color) + '"' : "";
+    var icon = o.kind === "exam" ? "🎯 " : o.kind === "session" ? (o.done ? "✅ " : o.moved ? "↪️ " : "📖 ") : "";
+    return '<span class="cal-chip cal-chip-' + (o.kind === "user" ? "google" : o.kind) + '"' + style + ' title="' + esc((o.time ? o.time + " " : "") + o.title) + '">' + icon + (o.time && !short ? "<b>" + o.time + "</b> " : (o.time && short ? o.time + " " : "")) + esc(o.title) + "</span>";
+  }
+  function calOccClick(o) {
+    if (o.kind === "user") return ' onclick="event.stopPropagation();App.calEditEvent(\'' + o.ev.id + '\')"';
+    if (o.hash) return ' onclick="event.stopPropagation();location.hash=\'' + o.hash + '\'"';
+    return "";
+  }
+  function calSortOcc(list) {
+    var order = { exam: 0, session: 1, user: 1 };
+    return list.sort(function (a, b) { return (a.allDay === b.allDay ? 0 : a.allDay ? -1 : 1) || (order[a.kind] - order[b.kind]) || a.startMin - b.startMin; });
+  }
+  function calMonthHtml(v, byDate, range) {
+    var ref = calParse(v.date), today = calDateStr(new Date()), cells = "";
+    for (var ds = range.from; ds <= range.to; ds = calAddDays(ds, 1)) {
+      var d = calParse(ds), list = calSortOcc(byDate[ds] || []);
+      var cls = "cal-cell" + (d.getMonth() !== ref.getMonth() ? " cal-out" : "") + (ds === today ? " cal-today" : "") + (ds === v.date ? " cal-selected" : "") + (list.some(function (e) { return e.kind === "exam"; }) ? " cal-has-exam" : "");
+      cells += '<div role="button" tabindex="0" class="' + cls + '" onclick="App.calSelect(\'' + ds + '\')" ondblclick="App.calNewEvent(\'' + ds + '\')"><span class="cal-daynum">' + d.getDate() + '</span>' +
+        list.slice(0, 3).map(function (o) { return '<span class="cal-chip-wrap"' + calOccClick(o) + '>' + calChip(o, true) + '</span>'; }).join("") +
+        (list.length > 3 ? '<span class="cal-more">+' + (list.length - 3) + '</span>' : "") + '</div>';
+    }
+    return '<div class="cal-grid">' + CAL_DAY_NAMES.map(function (n) { return '<div class="cal-head">' + n + '</div>'; }).join("") + cells + '</div>';
+  }
+  // Vue Semaine / Jour : une colonne par jour, grille horaire, événements placés selon leur heure.
+  function calTimeGridHtml(days, byDate) {
+    var today = calDateStr(new Date());
+    var hours = "";
+    for (var h = CAL_HOUR_START; h < CAL_HOUR_END; h++) hours += '<div class="cal-hour" style="height:' + CAL_HOUR_PX + 'px"><span>' + String(h).padStart(2, "0") + ':00</span></div>';
+    var heads = days.map(function (ds) {
+      var d = calParse(ds);
+      return '<button type="button" class="cal-tg-head' + (ds === today ? " cal-today" : "") + '" onclick="App.calSetMode(\'day\', \'' + ds + '\')"><span>' + CAL_DAY_NAMES[(d.getDay() + 6) % 7] + '</span><b class="cal-daynum">' + d.getDate() + '</b></button>';
+    }).join("");
+    var allDayRow = days.map(function (ds) {
+      return '<div class="cal-tg-allday">' + calSortOcc((byDate[ds] || []).filter(function (o) { return o.allDay; })).map(function (o) { return '<span class="cal-chip-wrap"' + calOccClick(o) + '>' + calChip(o, true) + '</span>'; }).join("") + '</div>';
+    }).join("");
+    var cols = days.map(function (ds) {
+      var timed = (byDate[ds] || []).filter(function (o) { return !o.allDay; }).sort(function (a, b) { return a.startMin - b.startMin; });
+      // Événements qui se chevauchent : côte à côte (colonnes attribuées dans l'ordre).
+      var lanesEnd = [];
+      timed.forEach(function (o) {
+        var lane = lanesEnd.findIndex(function (end) { return end <= o.startMin; });
+        if (lane === -1) { lane = lanesEnd.length; lanesEnd.push(0); }
+        lanesEnd[lane] = o.endMin; o._lane = lane;
+      });
+      var lanes = Math.max(1, lanesEnd.length);
+      var items = timed.map(function (o) {
+        var top = (Math.max(o.startMin, CAL_HOUR_START * 60) - CAL_HOUR_START * 60) / 60 * CAL_HOUR_PX;
+        var height = Math.max(20, (Math.min(o.endMin, CAL_HOUR_END * 60) - Math.max(o.startMin, CAL_HOUR_START * 60)) / 60 * CAL_HOUR_PX - 2);
+        var kindCls = o.kind === "user" ? "cal-ev-user" : "cal-ev-" + o.kind;
+        return '<div class="cal-ev ' + kindCls + '" style="top:' + top + 'px;height:' + height + 'px;left:calc(' + (o._lane * 100 / lanes) + '% + 2px);width:calc(' + (100 / lanes) + '% - 4px);' + (o.kind === "user" ? "--cal-color:" + esc(o.color) : "") + '"' + calOccClick(o) + ' title="' + esc(o.title) + '">' +
+          '<b>' + (o.kind === "session" ? (o.done ? "✅ " : o.moved ? "↪️ " : "📖 ") : "") + esc(o.title) + '</b><span>' + calFromMin(o.startMin) + " – " + calFromMin(o.endMin) + (o.location ? " · " + esc(o.location) : "") + '</span></div>';
+      }).join("");
+      var nowLine = "";
+      if (ds === today) {
+        var n = new Date(), nm = n.getHours() * 60 + n.getMinutes();
+        if (nm >= CAL_HOUR_START * 60) nowLine = '<div class="cal-now" style="top:' + ((nm - CAL_HOUR_START * 60) / 60 * CAL_HOUR_PX) + 'px"></div>';
+      }
+      return '<div class="cal-tg-col" onclick="App.calSlotClick(event, \'' + ds + '\')" style="height:' + ((CAL_HOUR_END - CAL_HOUR_START) * CAL_HOUR_PX) + 'px">' + items + nowLine + '</div>';
+    }).join("");
+    var tpl = "grid-template-columns: 52px repeat(" + days.length + ", minmax(0, 1fr))";
+    return '<div class="cal-tg">' +
+      '<div class="cal-tg-top" style="' + tpl + '"><div></div>' + heads + '<div class="cal-tg-allday-label">Journée</div>' + allDayRow + '</div>' +
+      '<div class="cal-tg-scroll" id="cal-tg-scroll"><div class="cal-tg-body" style="' + tpl + '"><div class="cal-hours">' + hours + '</div>' + cols + '</div></div></div>';
   }
   function renderCalendarPage() {
     var v = calEnsureView();
-    var connected = !!gcalToken();
-    if (connected) gcalLoadMonth(v.year, v.month);
-    var key = v.year + "-" + String(v.month + 1).padStart(2, "0");
-    var g = gcalCache[key];
-    var events = calLocalEvents().concat(connected && g ? g.events : []);
+    var range = calRangeFor(v);
+    var occ = calAllOccurrences(range.from, range.to);
     var byDate = {};
-    events.forEach(function (ev) { (byDate[ev.date] = byDate[ev.date] || []).push(ev); });
-    var order = { exam: 0, session: 1, google: 2 };
-    Object.keys(byDate).forEach(function (d) { byDate[d].sort(function (a, b) { return (order[a.kind] - order[b.kind]) || String(a.time || "").localeCompare(String(b.time || "")); }); });
-    var range = calGridRange(v.year, v.month);
-    var today = calDateStr(new Date());
-    var cells = "";
-    for (var d = new Date(range.start); d <= range.end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
-      var ds = calDateStr(d), list = byDate[ds] || [];
-      var cls = "cal-cell" + (d.getMonth() !== v.month ? " cal-out" : "") + (ds === today ? " cal-today" : "") + (ds === v.selected ? " cal-selected" : "") + (list.some(function (e) { return e.kind === "exam"; }) ? " cal-has-exam" : "");
-      cells += '<button type="button" class="' + cls + '" onclick="App.calSelect(\'' + ds + '\')"><span class="cal-daynum">' + d.getDate() + '</span>' +
-        list.slice(0, 3).map(function (e) { return calEventChip(e, true); }).join("") +
-        (list.length > 3 ? '<span class="cal-more">+' + (list.length - 3) + '</span>' : "") + '</button>';
+    occ.forEach(function (o) { (byDate[o.date] = byDate[o.date] || []).push(o); });
+    var ref = calParse(v.date), title;
+    if (v.mode === "month") title = MONTH_NAMES[ref.getMonth()] + " " + ref.getFullYear();
+    else if (v.mode === "week") {
+      var a = calParse(range.from), b = calParse(range.to);
+      title = a.getDate() + (a.getMonth() !== b.getMonth() ? " " + MONTH_NAMES[a.getMonth()] : "") + " – " + b.getDate() + " " + MONTH_NAMES[b.getMonth()] + " " + b.getFullYear();
+    } else title = ref.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+    var modeBtn = function (m, label) { return '<button type="button" class="cal-mode-btn' + (v.mode === m ? " active" : "") + '" onclick="App.calSetMode(\'' + m + '\')">' + label + '</button>'; };
+    var st = calSettings();
+    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">📅</span><h1 class="page-title">Calendrier</h1></div><p class="page-sub">Tes contrôles, tes séances de révision et ton emploi du temps. Révisions placées entre ' + st.studyStart.replace(":", "h") + ' et ' + st.studyEnd.replace(":", "h") + ', décalées si tu es occupé.</p></div>' +
+      '<div class="cal-gbar"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calOpenSettings()">⚙️ Heures de révision</button><button class="btn btn-primary" style="width:auto" onclick="App.calNewEvent()">' + icon("plus") + ' Événement</button></div></div>';
+    var nav = '<div class="cal-nav"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(-1)" aria-label="Précédent">‹</button><h2 class="cal-month">' + esc(title) + '</h2><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(1)" aria-label="Suivant">›</button>' +
+      '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calToday()">Aujourd\'hui</button><div class="cal-modes">' + modeBtn("day", "Jour") + modeBtn("week", "Semaine") + modeBtn("month", "Mois") + '</div></div>';
+    var mainHtml;
+    if (v.mode === "month") {
+      var sel = calSortOcc(byDate[v.date] || []);
+      var selLabel = ref.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      var dayList = sel.length ? sel.map(function (o) {
+        return '<div class="cal-day-item"' + calOccClick(o) + (o.kind === "user" ? ' style="--cal-color:' + esc(o.color) + '"' : "") + '>' +
+          '<div class="cal-day-time mono">' + (o.allDay ? "Journée" : calFromMin(o.startMin) + "<br>" + calFromMin(o.endMin)) + '</div>' +
+          '<div style="min-width:0"><div class="cal-day-title">' + calChip(o, false) + '</div>' +
+          (o.detail ? '<div class="cal-day-sub">' + esc(o.detail) + '</div>' : "") +
+          (o.moved ? '<div class="cal-day-sub">↪️ ' + esc(o.moved) + '</div>' : "") +
+          (o.location ? '<div class="cal-day-sub">📍 ' + esc(o.location) + '</div>' : "") + '</div></div>';
+      }).join("") : '<p class="cal-empty">Rien de prévu ce jour-là.</p>';
+      mainHtml = '<div class="cal-wrap"><div class="cal-main">' + calMonthHtml(v, byDate, range) + '</div>' +
+        '<aside class="cal-side"><h3 class="cal-side-title">' + esc(selLabel.charAt(0).toUpperCase() + selLabel.slice(1)) + '</h3>' + dayList +
+        '<button class="btn btn-ghost btn-sm" style="width:auto;align-self:flex-start" onclick="App.calNewEvent(\'' + v.date + '\')">' + icon("plus") + ' Ajouter ce jour-là</button></aside></div>';
+    } else {
+      var days = [];
+      for (var ds = range.from; ds <= range.to; ds = calAddDays(ds, 1)) days.push(ds);
+      mainHtml = calTimeGridHtml(days, byDate);
     }
-    var sel = byDate[v.selected] || [];
-    var selDate = new Date(v.selected + "T00:00:00");
-    var selLabel = selDate.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-    var dayList = sel.length ? sel.map(function (e) {
-      var link = e.hash ? ' onclick="location.hash=\'' + e.hash + '\'"' : (e.link ? ' onclick="window.open(\'' + esc(e.link) + '\', \'_blank\')"' : "");
-      return '<div class="cal-day-item cal-day-' + e.kind + '"' + (e.kind === "google" && e.color ? ' style="--cal-color:' + esc(e.color) + '"' : "") + link + '>' +
-        '<div class="cal-day-time mono">' + (e.time || (e.kind === "google" ? "Journée" : "")) + '</div>' +
-        '<div style="min-width:0"><div class="cal-day-title">' + calEventChip(e, false) + '</div>' +
-        (e.detail ? '<div class="cal-day-sub">' + esc(e.detail) + '</div>' : "") +
-        (e.calendar ? '<div class="cal-day-sub">' + esc(e.calendar) + (e.location ? " · " + esc(e.location) : "") + '</div>' : "") + '</div></div>';
-    }).join("") : '<p class="cal-empty">Rien de prévu ce jour-là.</p>';
-    var gStatus = !gcalClientId() || !connected
-      ? '<button class="btn btn-primary" style="width:auto" onclick="App.gcalConnect()">🔗 ' + (gcalWasConnected() && gcalClientId() ? "Reconnecter Google Agenda" : "Connecter Google Agenda") + '</button>'
-      : '<span class="cal-gstatus">✓ Google Agenda connecté' + (g && g.status === "loading" ? " · chargement…" : "") + '</span>' +
-        '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.gcalRefresh()">🔄 Actualiser</button>' +
-        '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.gcalDisconnect()">Déconnecter</button>';
-    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">📅</span><h1 class="page-title">Calendrier</h1></div><p class="page-sub">Tes contrôles et séances de révision' + (connected ? ", avec ton Google Agenda." : ". Connecte Google Agenda pour y voir aussi tes autres événements.") + '</p></div><div class="cal-gbar">' + gStatus + '</div></div>';
-    var monthLabel = MONTH_NAMES[v.month] + " " + v.year;
-    var body = (g && g.status === "error" ? '<p class="modal-warn" style="margin-bottom:12px">⚠️ ' + esc(g.error) + '</p>' : "") +
-      '<div class="cal-wrap"><div class="cal-main">' +
-      '<div class="cal-nav"><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(-1)" aria-label="Mois précédent">‹</button><h2 class="cal-month">' + monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1) + '</h2><button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calMove(1)" aria-label="Mois suivant">›</button><button class="btn btn-ghost btn-sm" style="width:auto;margin-left:auto" onclick="App.calToday()">Aujourd\'hui</button></div>' +
-      '<div class="cal-grid">' + ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map(function (n) { return '<div class="cal-head">' + n + '</div>'; }).join("") + cells + '</div>' +
-      '<div class="cal-legend"><span class="cal-chip cal-chip-exam">🎯 Contrôle</span><span class="cal-chip cal-chip-session">📖 Séance de révision</span>' + (connected ? '<span class="cal-chip cal-chip-google">Google Agenda</span>' : "") + '</div>' +
-      '</div><aside class="cal-side"><h3 class="cal-side-title">' + selLabel.charAt(0).toUpperCase() + selLabel.slice(1) + '</h3>' + dayList + '</aside></div>';
-    renderShell(["calendar"], head + body);
+    var legend = '<div class="cal-legend"><span class="cal-chip cal-chip-exam">🎯 Contrôle</span><span class="cal-chip cal-chip-session">📖 Révision</span><span class="cal-chip cal-chip-session">↪️ Révision décalée</span><span class="cal-chip cal-chip-google">Tes événements</span></div>';
+    renderShell(["calendar"], head + nav + mainHtml + legend);
+    // Semaine / Jour : on fait défiler jusqu'à l'heure actuelle (ou 8 h).
+    var sc = document.getElementById("cal-tg-scroll");
+    if (sc) { var n = new Date(); sc.scrollTop = Math.max(0, ((calDateStr(n) >= range.from && calDateStr(n) <= range.to ? n.getHours() - 1 : 8) - CAL_HOUR_START) * CAL_HOUR_PX); }
   }
-  function gcalSetupModalHtml() {
-    var origin = location.origin;
-    return '<h3>📅 Connecter Google Agenda</h3>' +
-      '<p class="modal-warn" style="margin-bottom:12px">Studino n\'a pas de serveur : pour lire ton agenda, Google demande un « identifiant client » à toi. À faire une seule fois, gratuit, environ 5 minutes (lecture seule, Studino ne modifie jamais ton agenda).</p>' +
-      '<ol class="gcal-steps">' +
-      '<li>Va sur <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> et choisis un projet (celui de ta clé Gemini convient) ou crées-en un.</li>' +
-      '<li>Menu « API et services » → « Bibliothèque » → cherche <b>Google Calendar API</b> → <b>Activer</b>.</li>' +
-      '<li>« API et services » → « Écran de consentement OAuth » : type <b>Externe</b>, remplis le nom de l\'appli et ton e-mail, puis dans « Utilisateurs test » ajoute <b>ton adresse Gmail</b>.</li>' +
-      '<li>« API et services » → « Identifiants » → « Créer des identifiants » → <b>ID client OAuth</b> → type <b>Application Web</b>. Dans « Origines JavaScript autorisées », ajoute exactement : <code class="gcal-origin">' + esc(origin) + '</code></li>' +
-      '<li>Copie l\'<b>ID client</b> (il finit par <code>.apps.googleusercontent.com</code>) et colle-le ci-dessous.</li>' +
-      '</ol>' +
-      '<div class="field"><label>ID client OAuth</label><input id="gcal-client-input" value="' + esc(modal.clientId || gcalClientId()) + '" placeholder="xxxxxxxx.apps.googleusercontent.com"></div>' +
-      '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.gcalSaveClientId()">Enregistrer et connecter</button></div>';
+  // Fenêtre d'ajout / de modification d'un événement (mêmes informations que Google Agenda).
+  function calEventModalHtml() {
+    var e = modal.ev;
+    var colorBtns = CAL_COLORS.map(function (c) { return '<button type="button" class="cal-color' + (e.color === c ? " selected" : "") + '" style="background:' + c + '" onclick="App.calEvField(\'color\', \'' + c + '\')" aria-label="Couleur"></button>'; }).join("");
+    var notif = e.notify == null ? '<button type="button" class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calEvField(\'notify\', 30)">🔔 Ajouter une notification</button>'
+      : '<div class="cal-row"><span>🔔 Notification</span><input type="number" min="0" max="999" value="' + (e.notifyValue || 30) + '" style="width:80px" onchange="App.calEvField(\'notifyValue\', this.value)">' +
+        '<select onchange="App.calEvField(\'notifyUnit\', this.value)">' + [["min", "minutes"], ["h", "heures"], ["d", "jours"]].map(function (u) { return '<option value="' + u[0] + '"' + ((e.notifyUnit || "min") === u[0] ? " selected" : "") + '>' + u[1] + '</option>'; }).join("") + '</select>' +
+        '<span class="cal-muted">avant</span><button type="button" class="btn btn-ghost btn-sm" style="width:auto" onclick="App.calEvField(\'notify\', null)" aria-label="Retirer la notification">✕</button></div>';
+    return '<div class="cal-ev-modal">' +
+      '<input class="cal-ev-title" placeholder="Ajouter un titre" value="' + esc(e.title || "") + '" oninput="App.calEvField(\'title\', this.value, true)" autofocus>' +
+      '<div class="cal-row">' +
+      '<input type="date" value="' + e.startDate + '" onchange="App.calEvField(\'startDate\', this.value)">' +
+      (e.allDay ? "" : '<input type="time" value="' + e.startTime + '" onchange="App.calEvField(\'startTime\', this.value)"><span>–</span><input type="time" value="' + e.endTime + '" onchange="App.calEvField(\'endTime\', this.value)">') +
+      '<input type="date" value="' + e.endDate + '" onchange="App.calEvField(\'endDate\', this.value)"></div>' +
+      '<div class="cal-row"><label class="cal-check"><input type="checkbox"' + (e.allDay ? " checked" : "") + ' onchange="App.calEvField(\'allDay\', this.checked)"> Toute la journée</label>' +
+      '<select onchange="App.calEvField(\'repeat\', this.value)">' + CAL_REPEATS.map(function (r) { return '<option value="' + r[0] + '"' + ((e.repeat || "none") === r[0] ? " selected" : "") + '>' + r[1] + '</option>'; }).join("") + '</select></div>' +
+      '<div class="field"><input placeholder="📍 Ajouter un lieu" value="' + esc(e.location || "") + '" oninput="App.calEvField(\'location\', this.value, true)"></div>' +
+      notif +
+      '<div class="cal-row"><span class="cal-muted">Couleur</span><div class="cal-colors">' + colorBtns + '</div></div>' +
+      '<div class="cal-row"><select onchange="App.calEvField(\'busy\', this.value === \'1\')"><option value="1"' + (e.busy !== false ? " selected" : "") + '>Occupé (les révisions se décalent)</option><option value="0"' + (e.busy === false ? " selected" : "") + '>Disponible (ne bloque rien)</option></select></div>' +
+      '<div class="field"><label>Description</label>' + richEditorHtml("cal-ev-desc", "Ajouter une description", sanitizeRichHtml(e.description || "")) + '</div>' +
+      '<div class="modal-actions">' + (modal.editId ? '<button type="button" class="btn btn-ghost" style="margin-right:auto" onclick="App.calDeleteEvent()">' + icon("trash") + ' Supprimer</button>' : "") +
+      '<button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.calSaveEvent()">Enregistrer</button></div></div>';
   }
+  function calSettingsModalHtml() {
+    var st = calSettings();
+    return '<h3>⚙️ Heures de révision</h3><p class="modal-warn" style="margin-bottom:12px">Les séances de révision de tes prépas sont placées dans cette plage horaire, autour de tes événements. Si un jour est trop chargé, la séance passe sur un autre jour avant le contrôle.</p>' +
+      '<div class="cal-row"><span>De</span><input type="time" id="cal-st-start" value="' + st.studyStart + '"><span>à</span><input type="time" id="cal-st-end" value="' + st.studyEnd + '"></div>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeModal()">Annuler</button><button type="button" class="btn btn-primary" onclick="App.calSaveSettings()">Enregistrer</button></div>';
+  }
+  // Notifications des événements (tant que Studino est ouvert) : toast + notification du navigateur.
+  var calNotified = {};
+  setInterval(function () {
+    if (!DB || !DB.currentUser) return;
+    var now = new Date(), today = calDateStr(now);
+    var occ;
+    try { occ = calExpandUserEvents(today, calAddDays(today, 2)); } catch (e) { return; }
+    occ.forEach(function (o) {
+      var ev = o.ev;
+      if (ev.notify == null) return;
+      var mult = ev.notifyUnit === "h" ? 60 : ev.notifyUnit === "d" ? 1440 : 1;
+      var before = (Number(ev.notifyValue) || 0) * mult;
+      var start = calParse(o.date); start.setMinutes(o.startMin);
+      var fireAt = start.getTime() - before * 60000;
+      var key = ev.id + "@" + o.date;
+      if (calNotified[key] || now.getTime() < fireAt || now.getTime() > start.getTime()) return;
+      calNotified[key] = true;
+      var msg = "🔔 " + o.title + (o.time ? " à " + o.time : "") + (o.location ? " · " + o.location : "");
+      toast(msg);
+      try { if (window.Notification && Notification.permission === "granted") new Notification("Studino", { body: msg }); } catch (e) {}
+    });
+  }, 30000);
 
   /* ---------------- Root render / router ---------------- */
   function render() {
