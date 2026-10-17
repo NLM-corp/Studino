@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "12.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3461,7 +3461,7 @@
       return (i + 1) + ". Question posée : " + h.prompt + "\nBonne réponse : " + h.correctAnswer + (h.explanation ? "\nExplication : " + h.explanation : "") + (h.mistakes && h.mistakes.length ? "\nErreur(s) précise(s) commise(s) par l'élève : " + h.mistakes.join(" ; ") : "");
     }).join("\n\n");
     return "Un élève francophone a fait les erreurs suivantes pendant une séance de révision :\n\n" + lines + "\n\n" +
-      "Pour CHAQUE erreur ci-dessus, crée exactement 2 flashcards de révision (une question courte au recto dans \"q\", une réponse courte et précise au verso dans \"a\") qui aident à retravailler la notion à l'origine de CETTE erreur précise. Les 2 flashcards d'une même erreur doivent aborder la notion sous deux angles différents (pas juste reformuler la même question), pour bien l'ancrer. Il y a " + wrongItems.length + " erreur(s) : renvoie EXACTEMENT " + (wrongItems.length * 2) + " flashcards, dans l'ordre des erreurs listées (les 2 premières pour l'erreur 1, les 2 suivantes pour l'erreur 2, etc.).\n\n" +
+      "Pour CHAQUE erreur ci-dessus, crée exactement UNE flashcard de révision (une question courte au recto dans \"q\", une réponse courte et précise au verso dans \"a\") qui cible précisément la notion à l'origine de CETTE erreur. Il y a " + wrongItems.length + " erreur(s) : renvoie EXACTEMENT " + wrongItems.length + " flashcard(s), dans l'ordre des erreurs listées (la 1re pour l'erreur 1, la 2e pour l'erreur 2, etc.).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si les éléments ci-dessus sont dans une langue étrangère (cours de langue), garde la même langue que ces éléments.";
   }
   function generateGapFlashcards(wrongItems) {
@@ -3676,7 +3676,8 @@
       if (gapFlashcardsFlat && wrongIdx) {
         wrongIdx.forEach(function (histIdx, wi) {
           var topic = topicByHistoryIdx[histIdx] || null;
-          [gapFlashcardsFlat[wi * 2], gapFlashcardsFlat[wi * 2 + 1]].forEach(function (f) {
+          // Une erreur = UNE flashcard.
+          [gapFlashcardsFlat[wi]].forEach(function (f) {
             if (f) prep.gapFlashcards.push({ id: uid(), day: s.date, topic: topic, q: f.q, a: f.a, status: "new" });
           });
         });
@@ -5854,6 +5855,11 @@
         var meth = methodoFind(parts[1]);
         if (meth) trail.push({ label: meth.title });
       }
+    } else if (parts[0] === "today") {
+      trail.push({ label: "Aujourd'hui" });
+    } else if (parts[0] === "review") {
+      trail.push({ label: "Aujourd'hui", hash: "#/today" });
+      trail.push({ label: "Flashcards" });
     } else if (parts[0] === "calendar") {
       trail.push({ label: "Calendrier" });
     } else if (parts[0] === "podcasts") {
@@ -5901,6 +5907,7 @@
       '<button class="icon-btn" title="Nouvelle matière" onclick="App.closeMobileNav();App.openModal(\'subject\')" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px;cursor:pointer;color:var(--text)">' + icon("plus") + '</button>' +
       '<button class="mobile-nav-close" onclick="App.toggleMobileNav()" aria-label="Fermer le menu">✕</button>' +
       '</div>' +
+      '<button class="nav-item ' + (parts[0] === "today" || parts[0] === "review" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/today\'"><span class="nav-icon-img nav-icon-emoji" aria-hidden="true">☀️</span> Aujourd\'hui</button>' +
       '<button class="nav-item ' + (parts.length === 0 ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/\'"><img class="nav-icon-img" src="assets/objects/ui/Menu.png" alt=""> Menu</button>' +
       '<button class="nav-item ' + (parts[0] === "exercices" ? "active" : "") + '" onclick="App.closeMobileNav();location.hash=\'#/exercices\'"><img class="nav-icon-img" src="assets/objects/ui/MesExos.png" alt=""> Mes exercices</button>' +
       '<button class="nav-item ' + (parts[0] === "dinopark" ? "active" : "") + '" onclick="App.closeMobileNav();App.dpGoHub()"><img class="nav-icon-img" src="assets/objects/ui/DinoPark.png" alt=""> Dino Park' + (dpAttentionList().length ? '<span class="nav-alert-dot" title="Des dinos ont besoin d\'attention"></span>' : '') + '</button>' +
@@ -10716,6 +10723,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      try { localStorage.setItem(LAST_EXPORT_KEY, String(Date.now())); } catch (e) {}
       toast("Sauvegarde téléchargée");
       });
     },
@@ -11306,11 +11314,23 @@
       var st = fcState[courseId] || { idx: 0, flipped: false };
       st.idx += dir; st.flipped = false; fcState[courseId] = st; render();
     },
+    srsStart: function () { srsSession = null; navigate("#/review"); },
+    srsFlip: function () { if (srsSession) { srsSession.flipped = !srsSession.flipped; render(); } },
+    srsAnswer: function (ok) {
+      var s = srsSession;
+      if (!s) return;
+      var hit = srsFindCard(s.ids[s.idx]);
+      if (hit) { srsGrade(hit.card, ok); saveDB(); }
+      if (ok) s.ok++; else s.ko++;
+      s.idx++; s.flipped = false;
+      render();
+    },
+    srsFinish: function () { srsSession = null; navigate("#/today"); },
     markCard: function (courseId, status) {
       var loc = locateCourse(courseId);
       var st = fcState[courseId] || { idx: 0, flipped: false };
       var card = loc.course.flashcards[st.idx];
-      card.status = status;
+      srsGrade(card, status === "known"); // compte aussi pour la répétition espacée
       saveDB();
       if (st.idx < loc.course.flashcards.length - 1) { st.idx += 1; st.flipped = false; }
       fcState[courseId] = st;
@@ -11339,7 +11359,7 @@
       // Auto-évaluation non vérifiée (l'élève juge lui-même s'il "sait" la carte) : ça n'influence
       // jamais le baromètre, sans quoi il suffirait de re-marquer "Je la sais" en boucle pour le
       // faire grimper artificiellement sans avoir vraiment répondu à une question notée.
-      card.status = status;
+      srsGrade(card, status === "known"); // compte aussi pour la répétition espacée
       saveDB();
       if (st.idx < cards.length - 1) { st.idx += 1; st.flipped = false; }
       epFcState[key] = st;
@@ -11696,6 +11716,144 @@
     });
   }, 30000);
 
+  /* ---------------- Répétition espacée des flashcards ----------------
+     Chaque flashcard (des cours et des prépas) a une prochaine date de révision. Ratée → elle revient
+     demain ; sue → elle revient de plus en plus tard (1, 3, 7, 15, 30, 60 puis 120 jours). On revoit
+     ainsi chaque notion juste avant de l'oublier, même sans contrôle prévu. */
+  var SRS_STEPS = [1, 3, 7, 15, 30, 60, 120];
+  var SRS_NEW_PER_DAY = 15;
+  function srsToday() { return calDateStr(new Date()); }
+  function srsGrade(card, ok) {
+    if (!card) return;
+    if (ok) card.srsStep = card.srsStep == null ? 0 : Math.min(SRS_STEPS.length - 1, card.srsStep + 1);
+    else card.srsStep = null; // repart du début : demain, puis 1, 3, 7...
+    card.srsDue = calAddDays(srsToday(), ok ? SRS_STEPS[card.srsStep] : 1);
+    card.srsReps = (card.srsReps || 0) + 1;
+    card.status = ok ? "known" : "review";
+  }
+  // Toutes les flashcards, avec de quoi les retrouver.
+  function srsAllCards() {
+    var out = [];
+    (userData().subjects || []).forEach(function (s) {
+      (s.themes || []).forEach(function (t) {
+        (t.chapters || []).forEach(function (c) {
+          (c.courses || []).forEach(function (co) {
+            (co.flashcards || []).forEach(function (f) { out.push({ card: f, source: co.title, kind: "course", courseId: co.id }); });
+          });
+        });
+      });
+    });
+    (userData().examPreps || []).forEach(function (p) {
+      (p.gapFlashcards || []).forEach(function (f) { out.push({ card: f, source: "Prépa : " + p.title, kind: "gap", prepId: p.id }); });
+    });
+    return out;
+  }
+  function srsDueCards() {
+    var today = srsToday(), all = srsAllCards();
+    var due = all.filter(function (x) { return x.card.srsDue && x.card.srsDue <= today; });
+    due.sort(function (a, b) { return a.card.srsDue < b.card.srsDue ? -1 : 1; });
+    var fresh = all.filter(function (x) { return !x.card.srsDue; }).slice(0, SRS_NEW_PER_DAY);
+    return { due: due, fresh: fresh, all: due.concat(fresh) };
+  }
+  var srsSession = null; // { ids: [cardId], idx, flipped, ok, ko }
+  function srsFindCard(id) {
+    var hit = srsAllCards().find(function (x) { return x.card.id === id; });
+    return hit || null;
+  }
+  function renderReviewPage() {
+    var s = srsSession;
+    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">🃏</span><h1 class="page-title">Révision des flashcards</h1></div><p class="page-sub">Ratée : elle revient demain. Sue : elle revient de plus en plus tard.</p></div></div>';
+    if (!s) {
+      var d = srsDueCards();
+      if (!d.all.length) { renderShell(["review"], head + '<div class="empty-state">' + sprite("dinoBig", 5, { bob: true }) + '<h3>Rien à revoir aujourd\'hui 🎉</h3><p>Reviens demain : tes cartes reviendront juste avant que tu les oublies.</p></div>'); return; }
+      srsSession = s = { ids: d.all.map(function (x) { return x.card.id; }), idx: 0, flipped: false, ok: 0, ko: 0 };
+    }
+    if (s.idx >= s.ids.length) {
+      var body = '<div class="today-card" style="text-align:center"><h2 style="margin:0 0 8px">Révision terminée ✅</h2><p>' + s.ok + ' carte' + (s.ok !== 1 ? "s" : "") + ' sue' + (s.ok !== 1 ? "s" : "") + ', ' + s.ko + ' à revoir demain.</p>' +
+        '<button class="btn btn-primary" style="width:auto" onclick="App.srsFinish()">Retour à Aujourd\'hui</button></div>';
+      renderShell(["review"], head + body);
+      return;
+    }
+    var hit = srsFindCard(s.ids[s.idx]);
+    if (!hit) { s.idx++; renderReviewPage(); return; }
+    var c = hit.card;
+    var html = '<div class="fc-wrap">' +
+      '<div class="fc-progress"><span>Carte ' + (s.idx + 1) + ' / ' + s.ids.length + '</span><span class="mono">' + esc(hit.source) + (c.srsDue ? "" : " · nouvelle") + '</span></div>' +
+      '<div class="fc-bar"><div class="fc-bar-fill" style="width:' + Math.round((s.idx / s.ids.length) * 100) + '%"></div></div>' +
+      '<div class="fc-hint">Essaie de répondre de tête, puis retourne la carte</div>' +
+      '<div class="flip-card' + (s.flipped ? " flipped" : "") + '" onclick="App.srsFlip()"><div class="flip-inner">' +
+      '<div class="flip-face"><span class="flip-eyebrow">Question</span><span class="flip-text">' + esc(c.q) + '</span></div>' +
+      '<div class="flip-face flip-face-back"><span class="flip-eyebrow">Réponse</span><span class="flip-text">' + esc(c.a) + '</span></div>' +
+      '</div></div>' +
+      (s.flipped
+        ? '<div class="fc-controls"><button class="btn btn-ghost" style="flex:1" onclick="App.srsAnswer(false)">❌ Ratée (demain)</button><button class="btn btn-primary" style="flex:1" onclick="App.srsAnswer(true)">✅ Sue</button></div>'
+        : '<div class="fc-controls"><button class="btn btn-primary" style="flex:1" onclick="App.srsFlip()">Voir la réponse</button></div>') +
+      '</div>';
+    renderShell(["review"], head + html);
+  }
+
+  /* ---------------- Sauvegarde : rappel d'export ----------------
+     Tout est stocké dans ce navigateur : vider ses données, changer d'appareil ou un nettoyage du
+     navigateur effacerait tout. On demande au navigateur de garder les données (stockage persistant)
+     et on rappelle d'exporter une sauvegarde au moins une fois par semaine. */
+  var LAST_EXPORT_KEY = "studino-last-export";
+  function lastExportAt() { try { return Number(localStorage.getItem(LAST_EXPORT_KEY)) || 0; } catch (e) { return 0; } }
+  function hasDataWorthSaving() {
+    var d = userData();
+    return (d.subjects || []).some(function (s) { return (s.themes || []).length; }) || (d.examPreps || []).length > 0;
+  }
+  function backupDaysAgo() { var t = lastExportAt(); return t ? Math.floor((Date.now() - t) / 86400000) : null; }
+  function backupNeeded() { if (!hasDataWorthSaving()) return false; var d = backupDaysAgo(); return d === null || d >= 7; }
+  function backupBannerHtml() {
+    if (!backupNeeded()) return "";
+    var d = backupDaysAgo();
+    return '<div class="backup-banner"><span>💾 ' + (d === null ? "Tu n'as encore jamais sauvegardé tes données." : "Dernière sauvegarde il y a " + d + " jours.") +
+      ' Tout est stocké dans ce navigateur : une sauvegarde évite de tout perdre.</span><button class="btn btn-primary btn-sm" style="width:auto" onclick="App.exportBackup()">⬇️ Sauvegarder maintenant</button></div>';
+  }
+
+  /* ---------------- Aujourd'hui ----------------
+     Page d'accueil : tout ce qu'il y a à faire aujourd'hui, en un coup d'œil (séance de prépa du jour,
+     flashcards à revoir, prochains contrôles, emploi du temps), un clic pour s'y mettre. */
+  function renderTodayPage() {
+    var today = srsToday();
+    var preps = userData().examPreps || [];
+    var slots = {};
+    try { calScheduledRevisions(today, today).forEach(function (o) { if (o.kind === "session" && o.hash) slots[o.hash] = o; }); } catch (e) {}
+    var sessions = preps.filter(function (p) { return p.examDate >= today && (p.days || []).some(function (d) { return d.date === today; }); }).map(function (p) {
+      var done = p.sessions && p.sessions[today] && p.sessions[today].status === "done";
+      var slot = slots["#/examprep/" + p.id];
+      var day = p.days.find(function (d) { return d.date === today; });
+      return '<div class="today-row">' +
+        '<div style="min-width:0"><div class="today-row-title">' + (done ? "✅ " : "📖 ") + esc(p.title) + '</div>' +
+        '<div class="today-row-sub">' + (slot && !done ? "Prévue à " + slot.time + " · " : "") + "≈ " + EP_SESSION_MINUTES + " min" + (day && day.focus ? " · " + esc(day.focus) : "") + '</div></div>' +
+        (done ? '<span class="today-done">Faite</span>' : '<button class="btn btn-primary btn-sm" style="width:auto" onclick="location.hash=\'#/examprep/' + p.id + '\'">Commencer</button>') + '</div>';
+    }).join("");
+    var d = srsDueCards();
+    var cardsHtml = d.all.length
+      ? '<div class="today-row"><div><div class="today-row-title">🃏 ' + d.due.length + ' à revoir' + (d.fresh.length ? " + " + d.fresh.length + " nouvelle" + (d.fresh.length > 1 ? "s" : "") : "") + '</div><div class="today-row-sub">Environ ' + Math.max(1, Math.round(d.all.length * 0.3)) + ' min</div></div><button class="btn btn-primary btn-sm" style="width:auto" onclick="App.srsStart()">Réviser</button></div>'
+      : '<p class="today-empty">Aucune flashcard à revoir aujourd\'hui 🎉</p>';
+    var upcoming = preps.filter(function (p) { return p.examDate >= today; }).sort(function (a, b) { return a.examDate < b.examDate ? -1 : 1; }).slice(0, 4).map(function (p) {
+      var n = Math.round((calParse(p.examDate) - calParse(today)) / 86400000);
+      return '<div class="today-row" onclick="location.hash=\'#/examprep/' + p.id + '\'" style="cursor:pointer"><div class="today-row-title">🎯 ' + esc(p.title) + '</div><span class="today-badge' + (n <= 3 ? " today-badge-hot" : "") + '">' + (n === 0 ? "Aujourd'hui" : n === 1 ? "Demain" : "Dans " + n + " jours") + '</span></div>';
+    }).join("");
+    var events = [];
+    try { events = calExpandUserEvents(today, today).sort(function (a, b) { return a.startMin - b.startMin; }); } catch (e) {}
+    var eventsHtml = events.map(function (o) {
+      return '<div class="today-row" onclick="App.calEditEvent(\'' + o.ev.id + '\')" style="cursor:pointer;--cal-color:' + esc(o.color) + '"><div class="today-row-title"><span class="today-dot"></span>' + esc(o.title) + '</div><span class="today-row-sub mono">' + (o.allDay ? "Journée" : calFromMin(o.startMin) + " – " + calFromMin(o.endMin)) + '</span></div>';
+    }).join("");
+    var dateLabel = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+    var head = '<div class="page-head"><div><div class="page-title-row"><span class="page-title-emoji">☀️</span><h1 class="page-title">Aujourd\'hui</h1></div><p class="page-sub">' + esc(dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1)) + '</p></div></div>';
+    var nothing = !sessions && !d.all.length && !upcoming;
+    var body = backupBannerHtml() + '<div class="today-grid">' +
+      '<section class="today-card"><h3>Séance de prépa du jour</h3>' + (sessions || '<p class="today-empty">Pas de séance prévue aujourd\'hui.' + (preps.length ? "" : ' <a href="#/examprep">Crée une prépa</a> pour un planning de révision avant ton prochain contrôle.') + '</p>') + '</section>' +
+      '<section class="today-card"><h3>Flashcards</h3>' + cardsHtml + '</section>' +
+      '<section class="today-card"><h3>Prochains contrôles</h3>' + (upcoming || '<p class="today-empty">Aucun contrôle prévu.</p>') + '</section>' +
+      '<section class="today-card"><h3>Ton emploi du temps</h3>' + (eventsHtml || '<p class="today-empty">Rien dans ton calendrier aujourd\'hui. <a href="#/calendar">Ouvrir le calendrier</a></p>') + '</section>' +
+      '</div>' +
+      (nothing ? '<p class="today-empty" style="margin-top:16px">Pour commencer : importe un cours depuis le <a href="#/">Menu</a>, puis crée une prépa avant ton prochain contrôle.</p>' : "");
+    renderShell(["today"], head + body);
+  }
+
   /* ---------------- Root render / router ---------------- */
   function render() {
     // Le nettoyage des overlays passe AVANT tout le reste (et hors du try/catch) : même si une erreur
@@ -11730,6 +11888,8 @@
       if (parts[0] === "examprep") { renderExamPrepListPage(); return; }
       if (parts[0] === "methodologies" && parts[1]) { renderMethodologyDetailPage(parts[1]); return; }
       if (parts[0] === "methodologies") { renderMethodologyListPage(); return; }
+      if (parts[0] === "today") { renderTodayPage(); return; }
+      if (parts[0] === "review") { renderReviewPage(); return; }
       if (parts[0] === "calendar") { renderCalendarPage(); return; }
       if (parts[0] === "podcasts" && parts[1] === "lib") { renderPodcastLibraryPage(parts[2], parts[3], parts[4]); return; }
       if (parts[0] === "podcasts" && parts[1]) { renderPodcastDetailPage(parts[1]); return; }
@@ -11759,7 +11919,12 @@
   initDB().then(function () { markInterruptedPodcasts(); return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }).then(function () { return hydrateFigureImages().catch(function (err) { console.error("Images des schémas :", err); }); }); }).then(function () {
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", syncTopbarHeightVar);
+    // À l'ouverture de l'appli, on arrive sur « Aujourd'hui » (le Menu reste à un clic).
+    if (DB.currentUser && (!location.hash || location.hash === "#" || location.hash === "#/")) history.replaceState(null, "", "#/today");
+    // Demande au navigateur de ne pas effacer nos données en cas de manque de place.
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     render();
+    if (DB.currentUser && backupNeeded()) setTimeout(function () { toast("💾 Pense à sauvegarder tes données (page Aujourd'hui)"); }, 2500);
     if (DB.currentUser) checkRevisionReminder();
 
     setInterval(function () {

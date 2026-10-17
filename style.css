@@ -1150,8 +1150,8 @@
   .table-schema svg { max-width: 100%; height: auto; }
 
   /* Calendrier */
-  .nav-icon-emoji { display: inline-flex; align-items: center; justify-content: center; font-size: 26px; line-height: 1; }
-  .page-title-emoji { font-size: 30px; line-height: 1; }
+  .nav-icon-emoji { display: inline-flex; align-items: center; justify-content: center; font-size: 34px; line-height: 1; }
+  .page-title-emoji { font-size: 44px; line-height: 1; }
   .cal-gbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .cal-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
   .cal-main { min-width: 0; }
@@ -1233,3 +1233,17 @@
     .cal-tg-head { font-size: 9.5px; }
   }
   .ggb-host { width: 100%; height: 100%; }
+
+  /* Aujourd'hui */
+  .today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .today-card { border: 2px solid var(--border-soft); border-radius: 14px; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .today-card h3 { margin: 0 0 4px; font-size: 15px; }
+  .today-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+  .today-row-title { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+  .today-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .today-empty { color: var(--text-muted); font-size: 13px; margin: 0; }
+  .today-done { font-size: 12px; font-weight: 800; color: var(--accent); }
+  .today-badge { font-size: 12px; font-weight: 800; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); white-space: nowrap; }
+  .today-badge-hot { background: color-mix(in srgb, var(--danger, #C1442A) 20%, transparent); color: var(--danger, #C1442A); }
+  .today-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cal-color, var(--accent)); flex: none; }
+  .backup-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; margin-bottom: 14px; border: 2px solid var(--accent); border-radius: 12px; background: var(--accent-soft); font-size: 13.5px; }
