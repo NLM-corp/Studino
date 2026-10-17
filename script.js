@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "12.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3213,6 +3213,7 @@
     if (it.kind === "methodo") return EP_METHODO_MINUTES;
     if (it.kind === "exercise") return it.fresh ? EP_FRESH_EXERCISE_MINUTES : 8;
     if (it.kind === "qcm") return 1;
+    if (it.parts) return it.parts.length * 2; // question de cours regroupée : 2 min par partie
     return it.category === "application" ? 3 : 2;
   }
   // Composition d'une séance selon le type de révision et la méthodologie éventuelle.
@@ -3280,8 +3281,45 @@
     // Reste du temps (un type manquait) : complété avec ce qu'il reste, sans dépasser la durée.
     questions.forEach(function (s) { if (used - exerciseMinutes + epItemMinutes(s.item) <= budget) add(s.item); });
     if (!picked.length && scored.length) add(scored[0].item);
+    picked = epGroupCourseQuestions(picked);
     for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
+  }
+  // Questions de cours développées : au lieu d'une notion par question (« donne la définition de X »),
+  // les questions de cours d'un même cours sont regroupées par 2 ou 3 en UNE question à plusieurs parties
+  // (« 1. définis X  2. définis Y  3. définis Z »), corrigée d'un bloc. Le temps total ne change pas.
+  function epGroupCourseQuestions(items) {
+    var isCourseQ = function (it) { return it.kind === "open" && it.category !== "application" && !it.parts; };
+    var byCourse = {}, order = [];
+    items.forEach(function (it) {
+      if (!isCourseQ(it)) return;
+      var key = it.courseId || "?";
+      if (!byCourse[key]) { byCourse[key] = []; order.push(key); }
+      byCourse[key].push(it);
+    });
+    var grouped = {}, out = [];
+    order.forEach(function (key) {
+      var list = byCourse[key];
+      // Paquets de 3 (ou 2 pour finir), jamais une question seule si on peut l'éviter.
+      for (var i = 0; i < list.length; ) {
+        var left = list.length - i;
+        var size = left === 4 ? 2 : Math.min(3, left);
+        var chunk = list.slice(i, i + size);
+        i += size;
+        if (chunk.length === 1) { out.push(chunk[0]); grouped[chunk[0].id] = true; continue; }
+        chunk.forEach(function (c) { grouped[c.id] = true; });
+        out.push({
+          id: "grp-" + chunk.map(function (c) { return c.id; }).join("-"),
+          kind: "open", category: "definition", parts: chunk.map(function (c) { return c.id; }),
+          courseId: chunk[0].courseId, courseTitle: chunk[0].courseTitle,
+          prompt: "Questions de cours (réponds à chaque partie) :\n\n" + chunk.map(function (c, n) { return (n + 1) + ". " + c.prompt; }).join("\n\n"),
+          answer: chunk.map(function (c, n) { return (n + 1) + ". " + (c.answer || ""); }).join("\n\n"),
+          explanation: chunk.map(function (c, n) { return c.explanation ? (n + 1) + ". " + c.explanation : ""; }).filter(Boolean).join("\n\n"),
+          figureSvg: (chunk.find(function (c) { return c.figureSvg; }) || {}).figureSvg || ""
+        });
+      }
+    });
+    return items.filter(function (it) { return !grouped[it.id]; }).concat(out);
   }
   function epFinishSessionAnswer(s, item, yourAnswerText, correctAnswerText, level, mistakes) {
     var wasCorrect = gradeLevelIsSuccess(level);
@@ -6859,10 +6897,10 @@
         var level = h.level || (h.wasCorrect ? "correct" : "wrong");
         var cls = gradeLevelCls(level);
         return '<div class="correction-item ' + cls + '">' +
-          '<div class="correction-q">' + esc(h.prompt) + '<span class="grade-pill grade-' + cls + '">' + gradeLevelLabel(level) + '</span></div>' + exerciseFigureHtml(h) +
+          '<div class="correction-q">' + mdToHtml(h.prompt || "") + '<span class="grade-pill grade-' + cls + '">' + gradeLevelLabel(level) + '</span></div>' + exerciseFigureHtml(h) +
           '<div class="correction-ans ' + (h.wasCorrect ? "good" : "bad") + '">Ta réponse : ' + esc(h.yourAnswer || "(vide)") + '</div>' +
           gradeMistakesHtml(h.mistakes) +
-          (level === "correct" ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(h.correctAnswer) + '</div>') +
+          (level === "correct" ? '' : '<div class="correction-ans good"><b>Bonne réponse :</b>' + mdToHtml(h.correctAnswer || "") + '</div>') +
           '<div class="correction-exp">' + mdToHtml(h.explanation || "") + '</div>' +
           '</div>';
       }).join("");
@@ -6925,7 +6963,7 @@
     if (item.kind === "exercise") {
       body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.prompt)) + '</div></div>' + exerciseFigureHtml(item);
     } else {
-      body += '<div class="quiz-q-text">' + esc(item.prompt) + '</div>' + exerciseFigureHtml(item);
+      body += '<div class="quiz-q-text">' + mdToHtml(item.prompt) + '</div>' + exerciseFigureHtml(item);
     }
     if (item.kind === "qcm") {
       body += item.choices.map(function (c, i) {
@@ -6951,7 +6989,7 @@
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + inlineMd(item.answer) + '</strong></p>';
+        '<div style="font-size:13.5px;margin-bottom:14px"><b>Réponse attendue :</b>' + mdToHtml(item.answer || "") + '</div>';
     }
     if (s.revealed && s.wasCorrect != null) {
       var slvl = s.level || (s.wasCorrect ? "correct" : "wrong");
@@ -10300,7 +10338,7 @@
       // même exercice à chaque répétition.
       // (Les exercices, eux, sont remplacés par des exercices inédits : inutile de les reformuler.)
       var repeats = picked.filter(function (it) { return it.kind === "open" && prep.itemUseCount[it.id]; });
-      picked.forEach(function (it) { prep.itemUseCount[it.id] = (prep.itemUseCount[it.id] || 0) + 1; });
+      picked.forEach(function (it) { (it.parts || [it.id]).forEach(function (pid) { prep.itemUseCount[pid] = (prep.itemUseCount[pid] || 0) + 1; }); });
       saveDB();
       if (!repeats.length || !getApiKey()) { finalizeLaunch(picked); return; }
       epStartingSessionFor = prepId + "::" + date;
