@@ -2,21 +2,46 @@
 // Studino — stockage, images, audio, schémas
 // Fichier chargé dans l'ordre par index.html : les fichiers partagent les mêmes variables globales.
 
-  var APP_VERSION = "12.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   // Installation sur l'écran d'accueil : Chrome/Edge/Android proposent l'installation par un événement
   // qu'on garde pour le bouton des paramètres ; l'iPhone n'en a pas, on explique la marche à suivre.
   var installPromptEvent = null;
   function isInstalledApp() {
     try { return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; }
   }
+  // Tuto d'installation : les trois cas (iPhone, Android, ordinateur), celui de l'appareil utilisé ouvert.
   function installAppFieldHtml() {
-    var body;
-    if (isInstalledApp()) body = '<p class="modal-warn" style="margin:0">✅ Tu utilises déjà l\'appli installée.</p>';
-    else if (installPromptEvent) body = '<button type="button" class="btn btn-sm btn-primary" style="width:auto" onclick="App.installApp()">📲 Installer Studino</button>' +
-      '<p class="modal-warn" style="margin:6px 0 0">Studino s\'ouvrira comme une vraie appli, depuis ton écran d\'accueil, en plein écran.</p>';
-    else if (/iphone|ipad|ipod/i.test(navigator.userAgent)) body = '<p class="modal-warn" style="margin:0">Dans <b>Safari</b> : bouton Partager ⬆️ puis « Sur l\'écran d\'accueil ». ⚠️ L\'appli installée a ses propres données : exporte une sauvegarde ici, puis importe-la dans l\'appli.</p>';
-    else body = '<p class="modal-warn" style="margin:0">Dans Chrome ou Edge : menu ⋮ puis « Installer l\'application » (ou « Ajouter à l\'écran d\'accueil » sur Android).</p>';
-    return '<div class="field"><label>Appli sur l\'écran d\'accueil</label>' + body + '</div>';
+    var ua = navigator.userAgent;
+    var device = /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ? "ios" : /android/i.test(ua) ? "android" : "pc";
+    var guide = function (id, title, steps, extra) {
+      return '<details class="install-guide"' + (device === id ? " open" : "") + '><summary>' + title + (device === id ? ' <span class="install-here">ton appareil</span>' : "") + '</summary>' +
+        '<ol>' + steps.map(function (s) { return "<li>" + s + "</li>"; }).join("") + '</ol>' + (extra || "") + '</details>';
+    };
+    var html = '<div class="field"><label>📲 Installer Studino comme une appli</label>';
+    if (isInstalledApp()) html += '<p class="install-ok">✅ Tu utilises déjà l\'appli installée.</p>';
+    else {
+      html += '<p class="modal-warn" style="margin:0 0 8px">Studino s\'ouvre alors depuis ton écran d\'accueil, en plein écran, comme une vraie appli. Rien à télécharger sur un store.</p>';
+      if (installPromptEvent) html += '<button type="button" class="btn btn-sm btn-primary" style="width:auto;margin-bottom:8px" onclick="App.installApp()">📲 Installer en un clic</button>';
+    }
+    html += guide("ios", "🍎 iPhone / iPad", [
+      "Ouvre Studino dans <b>Safari</b> (obligatoire : ça ne marche pas depuis Chrome ou une autre appli sur iPhone).",
+      "<b>Avant d'installer</b> : ici, dans Paramètres, appuie sur <b>⬇️ Exporter</b> pour sauvegarder tes données.",
+      "Appuie sur le bouton <b>Partager</b> ⬆️ (le carré avec une flèche, en bas de l'écran).",
+      "Fais défiler et choisis <b>« Sur l'écran d'accueil »</b>, puis <b>Ajouter</b>.",
+      "Ouvre Studino depuis la nouvelle icône 🦖, connecte-toi, puis dans Paramètres appuie sur <b>⬆️ Importer</b> et choisis le fichier exporté."
+    ], '<p class="install-warn">⚠️ Sur iPhone, l\'appli installée ne voit pas les données de Safari : c\'est pour ça qu\'il faut exporter puis importer.</p>');
+    html += guide("android", "🤖 Android", [
+      "Ouvre Studino dans <b>Chrome</b>.",
+      installPromptEvent ? "Appuie sur <b>📲 Installer en un clic</b> juste au-dessus." : "Appuie sur le menu <b>⋮</b> en haut à droite.",
+      installPromptEvent ? "Confirme avec <b>Installer</b>." : "Choisis <b>« Installer l'application »</b> (ou « Ajouter à l'écran d'accueil »), puis <b>Installer</b>.",
+      "L'icône 🦖 apparaît sur ton écran d'accueil : tes données sont déjà dedans."
+    ]);
+    html += guide("pc", "💻 Ordinateur (Chrome ou Edge)", [
+      installPromptEvent ? "Clique sur <b>📲 Installer en un clic</b> juste au-dessus." : "Clique sur l'icône d'installation à droite de la barre d'adresse (un écran avec une flèche), ou menu <b>⋮</b> → <b>« Installer Studino »</b>.",
+      "Confirme avec <b>Installer</b>.",
+      "Studino s'ouvre dans sa propre fenêtre et se lance depuis le menu Démarrer ou le bureau. Tes données sont déjà dedans."
+    ]);
+    return html + '</div>';
   }
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
