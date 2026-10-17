@@ -1,6 +1,6 @@
 ﻿(function () {
   "use strict";
-  var APP_VERSION = "12.3"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.4"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 
@@ -3103,7 +3103,7 @@
       epRevisionModeRule(mode) + "\n" +
       "Voici le contenu à réviser :\n\n" + sourceBlocks + "\n\n" +
       "Certains jours parmi ces " + dayCount + " sont des jours de repos SANS séance (pour ne pas surcharger l'élève quand l'examen est encore loin). Voici la liste EXACTE des décalages en jours depuis aujourd'hui (offsetDays, 0 = aujourd'hui) pour lesquels une séance est prévue : " + offsets.join(", ") + ". Produis EXACTEMENT une entrée par offsetDays listé ici, ni plus ni moins (n'en ajoute aucun pour les jours de repos, n'en oublie aucun de la liste), en respectant ces principes :\n" +
-      "- Les séances doivent être substantielles, pas expéditives : mieux vaut une séance un peu longue et exigeante qu'une séance courte qui ne prépare à rien (typiquement 20 à 60 minutes indicatives, mais dépasser cette estimation n'est jamais un problème).\n" +
+      "- Chaque séance dure 30 minutes, ni plus ni moins (\"minutes\" = 30) : le principe est de travailler PEU mais SOUVENT, avec de la répétition. Choisis donc pour chaque jour 2 à 4 notions précises qui tiennent dans 30 minutes, plutôt que d'en entasser beaucoup.\n" +
       "- Couvre l'intégralité du contenu ci-dessus au moins une fois d'ici la fin du planning.\n" +
       "- Plus on se rapproche de l'examen, plus les jours prévus doivent revenir sur les notions déjà vues plus tôt (en plus des notions nouvelles du jour), façon répétition espacée, pour consolider — ce n'est pas qu'un simple découpage linéaire du programme.\n" +
       "- Pour chaque jour prévu, \"focus\" résume l'objectif du jour en une phrase, et \"topics\" liste 2 à 6 notions précises concernées.\n\n" +
@@ -3171,7 +3171,7 @@
       var newDays = (data.days || [])
         .filter(function (d) { return offsetSet[Math.max(0, d.offsetDays || 0)]; })
         .map(function (d) {
-          return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: Math.max(5, d.minutes || 20), focus: d.focus || "", topics: d.topics || [] };
+          return { date: epAddDays(today, Math.max(0, d.offsetDays || 0)), minutes: EP_SESSION_MINUTES, focus: d.focus || "", topics: d.topics || [] };
         });
       finishPlan(newDays);
     }).catch(function (err) {
@@ -3200,8 +3200,42 @@
     });
     return pool;
   }
-  function epPickDayQuestions(pool, dayEntry, prep) {
+  /* ---------------- Séances de 30 minutes ----------------
+     La prépa repose sur « peu, mais souvent » : une séance dure 30 minutes, imposées. Chaque élément a
+     un temps estimé, et la séance est remplie jusqu'à 30 minutes, pas au-delà (avant, une séance pouvait
+     dépasser 1 h). Pas de QCM (trop faciles, ils ne préparent pas à un vrai contrôle) : des questions à
+     rédiger et des exercices. Le sujet de méthodologie (long) ne revient qu'une séance sur trois. */
+  var EP_SESSION_MINUTES = 30;
+  var EP_FRESH_EXERCISE_MINUTES = 10;
+  var EP_METHODO_MINUTES = 20;
+  function epItemMinutes(it) {
+    if (!it) return 0;
+    if (it.kind === "methodo") return EP_METHODO_MINUTES;
+    if (it.kind === "exercise") return it.fresh ? EP_FRESH_EXERCISE_MINUTES : 8;
+    if (it.kind === "qcm") return 1;
+    return it.category === "application" ? 3 : 2;
+  }
+  // Composition d'une séance selon le type de révision et la méthodologie éventuelle.
+  function epSessionPlan(prep) {
+    var mode = prep.revisionMode || "auto";
+    var share = typeof prep.practiceShare === "number" ? prep.practiceShare : 50;
+    var doneCount = Object.keys(prep.sessions || {}).filter(function (k) { return prep.sessions[k] && prep.sessions[k].status === "done"; }).length;
+    var methodo = !!prep.methodologyId && doneCount % 3 === 0;
+    var minutes = EP_SESSION_MINUTES - (methodo ? EP_METHODO_MINUTES : 0);
+    var fresh;
+    if (methodo) fresh = 0;
+    else if (mode === "cours") fresh = 1;            // un exercice de restitution, le reste en questions de cours
+    else if (mode === "exos") fresh = 2;             // pratique : deux exercices
+    else fresh = share >= 60 ? 2 : share >= 25 ? 1 : 0;
+    return { methodo: methodo, fresh: fresh, questionMinutes: Math.max(0, minutes - fresh * EP_FRESH_EXERCISE_MINUTES) };
+  }
+  function epPoolMinutes(pool) { return pool.reduce(function (s, it) { return s + epItemMinutes(it); }, 0); }
+  function epPickDayQuestions(pool, dayEntry, prep, plan) {
     if (!pool.length) return [];
+    plan = plan || epSessionPlan(prep);
+    // Pas de QCM, sauf s'il n'y a vraiment rien d'autre dans les cours.
+    var noQcm = pool.filter(function (it) { return it.kind !== "qcm"; });
+    if (noQcm.length) pool = noQcm;
     var topicsLower = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
     var scored = pool.map(function (item) {
       var score = Math.random() * 2;
@@ -3219,60 +3253,32 @@
       return { item: item, score: score, isMemo: isMemo, matchesToday: matchesToday };
     });
     scored.sort(function (a, b) { return b.score - a.score; });
-    var picked = [];
-    var pickedIds = {};
-    var add = function (it) { if (it && !pickedIds[it.id]) { pickedIds[it.id] = true; picked.push(it); } };
-    var countKind = function (kind) { return picked.filter(function (p) { return p.kind === kind; }).length; };
-    // Type de révision (voir EP_REVISION_MODES) : la part d'exercices d'application (exercices du cours +
-    // questions de catégorie « application ») suit practiceShare ; le reste est de la connaissance du cours.
-    if (typeof prep.practiceShare === "number") {
-      var share = prep.practiceShare / 100;
-      var isPractice = function (it) { return it.kind === "exercise" || it.category === "application"; };
-      var practice = scored.filter(function (s) { return isPractice(s.item); });
-      var knowledge = scored.filter(function (s) { return !isPractice(s.item); });
-      var budget = 14; // une séance substantielle ; un exercice compte double (plus long)
-      var weight = function (it) { return it.kind === "exercise" ? 2 : 1; };
-      var used = 0;
-      var takeUntil = function (list, limit) {
-        list.forEach(function (s) {
-          if (used >= limit) return;
-          if (s.item.kind === "qcm" && countKind("qcm") >= 3) return; // le QCM reste minoritaire
-          if (pickedIds[s.item.id]) return;
-          add(s.item); used += weight(s.item);
-        });
-      };
-      var practiceBudget = Math.round(budget * share);
-      if (share < 1) {
-        // Connaissance : tout le par cœur des notions du jour d'abord, puis le reste par priorité.
-        knowledge.forEach(function (s) { if (s.isMemo && s.matchesToday && used < budget - practiceBudget) { add(s.item); used += 1; } });
-        takeUntil(knowledge, budget - practiceBudget);
-      }
-      if (share > 0) {
-        var knowledgeUsed = used;
-        takeUntil(practice.filter(function (s) { return s.item.kind === "exercise"; }), knowledgeUsed + Math.max(2, Math.round(practiceBudget * 0.6)));
-        takeUntil(practice, knowledgeUsed + practiceBudget);
-      }
-      // Cours sans assez d'éléments du type choisi : on complète avec l'autre type plutôt qu'une séance vide.
-      if (picked.length < 4) takeUntil(scored, budget);
-      for (var pj = picked.length - 1; pj > 0; pj--) { var pk = Math.floor(Math.random() * (pj + 1)); var pt = picked[pj]; picked[pj] = picked[pk]; picked[pk] = pt; }
-      return picked;
-    }
-    // 1. Couverture du "par cœur" : toute définition/formule à savoir par cœur liée aux notions du
-    // jour est posée SANS exception, et forcément en rédaction (jamais en QCM — voir buildCoursePrompt
-    // qui force déjà ces catégories en type "ouverte") : l'élève doit la réécrire, pas la reconnaître.
-    scored.forEach(function (s) { if (s.isMemo && s.matchesToday) add(s.item); });
-    // 2. Un vrai volume d'exercices exigeants et de questions rédigées, dimensionné sur ce que le cours
-    // propose réellement plutôt que bridé par un budget minutes strict — mieux vaut une séance plus
-    // longue que prévu qu'une séance trop courte pour vraiment préparer à l'examen. Le QCM reste
-    // minoritaire, jamais le pilier de la séance.
-    var byKind = { exercise: [], open: [], qcm: [] };
-    scored.forEach(function (s) { byKind[s.item.kind].push(s.item); });
-    var targetExercise = Math.min(byKind.exercise.length, 4);
-    var targetOpen = Math.min(byKind.open.length, 8);
-    var targetQcm = Math.min(byKind.qcm.length, 3);
-    byKind.exercise.forEach(function (it) { if (countKind("exercise") < targetExercise) add(it); });
-    byKind.open.forEach(function (it) { if (countKind("open") < targetOpen) add(it); });
-    byKind.qcm.forEach(function (it) { if (countKind("qcm") < targetQcm) add(it); });
+    var picked = [], pickedIds = {}, used = 0;
+    var add = function (it) { if (it && !pickedIds[it.id]) { pickedIds[it.id] = true; picked.push(it); used += epItemMinutes(it); } };
+    // 1. Exercices : autant de places que d'exercices prévus (ils seront remplacés par des exercices
+    //    inédits ; ceux du cours servent de secours si la création échoue).
+    var exercises = scored.filter(function (s) { return s.item.kind === "exercise"; });
+    var exUsed = 0;
+    for (var e = 0; e < exercises.length && exUsed < plan.fresh; e++) { add(exercises[e].item); exUsed++; }
+    var exerciseMinutes = used;
+    // 2. Questions à rédiger jusqu'à la durée prévue : d'abord le par cœur des notions du jour, puis selon
+    //    la part cours / application voulue, par priorité (notions faibles et pas revues depuis longtemps).
+    var questions = scored.filter(function (s) { return s.item.kind !== "exercise"; });
+    var share = typeof prep.practiceShare === "number" ? prep.practiceShare / 100 : 0.5;
+    var budget = plan.questionMinutes;
+    var appBudget = Math.round(budget * share), knowBudget = budget - appBudget;
+    var qUsed = function (filter) { return picked.filter(function (p) { return p.kind !== "exercise" && filter(p); }).reduce(function (s, p) { return s + epItemMinutes(p); }, 0); };
+    var isApp = function (it) { return it.category === "application"; };
+    questions.forEach(function (s) {
+      if (s.isMemo && s.matchesToday && qUsed(function (p) { return !isApp(p); }) + epItemMinutes(s.item) <= knowBudget) add(s.item);
+    });
+    questions.forEach(function (s) {
+      var app = isApp(s.item);
+      var cap = app ? appBudget : knowBudget;
+      if (qUsed(function (p) { return isApp(p) === app; }) + epItemMinutes(s.item) <= cap) add(s.item);
+    });
+    // Reste du temps (un type manquait) : complété avec ce qu'il reste, sans dépasser la durée.
+    questions.forEach(function (s) { if (used - exerciseMinutes + epItemMinutes(s.item) <= budget) add(s.item); });
     if (!picked.length && scored.length) add(scored[0].item);
     for (var j = picked.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var t = picked[j]; picked[j] = picked[k]; picked[k] = t; }
     return picked;
@@ -3499,7 +3505,7 @@
       COURSE_LANGUAGE_RULE +
       "Crée EXACTEMENT " + count + " exercice(s) NOUVEAU(X), centrés sur les notions du jour. " + kindRule + "\n\n" +
       "Règles :\n" +
-      "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 10 à 25 minutes de travail) : un support riche suivi de PLUSIEURS questions numérotées. JAMAIS une question unique et courte. Exemples : en français, pour des procédés stylistiques, un extrait de 6 à 12 lignes (écrit par toi dans l'esprit des textes du cours, ou une citation exacte du cours) qui contient PLUSIEURS procédés différents, avec des questions pour les repérer, les nommer, citer le passage et analyser l'effet de chacun ; en maths/physique-chimie, un problème à plusieurs étapes avec des données nouvelles ; en histoire-géographie, un document ou une situation à analyser avec plusieurs questions ; en langues, un texte avec compréhension et production.\n" +
+      "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 8 à 12 minutes de travail : la séance entière ne dure que 30 minutes) : un support riche mais court, suivi de 3 ou 4 questions numérotées qui vont à l'essentiel. JAMAIS une question unique et courte. Exemples : en français, pour des procédés stylistiques, un extrait de 6 à 12 lignes (écrit par toi dans l'esprit des textes du cours, ou une citation exacte du cours) qui contient PLUSIEURS procédés différents, avec des questions pour les repérer, les nommer, citer le passage et analyser l'effet de chacun ; en maths/physique-chimie, un problème à plusieurs étapes avec des données nouvelles ; en histoire-géographie, un document ou une situation à analyser avec plusieurs questions ; en langues, un texte avec compréhension et production.\n" +
       "- VARIÉTÉ : les exercices de cette séance ont des formes et des supports DIFFÉRENTS entre eux (repérage + analyse, problème, étude de document, rédaction courte, vrai/faux justifié, mise en relation...). Ils ne doivent PAS être une simple reformulation des exercices déjà existants ou déjà donnés listés plus bas : autre support, autre situation, autres questions.\n" +
       "- FIDÉLITÉ : uniquement des notions qui figurent dans le cours ci-dessous, au niveau de l'élève. N'invente aucun fait, aucune date, aucune définition qui n'y soit pas.\n" +
       "- MISE EN PAGE de \"prompt\" (en Markdown, jamais tout sur une seule ligne) : une courte consigne, puis le support (un texte ou extrait cité en bloc de citation, chaque ligne commençant par « > »), puis une ligne vide, puis CHAQUE question sur sa propre ligne, numérotée « 1. », « 2. », « 3. »..., avec une ligne vide entre deux questions.\n" +
@@ -3547,15 +3553,16 @@
   }
   // Remplace les exercices tirés du cours par des exercices inédits (même nombre, avec un minimum selon le
   // type de révision). Ne bloque jamais la séance : en cas d'échec ou de lenteur, on garde le pool d'origine.
-  function addFreshExercises(prep, dayEntry, pool, progressKey) {
-    if (!getApiKey()) return Promise.resolve(pool);
+  function addFreshExercises(prep, dayEntry, pool, progressKey, wanted) {
+    if (!getApiKey() || wanted === 0) return Promise.resolve(pool);
     var courses = epScopeCourses(prep.scope);
     if (!courses.length) return Promise.resolve(pool);
     var mode = prep.revisionMode || "auto";
     var share = typeof prep.practiceShare === "number" ? prep.practiceShare : 50;
     var fromCourse = pool.filter(function (it) { return it.kind === "exercise"; }).length;
     var minimum = mode === "exos" ? 4 : mode === "cours" ? 2 : Math.max(1, Math.round(share / 100 * 4));
-    var count = Math.min(6, Math.max(fromCourse, minimum));
+    // Nombre fixé par la composition de la séance de 30 min (epSessionPlan) ; ancien calcul en secours.
+    var count = typeof wanted === "number" ? wanted : Math.min(6, Math.max(fromCourse, minimum));
     var avoid = [];
     courses.forEach(function (co) { (co.exercises || []).forEach(function (ex) { avoid.push(String(ex.prompt || "").replace(/\s+/g, " ").slice(0, 160)); }); });
     (prep.freshHistory || []).forEach(function (h) { avoid.push(h); });
@@ -6914,7 +6921,7 @@
       renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap quiz-wrap-exercise">' + mBody + '</div>' + dinoCompanionHtml() + '</div>');
       return;
     }
-    var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + '</div>';
+    var body = '<div class="quiz-q-num">Question ' + (s.idx + 1) + ' / ' + s.pool.length + (item.kind === "exercise" ? " · Exercice" : "") + ' · ≈ ' + Math.max(1, epPoolMinutes(s.pool.slice(s.idx))) + ' min restantes</div>';
     if (item.kind === "exercise") {
       body += '<div class="dp-exercise-box"><div class="dp-exercise-label">Exercice</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.prompt)) + '</div></div>' + exerciseFigureHtml(item);
     } else {
@@ -7031,7 +7038,7 @@
           (startingToday ? loadingBtnHtml : '<button class="btn btn-ghost" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Refaire la séance</button>') + '</div>';
       } else {
         cta = '<div class="ep-today-card"><div class="ep-today-title">🎯 ' + esc(todayEntry.focus) + '</div><div class="ep-today-sub">~' + todayEntry.minutes + ' min</div>' +
-          (startingToday ? loadingBtnHtml : '<button class="btn btn-metal" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour</button>') + '</div>';
+          (startingToday ? loadingBtnHtml : '<button class="btn btn-metal" style="width:auto" onclick="App.startExamPrepDay(\'' + prep.id + '\')">Commencer l\'entraînement du jour (≈ ' + EP_SESSION_MINUTES + ' min)</button>') + '</div>';
       }
       var daysHtml = prep.days.map(function (d) {
         var sess = prep.sessions && prep.sessions[d.date];
@@ -10242,7 +10249,8 @@
       if (!dayEntry) { toast("Pas de séance prévue ce jour-là pour cette prépa"); return; }
       var pool = epQuestionPool(epScopeCourses(prep.scope));
       if (!pool.length) { toast("Aucune question disponible pour cette sélection"); return; }
-      var picked = epPickDayQuestions(pool, dayEntry, prep);
+      var plan = epSessionPlan(prep);
+      var picked = epPickDayQuestions(pool, dayEntry, prep, plan);
       if (!picked.length) { toast("Aucune question disponible pour cette sélection"); return; }
       var launch = function (finalPool) {
         epStartingSessionFor = null;
@@ -10254,7 +10262,8 @@
       // (généré à la volée, jamais pré-stocké — c'est justement l'effet de surprise recherché) : on
       // l'ajoute au pool juste avant de lancer la séance, sous le même sablier que la réécriture des
       // exercices déjà vus, pour étaler l'entraînement à l'écrit long sur toute la durée de la prépa.
-      var methodo = prep.methodologyId ? methodoFind(prep.methodologyId) : null;
+      // Sujet de méthodologie (environ 20 min) : une séance sur trois seulement (voir epSessionPlan).
+      var methodo = plan.methodo && prep.methodologyId ? methodoFind(prep.methodologyId) : null;
       var finalizeLaunchBase = function (finalPool) {
         if (!methodo || methodo.status !== "ready" || !getApiKey()) { launch(finalPool); return; }
         // La méthodologie n'est plus liée à une seule matière : ici on utilise la matière de LA PRÉPA
@@ -10283,7 +10292,7 @@
       var finalizeLaunch = function (finalPool) {
         epStartingSessionFor = prepId + "::" + date;
         render();
-        addFreshExercises(prep, dayEntry, finalPool, prepId + "::" + date).then(finalizeLaunchBase);
+        addFreshExercises(prep, dayEntry, finalPool, prepId + "::" + date, plan.fresh).then(finalizeLaunchBase);
       };
       prep.itemUseCount = prep.itemUseCount || {};
       // Un item déjà rencontré lors d'une séance précédente de cette même prépa est réécrit (valeurs et
