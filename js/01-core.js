@@ -2,7 +2,22 @@
 // Studino — stockage, images, audio, schémas
 // Fichier chargé dans l'ordre par index.html : les fichiers partagent les mêmes variables globales.
 
-  var APP_VERSION = "12.7"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "12.8"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  // Installation sur l'écran d'accueil : Chrome/Edge/Android proposent l'installation par un événement
+  // qu'on garde pour le bouton des paramètres ; l'iPhone n'en a pas, on explique la marche à suivre.
+  var installPromptEvent = null;
+  function isInstalledApp() {
+    try { return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; }
+  }
+  function installAppFieldHtml() {
+    var body;
+    if (isInstalledApp()) body = '<p class="modal-warn" style="margin:0">✅ Tu utilises déjà l\'appli installée.</p>';
+    else if (installPromptEvent) body = '<button type="button" class="btn btn-sm btn-primary" style="width:auto" onclick="App.installApp()">📲 Installer Studino</button>' +
+      '<p class="modal-warn" style="margin:6px 0 0">Studino s\'ouvrira comme une vraie appli, depuis ton écran d\'accueil, en plein écran.</p>';
+    else if (/iphone|ipad|ipod/i.test(navigator.userAgent)) body = '<p class="modal-warn" style="margin:0">Dans <b>Safari</b> : bouton Partager ⬆️ puis « Sur l\'écran d\'accueil ». ⚠️ L\'appli installée a ses propres données : exporte une sauvegarde ici, puis importe-la dans l\'appli.</p>';
+    else body = '<p class="modal-warn" style="margin:0">Dans Chrome ou Edge : menu ⋮ puis « Installer l\'application » (ou « Ajouter à l\'écran d\'accueil » sur Android).</p>';
+    return '<div class="field"><label>Appli sur l\'écran d\'accueil</label>' + body + '</div>';
+  }
   var DB_KEY = "recto_v1"; // ancien stockage localStorage — gardé uniquement pour la migration one-shot vers IndexedDB
   var IDB_NAME = "studino_db", IDB_STORE = "kv", IDB_ENTRY = "db";
 

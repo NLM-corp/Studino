@@ -62,6 +62,13 @@
   // Le chargement de la base (IndexedDB, potentiellement avec migration depuis l'ancien localStorage
   // au tout premier lancement) est asynchrone : on affiche un écran d'attente le temps que ça charge,
   // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
+  // Appli installable sur l'écran d'accueil (téléphone / ordinateur).
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function (err) { console.warn("Service worker :", err); }); });
+  }
+  window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installPromptEvent = e; });
+  window.addEventListener("appinstalled", function () { installPromptEvent = null; toast("📲 Studino est installé sur ton écran d'accueil !"); });
+
   var appEl = document.getElementById("app");
   if (appEl) appEl.innerHTML = '<div class="processing-box" style="min-height:100vh;justify-content:center">' + genLogo() + '<span>Chargement…</span></div>';
   initDB().then(function () { markInterruptedPodcasts(); return hydratePodcastAudio().catch(function (err) { console.error("Audio des podcasts :", err); }).then(function () { return hydrateFigureImages().catch(function (err) { console.error("Images des schémas :", err); }); }); }).then(function () {

@@ -405,6 +405,7 @@
         '</div>' +
         '<p class="modal-warn" style="margin:6px 0 0">Exporte un fichier pour récupérer tes comptes et données sur une autre adresse ou un autre appareil. Importer un fichier remplace toutes les données de ce navigateur.</p>' +
         '</div>' +
+        installAppFieldHtml() +
         '<div class="theme-row" style="margin-bottom:16px"><span class="theme-label">Mode sombre</span><button class="switch" onclick="App.toggleTheme()" aria-label="Basculer le thème"></button></div>' +
         (function () {
           var swatchHex = { vert: "#4C8C4A", bleu: "#2F7FC1", jaune: "#D9A51B", rose: "#D44C80", violet: "#7A4FC4", rouge: "#D14B35", orange: "#E8862B" };

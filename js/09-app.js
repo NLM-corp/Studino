@@ -1508,6 +1508,12 @@
       toast(key ? "Clé API de secours enregistrée" : "Clé API de secours effacée");
       render();
     },
+    installApp: function () {
+      var ev = installPromptEvent;
+      if (!ev) return;
+      ev.prompt();
+      ev.userChoice.then(function () { installPromptEvent = null; render(); }).catch(function () {});
+    },
 
     // Toutes les données de l'appli vivent dans IndexedDB, propre à chaque adresse (domaine/protocole)
     // — passer d'un test en local au site en ligne, ou changer de navigateur/appareil, ne transfère
