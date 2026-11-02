@@ -1425,3 +1425,44 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
 @media print {
   .fiche > h3 .sec-dino { float: right; margin-top: -2px; }
 }
+
+/* ---------------- Fiche d'identité du dino : carnet de terrain en pixel art ----------------
+   Cadre en bois et coins de laiton (border-image en 9 tranches), parchemin, portrait devant l'habitat,
+   icônes pixel et barres à segments. Toujours sur parchemin (même en mode sombre) : c'est un objet du jeu. */
+.modal.modal-dino-fiche {
+  max-width: 460px; border-radius: 0; padding: 18px 20px 16px;
+  border: 24px solid transparent; border-image: url('assets/objects/ui/fiche/cadre.png') 48 / 24px round;
+  background: #EAD6A8 url('assets/objects/ui/fiche/parchemin.png') repeat; background-size: 128px 128px; background-clip: padding-box;
+  image-rendering: pixelated; color: #3A2614; box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+}
+.modal-dino-fiche img { image-rendering: pixelated; }
+.dfi-portrait { width: 192px; height: 168px; margin: 0 auto 10px; background-size: 100% 100%; display: flex; align-items: flex-end; justify-content: center; border: 4px solid #4E2E18; outline: 2px solid #C8962E; box-shadow: inset 0 0 0 2px #8A5A34; }
+.modal-dino-fiche .dfi-dino { width: 132px !important; height: 132px !important; border: none !important; border-radius: 0 !important; background: transparent !important; margin-bottom: 4px; filter: drop-shadow(0 3px 0 rgba(0,0,0,0.25)); }
+.modal-dino-fiche .dfi-name { text-align: center; margin: 6px 0 4px; font-size: 16px; color: #2E1A0C; text-shadow: 0 2px 0 rgba(255,240,200,0.6); }
+.dfi-sub { text-align: center; font-size: 12.5px; color: #6A4A2C; margin: 0 0 14px; }
+.dfi-stats { display: grid; gap: 8px; margin-bottom: 12px; padding: 10px 12px; background: rgba(255,248,224,0.5); border: 2px solid #C8AE7A; }
+.dfi-stat { display: grid; grid-template-columns: 24px 64px 1fr 42px; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; color: #3A2614; }
+.dfi-ico { width: 24px; height: 24px; }
+.dfi-stat-val { text-align: right; font-size: 11px; }
+/* barre à segments : un rail sombre, un remplissage coloré découpé en crans */
+.dfi-bar { height: 14px; background: #3A2614; border: 2px solid #2A1A0C; box-shadow: inset 0 2px 0 rgba(0,0,0,0.35); position: relative; overflow: hidden; }
+.dfi-bar-fill { height: 100%; background-image: repeating-linear-gradient(90deg, transparent 0 10px, rgba(0,0,0,0.35) 10px 12px), linear-gradient(180deg, rgba(255,255,255,0.35) 0 3px, transparent 3px); }
+.dfi-bar-health { background-color: #5FC05A; }
+.dfi-bar-hunger { background-color: #E8862B; }
+.dfi-bar-happy { background-color: #F2C230; }
+.dfi-facts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 0 12px; }
+.dfi-fact { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; font-size: 12px; font-weight: 600; color: #3A2614; background: #F4E6C2; border: 2px solid #8A5A34; box-shadow: 0 2px 0 #4E2E18; }
+.dfi-fact:first-child { text-transform: capitalize; }
+.dfi-fact img { width: 20px; height: 20px; }
+/* inventaire : cases en bois */
+.modal-dino-fiche .dp-care-title { color: #2E1A0C; font-size: 13px; }
+.modal-dino-fiche .dp-care-group-label { color: #6A4A2C; font-weight: 600; }
+.modal-dino-fiche .dp-care-item { border: 12px solid transparent; border-image: url('assets/objects/ui/fiche/case.png') 24 / 12px stretch; background: #EAD6A8; background-clip: padding-box; border-radius: 0; padding: 2px 4px; color: #3A2614; box-shadow: none; }
+.modal-dino-fiche .dp-care-item:not(:disabled):hover { transform: translateY(-2px); filter: brightness(1.05); }
+.modal-dino-fiche .dp-care-item:disabled { opacity: 0.5; }
+.modal-dino-fiche .dp-care-match { background-color: #DCEFC4; }
+.modal-dino-fiche .dp-care-price { color: #6A4A2C; }
+.modal-dino-fiche .dp-care-emoji img { width: 36px; height: 30px; image-rendering: pixelated; }
+.modal-dino-fiche .modal-warn { color: #7A5A3A; }
+.modal-dino-fiche .btn-ghost { background: #F4E6C2; color: #3A2614; border-color: #8A5A34; box-shadow: 0 3px 0 #4E2E18; border-radius: 0; }
+.modal-dino-fiche .field label { color: #3A2614; }

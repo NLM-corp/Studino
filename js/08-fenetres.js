@@ -457,14 +457,21 @@
             return '<button type="button" class="dp-care-item" ' + (can ? "" : "disabled") + ' onclick="App.dpUseCare(\'' + fd.id + '\',\'' + it.id + '\')"><span class="dp-care-emoji">' + (it.unitImg ? '<img src="' + it.unitImg + '" alt="">' : it.emoji) + '</span><span>' + esc(it.name) + '</span><span class="dp-care-price mono">' + have + ' en stock</span></button>';
           }).join("") + '</div></div>' +
           '<p class="modal-warn" style="margin-top:10px">Achète des caisses chez le marchand d\'objets pour remplir ton inventaire.</p></div>';
-        inner = dpSquareHtml(fsp.id, { kind: "face", style: "width:96px;height:96px;margin:0 auto 14px;display:block" }) +
-          '<h3 style="text-align:center">' + esc(fd.name) + '</h3>' +
-          '<p style="text-align:center;color:var(--text-muted);font-size:12.5px;margin:-10px 0 18px">' + esc(fsp.name) + ' · ' + frarity.label + ' · ' + (fd.sex === "M" ? "Mâle" : "Femelle") + ' · ' + dpAgeLabel(fd) + '</p>' +
+        // Fiche façon carnet de terrain : portrait devant son habitat, stats avec icônes et barres à segments.
+        var FI = "assets/objects/ui/fiche/";
+        var fstat = function (key, label, val, kind) {
+          return '<div class="dfi-stat"><img class="dfi-ico" src="' + FI + 'icone_' + key + '.png" alt=""><span class="dfi-stat-label">' + label + '</span>' +
+            '<div class="dfi-bar"><div class="dfi-bar-fill dfi-bar-' + kind + '" style="width:' + val + '%"></div></div><span class="dfi-stat-val mono">' + val + '%</span></div>';
+        };
+        inner = '<div class="dfi-portrait" style="background-image:url(\'' + FI + 'habitat_' + fsp.zone + '.png\')">' + dpSquareHtml(fsp.id, { kind: "face", className: "dfi-dino" }) + '</div>' +
+          '<h3 class="dfi-name">' + esc(fd.name) + '</h3>' +
+          '<p class="dfi-sub">' + esc(fsp.name) + ' · <span class="dp-rarity dp-rarity-' + fsp.rarity + '">' + frarity.label + '</span> · ' + (fd.sex === "M" ? "♂ Mâle" : "♀ Femelle") + ' · ' + dpAgeLabel(fd) + '</p>' +
           fneedBanner +
-          '<div class="dp-stat"><span>Santé</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhealth + '%;background:var(--success)"></div></div><span class="mono">' + fhealth + '%</span></div>' +
-          '<div class="dp-stat"><span>Faim</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhunger + '%;background:var(--accent)"></div></div><span class="mono">' + fhunger + '%</span></div>' +
-          '<div class="dp-stat"><span>Bonheur</span><div class="dp-bar"><div class="dp-bar-fill" style="width:' + fhappy + '%;background:var(--leaf)"></div></div><span class="mono">' + fhappy + '%</span></div>' +
-          '<p style="font-size:12.5px;color:var(--text-muted);margin:14px 0">Régime : ' + esc(fsp.diet) + ' · Poids adulte : ' + dpWeightLabel(fsp.weightKg) + ' · Habitat : ' + esc(dpZone(fsp.zone).name) + '</p>' +
+          '<div class="dfi-stats">' + fstat("sante", "Santé", fhealth, "health") + fstat("faim", "Faim", fhunger, "hunger") + fstat("bonheur", "Bonheur", fhappy, "happy") + '</div>' +
+          '<div class="dfi-facts">' +
+          '<span class="dfi-fact"><img src="' + FI + 'icone_regime.png" alt="">' + esc(fsp.diet) + '</span>' +
+          '<span class="dfi-fact"><img src="' + FI + 'icone_poids.png" alt="">' + dpWeightLabel(fsp.weightKg) + ' adulte</span>' +
+          '<span class="dfi-fact"><img src="' + FI + 'icone_habitat.png" alt="">' + esc(dpZone(fsp.zone).name) + '</span></div>' +
           (fd.enclosureId
             ? inventoryPanel
             : '<p style="text-align:center;color:var(--danger);font-weight:700;font-size:12.5px;margin:-4px 0 14px">⏳ Il mourra dans ' + dpFormatCountdown(DP_HATCH_PLACEMENT_LIMIT - (Date.now() - fd.bornAt)) + ' s\'il n\'est pas placé dans un enclos</p>' +
@@ -541,7 +548,7 @@
         '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="App.closeLightModal()">Annuler</button><button type="submit" class="btn btn-primary">Insérer</button></div>' +
         '</form>';
     }
-    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "latex" || modal.type === "calEvent" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "backupApiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
+    overlay.innerHTML = '<div class="modal' + (isTool ? " modal-tool" : "") + (modal.type === "dinoFiche" ? " modal-dino-fiche" : "") + (modal.type === "latex" || modal.type === "calEvent" || modal.type === "periodic" || modal.type === "apiKeyGuide" || modal.type === "backupApiKeyGuide" || modal.type === "confirmImportBackup" ? " modal-wide" : "") + (modal.type === "periodic" ? " modal-periodic" : "") + '">' + inner + '</div>';
     document.body.appendChild(overlay);
   }
 
