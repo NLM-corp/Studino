@@ -1382,7 +1382,14 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
 .fiche-upgrade { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 0 0 18px; padding: 12px 14px; border-radius: 12px; border: 2px solid var(--accent); background: var(--accent-soft); font-weight: 600; font-size: 13.5px; }
 
 @media print {
-  .fiche > h3 { box-shadow: none; break-after: avoid; }
+  /* Un bandeau de section, un encadré, une ligne de tableau ou une étape de frise ne doivent jamais
+     être coupés entre deux pages. Le bandeau passe en bloc simple : Chrome coupe plus facilement un
+     élément « flex » au bas d'une page. */
+  .fiche > h3 { display: block; box-shadow: none; break-inside: avoid; page-break-inside: avoid; break-after: avoid; page-break-after: avoid; }
+  .fiche > h3::before { vertical-align: middle; margin-right: 10px; }
+  .fiche h4 { break-inside: avoid; break-after: avoid; page-break-after: avoid; }
+  .fc-box, .fq, .ff-item, .fiche-legend, .fiche tr, .fiche .prose-figure { break-inside: avoid; page-break-inside: avoid; }
+  .fc-box { overflow: visible; }
   .print-fiche-body.fiche > h3 { background: var(--sec-c, var(--sec-1)); padding: 7px 12px; border-radius: 8px; }
   .fq { border: 1px solid #ccc; background: #fff; cursor: default; }
   .fq-a { display: block !important; }
