@@ -653,7 +653,7 @@
   }
 
   var DP_ENCLOS_ZONE_FOLDER = { foret: "Foret", plaine: "Plaine", desert: "Desert", arctique: "Arctique", marine: "Marine", volcanique: "Volcanique" };
-  var DP_ENCLOS_VARIANT_COUNT = { marine: 1 };
+  var DP_ENCLOS_VARIANT_COUNT = {}; // toutes les zones ont maintenant 3 variantes d’enclos (Marine comprise)
   function dpEnclosureVariantCount(zoneId) { return DP_ENCLOS_VARIANT_COUNT[zoneId] || 3; }
   function dpRandomEnclosureVariant(zoneId) { return 1 + Math.floor(Math.random() * dpEnclosureVariantCount(zoneId)); }
   function dpEnclosureArtPath(zoneId, level, variant) {
@@ -1130,7 +1130,7 @@
       var pct = Math.min(100, Math.round((Date.now() - inc.startedAt) / 1000 / rarity.hatch * 100));
       var done = remainMs <= 0;
       return '<div class="dp-incubator">' +
-        '<img class="dp-incubator-art" src="assets/objects/ui/incubateur_remplie.png" alt="">' +
+        '<img class="dp-incubator-art" src="assets/objects/ui/incubateurs/incubateur_' + DP_EGG_ZONE_FOLDER[sp.zone] + '_' + DP_EGG_RARITY_FOLDER[sp.rarity] + '.png" onerror="this.onerror=null;this.src=\'assets/objects/ui/incubateur_remplie.png\'" alt="">' +
         '<div class="dp-egg-name">' + esc(sp.name) + '</div>' +
         '<div class="dp-bar"><div class="dp-bar-fill" style="width:' + pct + '%;background:var(--leaf)"></div></div>' +
         (done ? '<button class="btn btn-sm btn-primary" onclick="App.dpCollectHatched(' + i + ')">Récupérer 🎉</button>' : '<span class="dp-empty-note mono dp-inc-timer" data-slot="' + i + '">⏳ ' + dpFormatCountdown(remainMs) + '</span>') +

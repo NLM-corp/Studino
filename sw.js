@@ -2,7 +2,7 @@
 // Pages, scripts et styles : toujours la version en ligne d'abord (pour avoir les mises à jour),
 // la copie gardée seulement si le réseau ne répond pas. Images et sons : la copie gardée d'abord.
 // Les autres sites (IA Gemini, bibliothèques) ne passent pas par ici.
-var CACHE = "studino-v1";
+var CACHE = "studino-v2"; // à changer quand les images changent : les anciennes copies en cache sont supprimées
 
 self.addEventListener("install", function () { self.skipWaiting(); });
 self.addEventListener("activate", function (e) {

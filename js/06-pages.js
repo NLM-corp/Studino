@@ -1470,7 +1470,7 @@
   function courseChatHtml(course) {
     if (course.status !== "ready") return "";
     var msgs = course.chat || [];
-    var avatar = PODCAST_DIR + PODCAST_ATTEND_IMGS[0];
+    var avatar = PODCAST_DIR + "PapiAvatar.png";
     if (!courseChatOpen[course.id]) {
       // Bouton flottant, toujours visible en bas de l'écran : pas besoin de descendre tout en bas du cours.
       return '<button class="course-chat-fab" onclick="App.openCourseChat(\'' + course.id + '\')" title="Pose tes questions sur ce cours au vieux conteur"><img src="' + avatar + '" alt=""><span>💬 ' + (msgs.length ? "Reprendre la conversation" : "Parler au vieux conteur") + '</span></button>';
