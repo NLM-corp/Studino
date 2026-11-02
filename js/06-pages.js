@@ -224,9 +224,11 @@
       '<div class="dp-merchant-bg" style="background:linear-gradient(180deg,' + zone.color + ',#1a1a1a)">' +
       '<img src="' + bgPath + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
       '<div class="dp-merchant-bg-fallback">' + zone.emoji + '</div>' +
+      // les produits sont DANS le cadre de l'image : ils restent sur le plateau du comptoir quel que soit le zoom
+      tableHtml +
       '</div>' +
       '<button class="dp-merchant-close" onclick="App.dpCloseMerchant()">✕</button>' +
-      toolsHtml + tableHtml;
+      toolsHtml;
     document.body.appendChild(overlay);
   }
 
