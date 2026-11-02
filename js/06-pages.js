@@ -1029,6 +1029,15 @@
     { id: "quiz", label: "Contrôle" }
   ];
 
+  // Schémas propres à la fiche + schémas découpés dans les cours de la matière (la fiche peut les reprendre).
+  function sheetFigureList(sheet) {
+    var list = (sheet.schemas || []).slice();
+    var subj = findSubject(sheet.subjectId);
+    (subj ? subj.themes || [] : []).forEach(function (t) {
+      (t.chapters || []).forEach(function (c) { (c.courses || []).forEach(function (co) { list = list.concat(co.figures || []); }); });
+    });
+    return list;
+  }
   function renderRevisionSheetPage(sheetId) {
     var sheet = userData().revisionSheets.find(function (x) { return x.id === sheetId; });
     if (!sheet) { navigate("#/"); return; }
@@ -1041,6 +1050,7 @@
       (sheet.status === "ready" ? '<div class="print-scale-ctrl" title="Taille de la police à l\'impression"><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(-0.1)">−</button><span class="mono" style="min-width:42px;text-align:center;display:inline-block">' + Math.round(getPrintScale() * 100) + '%</span><button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 10px" onclick="App.adjustPrintScale(0.1)">+</button></div>' : "") +
       (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.downloadRevisionSheetPdf(\'' + sheet.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
       (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.viewRevisionSheetRaw(\'' + sheet.id + '\')">📄 Texte brut</button>' : "") +
+      (sheet.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">🔄 Régénérer</button>' : "") +
       '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.askDelete(\'revisionSheet\',null,null,null,\'' + sheet.id + '\')">' + icon("trash") + ' Supprimer</button>' +
       '</div>' +
       '</div>';
@@ -1054,7 +1064,8 @@
         '<button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">Réessayer</button>' +
         '</div></div>';
     } else {
-      body = '<div class="prose">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' + exerciseFigureHtml({ prompt: sheet.content });
+      body = (sheet.format === 2 ? ficheLegendHtml() : '<div class="fiche-upgrade"><span>✨ Nouvelle mise en page disponible : couleurs, encadrés, images et schémas plus clairs.</span><button class="btn btn-primary btn-sm" style="width:auto" onclick="App.retryRevisionSheetGeneration(\'' + sheet.id + '\')">🔄 Régénérer la fiche</button></div>') +
+        '<div class="prose fiche">' + mdToHtml(sheet.content, sheetFigureList(sheet), { fiche: true }) + '</div>' + exerciseFigureHtml({ prompt: sheet.content });
     }
     renderShell(["revision", sheetId], head + body, { narrow: true });
   }
@@ -1585,19 +1596,70 @@
     });
     return { text: text, chips: chips };
   }
-  function mdToHtml(rawMd, figures) {
-    var extracted = mdExtractMath(rawMd);
+  // Blocs encadrés typés des fiches (« > [!def] Terme ») : une couleur = un sens, toujours le même.
+  var CALLOUT_TYPES = {
+    essentiel: { label: "L'essentiel", icon: "⭐" },
+    def: { label: "Définition", icon: "📘" },
+    formule: { label: "Formule", icon: "🧮" },
+    exemple: { label: "Exemple", icon: "🌱" },
+    piege: { label: "Attention, piège", icon: "⚠️" },
+    methode: { label: "Méthode", icon: "🛠️" },
+    retenir: { label: "À retenir", icon: "📌" },
+    astuce: { label: "Astuce mémo", icon: "💡" },
+    quiz: { label: "Je vérifie que je sais", icon: "❓" }
+  };
+  var CALLOUT_ALIASES = { definition: "def", regle: "formule", loi: "formule", ex: "exemple", attention: "piege", erreur: "piege", etapes: "methode", cle: "retenir", important: "retenir", memo: "astuce", mnemo: "astuce", test: "quiz", resume: "essentiel" };
+  function calloutType(raw) {
+    var k = String(raw || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, "");
+    k = CALLOUT_ALIASES[k] || k;
+    return CALLOUT_TYPES[k] ? k : null;
+  }
+  // Légende du code couleur, affichée en tête des fiches.
+  function ficheLegendHtml() {
+    return '<div class="fiche-legend"><span class="fl-title">Code couleur :</span>' +
+      '<span class="fi fi-def">Définition</span><span class="fl-chip fl-formule">Formule</span><span class="fi fi-date">Date / chiffre</span>' +
+      '<span class="fi fi-ex">Exemple</span><span class="fi fi-piege">Piège</span><mark class="fi-key">À retenir</mark><span class="fl-chip fl-astuce">Astuce</span></div>';
+  }
+  // opts.nested : appel interne (contenu d'un bloc ou d'une colonne), les formules sont déjà extraites.
+  // opts.fiche : fiche de révision (listes numérotées rendues en vraie liste).
+  function mdToHtml(rawMd, figures, opts) {
+    opts = opts || {};
+    var extracted = opts.nested ? { text: String(rawMd || ""), chips: [] } : mdExtractMath(rawMd);
     var md = extracted.text;
     var lines = md.split("\n");
     var html = "";
     var inList = false;
+    var closeList = function () { if (inList) { html += "</" + inList + ">"; inList = false; } };
+    var nestedOpts = { nested: true, fiche: opts.fiche };
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
+      // Blocs de mise en page : « :::cols » (colonnes séparées par « +++ ») et « :::frise » (une ligne
+      // « date : événement » par événement), fermés par « ::: ».
+      var blockOpen = /^\s*:::\s*(cols?|colonnes|frise|timeline)\s*$/i.exec(line);
+      if (blockOpen) {
+        closeList();
+        var inner = [];
+        i++;
+        while (i < lines.length && !/^\s*:::\s*$/.test(lines[i])) { inner.push(lines[i]); i++; }
+        if (/^(frise|timeline)$/i.test(blockOpen[1])) {
+          html += '<div class="fiche-frise">' + inner.filter(function (l) { return l.trim(); }).map(function (l) {
+            var t = l.trim().replace(/^[-*]\s+/, "");
+            var m = /^(.{1,40}?)\s*[:–—]\s+(.*)$/.exec(t);
+            return '<div class="ff-item"><span class="ff-date">' + inlineMdPlain(m ? m[1] : "") + '</span><span class="ff-text">' + inlineMdPlain(m ? m[2] : t) + '</span></div>';
+          }).join("") + '</div>';
+        } else {
+          var cols = [[]];
+          inner.forEach(function (l) { if (/^\s*\+\+\+\s*$/.test(l)) cols.push([]); else cols[cols.length - 1].push(l); });
+          cols = cols.filter(function (c) { return c.join("").trim(); });
+          html += '<div class="fiche-cols fiche-cols-' + Math.min(3, cols.length) + '">' + cols.map(function (c) { return '<div class="fiche-col">' + mdToHtml(c.join("\n"), figures, nestedOpts) + '</div>'; }).join("") + '</div>';
+        }
+        continue;
+      }
       // Bloc de code ``` : opérations posées (addition, soustraction, division en colonnes...) dont
       // l'alignement des chiffres compte. Avant, chaque ligne devenait un paragraphe et perdait ses
       // espaces : l'opération s'éparpillait. Rendu tel quel, en police à chasse fixe.
       if (/^\s*```/.test(line)) {
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         var codeLines = [];
         i++;
         while (i < lines.length && !/^\s*```/.test(lines[i])) { codeLines.push(lines[i].replace(/\s+$/, "")); i++; }
@@ -1612,7 +1674,7 @@
       var nextLine = i + 1 < lines.length ? lines[i + 1] : "";
       var looksLikeTable = mdPipeCount(line) >= 1 && nextLine.trim() !== "" && (mdIsTableSep(nextLine) || mdPipeCount(nextLine) >= 1);
       if (looksLikeTable) {
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         // Un schéma peut être DANS une case (ex. « Électrisation par frottement | explication | schéma »,
         // comme dans le cours d'origine) : avant, la case affichait le code brut ![...](figure:...).
         var cellHtml = function (c) {
@@ -1647,13 +1709,14 @@
       // du schéma/de la figure réels.
       var imgLine = /^!\[([^\]]*)\]\((\S+)\)[.,;:]?\s*$/.exec(line.trim());
       if (imgLine) {
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         var figRef = /^figure:(.+)$/.exec(imgLine[2]);
         var schemaRef = /^schema:(.+)$/.exec(imgLine[2]);
         if (figRef) {
           var refFig = (figures || []).find(function (f) { return f.id === figRef[1]; });
           if (refFig) {
-            html += '<figure class="prose-figure"><img src="' + figureSrc(refFig) + '" alt="' + esc(imgLine[1]) + '" onclick="App.openFigureLightbox(this.src)">' + (imgLine[1] ? "<figcaption>" + esc(imgLine[1]) + "</figcaption>" : "") + "</figure>";
+            html += '<figure class="prose-figure' + (refFig.credit ? " prose-photo" : "") + '"><img src="' + esc(figureSrc(refFig)) + '" alt="' + esc(imgLine[1]) + '" loading="lazy" onclick="App.openFigureLightbox(this.src)">' +
+              (imgLine[1] || refFig.credit ? "<figcaption>" + esc(imgLine[1]) + (refFig.credit ? '<span class="fig-credit">' + esc(refFig.credit) + '</span>' : "") + "</figcaption>" : "") + "</figure>";
           } else {
             html += '<div class="prose-figure-removed">🚫 Schéma supprimé pour libérer de l\'espace' + (imgLine[1] ? " — " + esc(imgLine[1]) : "") + '</div>';
           }
@@ -1671,28 +1734,58 @@
       else if (/^>\s?/.test(line.trim()) && line.trim() !== ">") {
         // Bloc encadré ("> ..." consécutifs) pour mettre en valeur une définition/formule/mise en garde
         // importante — beaucoup plus lisible qu'un mur de texte uniforme sur une fiche de révision.
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         var quoteLines = [];
         while (i < lines.length && /^>\s?/.test(lines[i].trim())) { quoteLines.push(lines[i].trim().replace(/^>\s?/, "")); i++; }
         i--;
-        html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMdPlain(l) + "</p>"; }).join("") + '</div>';
+        var typed = /^\[!\s*([^\]]+?)\s*\]\s*(.*)$/.exec(quoteLines[0] || "");
+        var ctype = typed && calloutType(typed[1]);
+        if (ctype) {
+          // Encadré typé (« > [!def] Terme ») : bandeau coloré avec son icône, contenu Markdown complet.
+          var info = CALLOUT_TYPES[ctype];
+          var ctitle = typed[2] ? inlineMdPlain(typed[2]) : info.label;
+          var cbody;
+          if (ctype === "quiz") {
+            // Une question par ligne « Question ? => Réponse » : la réponse se dévoile au clic (toujours
+            // visible à l'impression).
+            cbody = quoteLines.slice(1).filter(function (l) { return l.trim(); }).map(function (l) {
+              var qa = l.replace(/^[-*]\s+|^\d+[.)]\s+/, "").split(/\s*=>\s*/);
+              return '<div class="fq" onclick="this.classList.toggle(\'open\')"><div class="fq-q">' + inlineMdPlain(qa[0]) + '</div>' +
+                (qa[1] ? '<div class="fq-a">' + inlineMdPlain(qa.slice(1).join(" => ")) + '</div><div class="fq-hint">Clique pour voir la réponse</div>' : "") + '</div>';
+            }).join("");
+          } else {
+            cbody = mdToHtml(quoteLines.slice(1).join("\n"), figures, nestedOpts);
+          }
+          html += '<div class="fc-box fc-' + ctype + '"><div class="fc-head"><span class="fc-icon">' + info.icon + '</span>' +
+            (typed[2] && ctype !== "def" ? '<span class="fc-kind">' + info.label + '</span>' : "") + '<span class="fc-title">' + ctitle + '</span></div>' +
+            (cbody ? '<div class="fc-body">' + cbody + '</div>' : "") + '</div>';
+        } else {
+          html += '<div class="prose-callout">' + quoteLines.map(function (l) { return l.trim() === "" ? "" : "<p>" + inlineMdPlain(l) + "</p>"; }).join("") + '</div>';
+        }
       }
       else if (/^(#{2,6}\s*|#\s+)/.test(line.trim())) { // « # Titre » aussi (avant, le # restait affiché)
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         var headingMatch = /^(#{1,6})\s*(.*)$/.exec(line.trim());
         var tag = headingMatch[1].length <= 2 ? "h3" : "h4";
         html += "<" + tag + ">" + inlineMdPlain(headingMatch[2]) + "</" + tag + ">";
       }
-      else if (/^-\s+/.test(line.trim())) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inlineMdPlain(line.trim().replace(/^-\s+/, "")) + "</li>"; }
-      else if (line.trim() === "") { if (inList) { html += "</ul>"; inList = false; } }
+      else if (/^[-*]\s+/.test(line.trim()) && (opts.fiche || /^-/.test(line.trim()))) {
+        if (inList !== "ul") { closeList(); html += "<ul>"; inList = "ul"; }
+        html += "<li>" + inlineMdPlain(line.trim().replace(/^[-*]\s+/, "")) + "</li>";
+      }
+      else if (opts.fiche && /^\d+[.)]\s+/.test(line.trim())) {
+        if (inList !== "ol") { closeList(); html += '<ol start="' + parseInt(line.trim(), 10) + '">'; inList = "ol"; }
+        html += "<li>" + inlineMdPlain(line.trim().replace(/^\d+[.)]\s+/, "")) + "</li>";
+      }
+      else if (line.trim() === "") { closeList(); }
       // Un ">" tout seul sur sa ligne est un résidu de syntaxe de citation (ex. une ligne de
       // séparation de tableau contaminée — voir mdIsTableSep) qui n'apporte rien à l'élève : on
       // l'ignore silencieusement comme une ligne vide plutôt que de l'afficher tel quel.
-      else if (line.trim() === ">") { if (inList) { html += "</ul>"; inList = false; } }
-      else { if (inList) { html += "</ul>"; inList = false; } html += "<p>" + inlineMdPlain(line) + "</p>"; }
+      else if (line.trim() === ">") { closeList(); }
+      else { closeList(); html += "<p>" + inlineMdPlain(line) + "</p>"; }
     }
-    if (inList) html += "</ul>";
-    html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx] || ""); });
+    closeList();
+    if (!opts.nested) html = html.replace(/\x02(\d+)\x02/g, function (m, idx) { return mathChipHtml(extracted.chips[+idx] || ""); });
     return html;
   }
   function inlineMdPlain(s) {
@@ -1707,6 +1800,14 @@
     // confondre avec une multiplication écrite « 3 * 4 ».
     s = s.replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, "$1<em>$2</em>");
     s = s.replace(/__(.+?)__/g, "<u>$1</u>");
+    // Code couleur des fiches : {{def:...}} bleu, {{date:...}} orange, {{piege:...}} rouge, {{ex:...}} vert,
+    // ==...== surligné jaune.
+    s = s.replace(/\{\{\s*(def|définition|definition|date|chiffre|piege|piège|ex|exemple)\s*:\s*([^{}]+?)\s*\}\}/gi, function (m, kind, txt) {
+      var k = kind.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      k = k === "definition" ? "def" : k === "chiffre" ? "date" : k === "exemple" ? "ex" : k;
+      return '<span class="fi fi-' + k + '">' + txt + "</span>";
+    });
+    s = s.replace(/==(?=\S)(.+?\S)==/g, '<mark class="fi-key">$1</mark>');
     return s;
   }
   function inlineMd(s) {

@@ -1257,3 +1257,140 @@
 .install-here { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: var(--accent-contrast); margin-left: 6px; vertical-align: middle; }
 .install-warn { margin: 0 12px 10px; font-size: 12.5px; color: var(--text-muted); }
 .install-ok { margin: 0; font-size: 13px; font-weight: 600; }
+
+/* ---------------- Fiches de révision : code couleur, encadrés, colonnes, frise, quiz ----------------
+   Une couleur = un sens, toujours le même (rappelé par la légende en haut de la fiche). */
+.fiche, .fiche-legend {
+  --c-def: #2368A8; --c-def-bg: #E3EFFB;
+  --c-formule: #6A3FB5; --c-formule-bg: #EEE7FB;
+  --c-ex: #2F7D2E; --c-ex-bg: #E4F3DF;
+  --c-piege: #C23A25; --c-piege-bg: #FBE3DE;
+  --c-methode: #C9620E; --c-methode-bg: #FDEBD5;
+  --c-retenir: #B58500; --c-retenir-bg: #FFF4C2;
+  --c-astuce: #C23C73; --c-astuce-bg: #FBE2EC;
+  --c-essentiel: #B58500; --c-essentiel-bg: #FFF8DA;
+  --c-quiz: #4B5563; --c-quiz-bg: #EEF0F4;
+  --c-mark: #FFE36E;
+  --sec-1: #2F7FC1; --sec-2: #4C8C4A; --sec-3: #7A4FC4; --sec-4: #E07B1A; --sec-5: #D44C80; --sec-6: #1F9A8A;
+}
+[data-app-theme="dark"] .fiche, [data-app-theme="dark"] .fiche-legend {
+  --c-def: #8EC2F2; --c-def-bg: rgba(47,127,193,0.20);
+  --c-formule: #C3A8F5; --c-formule-bg: rgba(122,79,196,0.22);
+  --c-ex: #9AD48F; --c-ex-bg: rgba(76,140,74,0.22);
+  --c-piege: #F59A8A; --c-piege-bg: rgba(209,75,53,0.22);
+  --c-methode: #F5B577; --c-methode-bg: rgba(224,123,26,0.20);
+  --c-retenir: #F2CF5C; --c-retenir-bg: rgba(217,165,27,0.20);
+  --c-astuce: #F39CC0; --c-astuce-bg: rgba(212,76,128,0.22);
+  --c-essentiel: #F2CF5C; --c-essentiel-bg: rgba(217,165,27,0.16);
+  --c-quiz: #C5CBD6; --c-quiz-bg: rgba(255,255,255,0.06);
+  --c-mark: #8A7414;
+}
+/* Le PDF est toujours imprimé sur fond blanc : couleurs claires même en mode sombre. */
+[data-app-theme="dark"] #print-area .fiche, [data-app-theme="dark"] #print-area .fiche-legend {
+  --c-def: #2368A8; --c-def-bg: #E3EFFB; --c-formule: #6A3FB5; --c-formule-bg: #EEE7FB; --c-ex: #2F7D2E; --c-ex-bg: #E4F3DF;
+  --c-piege: #C23A25; --c-piege-bg: #FBE3DE; --c-methode: #C9620E; --c-methode-bg: #FDEBD5; --c-retenir: #B58500; --c-retenir-bg: #FFF4C2;
+  --c-astuce: #C23C73; --c-astuce-bg: #FBE2EC; --c-essentiel: #B58500; --c-essentiel-bg: #FFF8DA; --c-quiz: #4B5563; --c-quiz-bg: #EEF0F4;
+  --c-mark: #FFE36E;
+}
+
+/* Légende */
+.fiche-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 18px; padding: 10px 12px; border: 2px dashed var(--border-soft); border-radius: 12px; font-size: 12.5px; }
+.fiche-legend .fl-title { font-weight: 800; margin-right: 2px; }
+.fl-chip { padding: 1px 8px; border-radius: 6px; font-weight: 700; }
+.fl-formule { color: var(--c-formule); background: var(--c-formule-bg); }
+.fl-astuce { color: var(--c-astuce); background: var(--c-astuce-bg); }
+
+/* Mots en couleur dans le texte */
+.fi { font-weight: 700; padding: 0 4px; border-radius: 5px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.fi-def { color: var(--c-def); background: var(--c-def-bg); }
+.fi-date { color: var(--c-methode); background: var(--c-methode-bg); }
+.fi-piege { color: var(--c-piege); background: var(--c-piege-bg); }
+.fi-ex { color: var(--c-ex); background: var(--c-ex-bg); }
+mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, var(--c-mark) 92%, transparent 92%); color: inherit; font-weight: 700; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+
+/* Titres de section : bandeau numéroté, une couleur par section */
+.fiche { counter-reset: fsec; }
+.fiche > h3 { font-family: "Public Sans", sans-serif; font-weight: 800; letter-spacing: 0; counter-increment: fsec; display: flex; align-items: center; gap: 10px; max-width: none; margin: 30px 0 14px; padding: 9px 14px; border-radius: 12px; color: #fff; background: var(--sec-c, var(--sec-1)); font-size: 18px; box-shadow: 0 3px 0 rgba(0,0,0,0.15); }
+.fiche > h3::before { content: counter(fsec); flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.25); font-size: 15px; }
+.fiche > h3:first-child { margin-top: 4px; }
+.fiche > h3:nth-of-type(6n+1) { --sec-c: var(--sec-1); }
+.fiche > h3:nth-of-type(6n+2) { --sec-c: var(--sec-2); }
+.fiche > h3:nth-of-type(6n+3) { --sec-c: var(--sec-3); }
+.fiche > h3:nth-of-type(6n+4) { --sec-c: var(--sec-4); }
+.fiche > h3:nth-of-type(6n+5) { --sec-c: var(--sec-5); }
+.fiche > h3:nth-of-type(6n+6) { --sec-c: var(--sec-6); }
+.fiche h4 { max-width: none; margin: 18px 0 8px; padding-left: 10px; border-left: 4px solid var(--accent); color: var(--text); font-size: 15.5px; }
+.fiche p, .fiche ul, .fiche ol { max-width: none; }
+.fiche ol { margin: 0 0 12px; padding-left: 24px; }
+.fiche li::marker { color: var(--accent); font-weight: 800; }
+
+/* Encadrés */
+.fc-box { margin: 12px 0 16px; border: 2px solid var(--fc-c); border-radius: 14px; background: var(--fc-bg); overflow: hidden; break-inside: avoid; }
+.fc-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; padding: 8px 14px 0; color: var(--fc-c); font-weight: 800; font-size: 14.5px; }
+.fc-icon { font-size: 16px; }
+.fc-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; opacity: .85; }
+.fc-body { padding: 4px 14px 10px; color: var(--text); }
+.fc-body > :last-child { margin-bottom: 0; }
+.fc-body p { margin: 0 0 6px; }
+.fc-body ul, .fc-body ol { margin: 2px 0 6px; }
+.fc-body table { margin: 6px 0 4px; }
+.fc-box:not(:has(.fc-body)) .fc-head { padding-bottom: 8px; }
+.fc-def { --fc-c: var(--c-def); --fc-bg: var(--c-def-bg); }
+.fc-formule { --fc-c: var(--c-formule); --fc-bg: var(--c-formule-bg); }
+.fc-formule .fc-body { font-size: 15.5px; }
+.fc-exemple { --fc-c: var(--c-ex); --fc-bg: var(--c-ex-bg); }
+.fc-piege { --fc-c: var(--c-piege); --fc-bg: var(--c-piege-bg); }
+.fc-methode { --fc-c: var(--c-methode); --fc-bg: var(--c-methode-bg); }
+.fc-retenir { --fc-c: var(--c-retenir); --fc-bg: var(--c-retenir-bg); border-width: 3px; }
+.fc-astuce { --fc-c: var(--c-astuce); --fc-bg: var(--c-astuce-bg); border-style: dashed; }
+.fc-essentiel { --fc-c: var(--c-essentiel); --fc-bg: var(--c-essentiel-bg); border-width: 3px; }
+.fc-essentiel .fc-head { font-size: 16px; }
+.fc-quiz { --fc-c: var(--c-quiz); --fc-bg: var(--c-quiz-bg); }
+
+/* Quiz : réponse au clic */
+.fq { margin: 6px 0; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 2px solid var(--border-soft); cursor: pointer; }
+.fq-q { font-weight: 700; }
+.fq-a { display: none; margin-top: 4px; color: var(--c-ex); font-weight: 600; }
+.fq-hint { margin-top: 2px; font-size: 11.5px; color: var(--text-muted); }
+.fq.open .fq-a { display: block; }
+.fq.open .fq-hint { display: none; }
+
+/* Colonnes */
+.fiche-cols { display: grid; gap: 14px; margin: 10px 0 14px; align-items: start; }
+.fiche-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fiche-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fiche-col > :first-child { margin-top: 0; }
+.fiche-col > :last-child { margin-bottom: 0; }
+.fiche-col .prose-figure { margin: 0 0 8px; }
+@media (max-width: 640px) { .fiche-cols-2, .fiche-cols-3 { grid-template-columns: 1fr; } }
+
+/* Frise chronologique */
+.fiche-frise { position: relative; margin: 12px 0 18px; padding-left: 22px; }
+.fiche-frise::before { content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px; width: 4px; border-radius: 2px; background: var(--c-methode); opacity: .5; }
+.ff-item { position: relative; display: flex; gap: 12px; align-items: baseline; padding: 5px 0; }
+.ff-item::before { content: ""; position: absolute; left: -21px; top: 11px; width: 12px; height: 12px; border-radius: 50%; background: var(--c-methode); border: 2px solid var(--surface); }
+.ff-date { flex: none; min-width: 64px; font-weight: 800; color: var(--c-methode); background: var(--c-methode-bg); padding: 1px 8px; border-radius: 6px; text-align: center; }
+.ff-text { flex: 1; }
+
+/* Images et schémas d'une fiche */
+.fiche .prose-figure img { max-height: 300px; }
+.fiche .prose-photo img { border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+.fig-credit { display: block; font-size: 10.5px; font-style: normal; opacity: .7; margin-top: 2px; }
+.fiche .prose-schema svg { width: auto; max-width: 100%; max-height: 360px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.10); }
+
+/* Bandeau « nouvelle mise en page » sur les anciennes fiches */
+.fiche-upgrade { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 0 0 18px; padding: 12px 14px; border-radius: 12px; border: 2px solid var(--accent); background: var(--accent-soft); font-weight: 600; font-size: 13.5px; }
+
+@media print {
+  .fiche > h3 { box-shadow: none; break-after: avoid; }
+  .print-fiche-body.fiche > h3 { background: var(--sec-c, var(--sec-1)); padding: 7px 12px; border-radius: 8px; }
+  .fq { border: 1px solid #ccc; background: #fff; cursor: default; }
+  .fq-a { display: block !important; }
+  .fq-hint { display: none !important; }
+  .fiche-legend { margin: 0 0 14px; }
+  .fiche-cols { break-inside: avoid; }
+  .fiche .prose-photo img { box-shadow: none; max-height: 220px; }
+  .fiche .prose-schema svg { box-shadow: none; }
+  .print-fiche-body .fc-body p { margin: 0 0 4px; }
+  .print-fiche-body .fc-box strong { background: none; padding: 0; }
+}

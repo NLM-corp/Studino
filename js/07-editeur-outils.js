@@ -934,7 +934,8 @@
       '<h1>' + esc(sheet.title) + '</h1>' +
       '<div class="print-fiche-sub">Fiche de révision' + (sheet.scope === "theme" ? " — thème complet" : sheet.scope === "course" ? "" : " — chapitre complet") + '</div>' +
       '</div>' +
-      '<div class="print-fiche-body">' + mdToHtml(sheet.content, sheet.schemas) + '</div>' +
+      (sheet.format === 2 ? ficheLegendHtml() : "") +
+      '<div class="print-fiche-body fiche">' + mdToHtml(sheet.content, sheetFigureList(sheet), { fiche: true }) + '</div>' +
       '</div>';
   }
   function buildCoursePrintHtml(course, subjectName, chapterName, includeExplanation) {

@@ -529,13 +529,73 @@
           },
           required: ["caption", "placeholder", "description"]
         }
+      },
+      images: {
+        type: "array",
+        description: "0 à 3 vraies images (photos, tableaux d'art, portraits, cartes, organes...) tirées de Wikipédia, UNIQUEMENT pour un élément concret et visuel du cours qu'une image aide vraiment à reconnaître ou à retenir (un personnage historique, une œuvre, un monument, un organe, un animal, un lieu, un objet technique). Jamais pour une notion abstraite.",
+        items: {
+          type: "object",
+          properties: {
+            placeholder: { type: "string", description: "Jeton unique au format [[image:N]] (N = index dans ce tableau), à mettre tel quel, seul sur sa ligne, dans \"content\" à l'endroit où l'image doit apparaître (idéalement dans un bloc :::cols, à côté du texte qui en parle)." },
+            wikipediaTitle: { type: "string", description: "Titre EXACT d'un article de Wikipédia en français dont l'image principale montre cet élément (ex. \"Louis XIV\", \"Mitochondrie\", \"La Joconde\", \"Cœur humain\")." },
+            caption: { type: "string", description: "Légende courte (quelques mots)." }
+          },
+          required: ["placeholder", "wikipediaTitle", "caption"]
+        }
       }
     },
-    required: ["content", "schemas"]
+    required: ["content", "schemas", "images"]
   };
+  // Les fiches réutilisent les schémas découpés dans les documents du cours : dans la source, chacun
+  // reste à sa place sous forme d'un repère avec son identifiant, que l'IA peut recopier dans la fiche.
+  function sheetSourceText(co) {
+    return String(co.transcription || "").replace(/!\[([^\]]*)\]\(figure:([^)\s]+)\)/g, function (m, cap, id) {
+      return "[SCHÉMA DU COURS figure:" + id + (cap ? " — " + cap : "") + "]";
+    }).replace(/!\[[^\]]*\]\((?:data:[^)]+|schema:[^)]+)\)/g, "");
+  }
+  /* Mise en page des fiches : l'élève doit VOIR et COMPRENDRE la fiche d'un coup d'œil, pas lire un mur
+     de texte. Ce qui marche pour retenir (conseils de révision et études sur le surlignage) : un code
+     couleur FIXE où chaque couleur a un sens (définition, date, piège, exemple...), toujours le même et
+     rappelé par une légende ; peu de surlignage (sinon plus rien ne ressort) ; des images et des schémas
+     à côté du texte qui en parle ; des blocs courts plutôt que des paragraphes. L'IA écrit ces blocs avec
+     une syntaxe simple que mdToHtml transforme en encadrés colorés, colonnes, frise et quiz. */
+  var SHEET_LAYOUT_RULES =
+    "MISE EN PAGE — LE PLUS IMPORTANT : l'élève doit COMPRENDRE la fiche d'un coup d'œil, sans avoir à lire de longs textes. La fiche reste complète (aucune information du cours ne disparaît), mais elle est écrite en style « fiche » : phrases courtes (15 mots max), mots-clés, flèches →, listes, tableaux, encadrés colorés. JAMAIS de paragraphe de plus de 2 lignes : découpe-le en puces.\n\n" +
+    "Structure obligatoire :\n" +
+    "1. Commence par un bloc « l'essentiel » : 3 à 5 puces qui donnent l'idée générale du chapitre.\n" +
+    "2. Puis une section par grande notion : « ## » + UN emoji en rapport + titre court (ex. « ## ⚡ La tension électrique »). Sous-parties avec « ### ».\n" +
+    "3. Termine par un bloc « quiz » de 4 à 6 questions pour se tester.\n\n" +
+    "Blocs encadrés colorés (écris-les exactement ainsi : une ligne « > [!type] Titre optionnel », puis le contenu sur des lignes qui commencent aussi par « > ») :\n" +
+    "> [!essentiel]\n> - idée 1\n> - idée 2\n" +
+    "Types disponibles, chacun a TOUJOURS la même couleur et le même sens :\n" +
+    "- [!def] Terme → une définition (bleu). Le titre est le terme défini, le contenu la définition courte.\n" +
+    "- [!formule] → une formule, une règle ou une loi à connaître par cœur (violet), avec la signification de chaque lettre et son unité.\n" +
+    "- [!exemple] → un exemple concret (vert).\n" +
+    "- [!piege] → une erreur fréquente ou une confusion à éviter (rouge).\n" +
+    "- [!methode] → une méthode en étapes numérotées « 1. », « 2. »... (orange).\n" +
+    "- [!retenir] → LA phrase à savoir par cœur de la section (jaune), une seule par section au maximum.\n" +
+    "- [!astuce] → un moyen mnémotechnique (phrase, acronyme, image mentale) quand il en existe un vrai et utile (rose).\n" +
+    "- [!quiz] → uniquement à la fin : une question par ligne au format « > Question ? => Réponse courte ».\n" +
+    "Un bloc peut contenir des puces, du gras, des formules et même un tableau. N'en abuse pas : un bloc doit garder du sens (pas tout le texte en blocs).\n\n" +
+    "Code couleur dans le texte (même logique que les blocs, à utiliser avec PARCIMONIE, sinon plus rien ne ressort) :\n" +
+    "- {{def:terme}} : un terme important défini dans le cours (bleu), à sa première apparition.\n" +
+    "- {{date:1789}} : une date ou un chiffre clé à retenir (orange).\n" +
+    "- {{piege:texte}} : un mot ou une petite précision piège (rouge).\n" +
+    "- {{ex:texte}} : un exemple glissé dans une phrase (vert).\n" +
+    "- ==texte== : surligné jaune, LA notion centrale d'une section (1 ou 2 par section, quelques mots, jamais une phrase entière).\n" +
+    "- **gras** : les autres mots importants.\n" +
+    "Pas plus d'un mot sur dix en couleur ou en gras.\n\n" +
+    "Disposition (pour que ça ne soit pas qu'une colonne de texte) :\n" +
+    "- Mets côte à côte ce qui va ensemble — deux notions à comparer, une définition et son exemple, un schéma ou une image et son explication — avec un bloc colonnes : une ligne « :::cols », le contenu de la 1re colonne, une ligne « +++ », la 2e colonne (3 colonnes max), puis une ligne « ::: » pour fermer. Chaque colonne peut contenir des blocs [!...], des listes, une image.\n" +
+    "- Comparaison de plusieurs éléments selon les mêmes critères → un tableau.\n" +
+    "- Suite de dates ou d'étapes dans le temps (histoire, évolution, chronologie) → une frise : une ligne « :::frise », puis une ligne par événement « date : événement », puis « ::: ».\n\n" +
+    "Visuels (une fiche sans visuel est beaucoup plus dure à retenir) :\n" +
+    "- Schémas dessinés : mets-en dès qu'un processus, un cycle, une classification, une cause → conséquence ou des relations entre notions peuvent être montrés (1 à 4 schémas, voir \"schemas\").\n" +
+    "- Schémas du cours : le contenu source contient des repères « [SCHÉMA DU COURS figure:ID — légende] ». Quand un de ces schémas aide à comprendre une notion de la fiche, remets-le en écrivant, seul sur sa ligne : ![légende courte](figure:ID) (avec l'ID exact). Ne mets jamais un ID qui n'est pas dans la source.\n" +
+    "- Images de Wikipédia : pour les éléments concrets (personnage, œuvre, lieu, organe, objet...), voir \"images\".\n\n";
   function buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) {
     var sourceBlocks = courses.map(function (co) {
-      return "### Cours : " + co.title + "\n" + stripFigureMarkdown(co.transcription || "");
+      return "### Cours : " + co.title + "\n" + sheetSourceText(co);
     }).join("\n\n");
     var scopeLabel = scope === "course" ? "le contenu retranscrit d'un cours" : scope === "theme" ? "le contenu retranscrit de tous les cours de tout un thème" : "le contenu retranscrit de tous les cours d'un chapitre";
     return "Tu es un assistant pédagogique pour un élève francophone. Voici " + scopeLabel + " intitulé « " + title + " » (matière : " + subjectName + ", " + (scope === "theme" ? "thème" : "chapitre") + " : " + chapterName + ").\n\n" +
@@ -543,13 +603,8 @@
       "Règle importante : si un passage du contenu source correspond mot pour mot à un texte déjà public sur internet (article, site d'analyse littéraire, résumé de manuel, etc.), REFORMULE ce passage avec des mots différents en gardant strictement le même sens et toutes les informations (dates, définitions, courtes citations d'œuvres entre guillemets restent autorisées) plutôt que de le recopier tel quel — sinon la génération est bloquée automatiquement.\n\n" +
       "Génère une fiche de révision ULTRA COMPLÈTE en Markdown qui reprend absolument TOUT ce qu'il y a à savoir dans ce contenu : chaque définition, chaque date, chaque formule ou notation à connaître par cœur, chaque notion clé, chaque règle, chaque tableau à mémoriser. Rien ne doit être coupé, résumé à l'excès ou oublié — ce n'est pas un résumé qui trie, c'est une fiche qui couvre l'intégralité du contenu de façon dense et bien organisée par thème/section, prête à réviser juste avant un contrôle.\n\n" +
       "PRÉCISION CONCRÈTE OBLIGATOIRE : dès que le contenu source mentionne un élément nommé et identifiable — une expérience, un événement, une loi, un texte ou traité, une découverte, un personnage, une technique, un processus... — la fiche doit dire CE QUE C'EST CONCRÈTEMENT, pas seulement son nom ou sa conclusion. Exemple à ne jamais faire : écrire \"une expérience a montré que...\" sans préciser en quoi elle consistait (qui, sur quoi, comment, ce qui a été observé) si le cours source le précise. Si le cours source ne donne pas ce détail, ne l'invente jamais — dans ce cas, contente-toi de ce qui est donné plutôt que de meubler.\n\n" +
-      "Mise en forme — c'est important, une fiche doit avoir l'allure d'une vraie fiche de révision d'élève, pas d'un texte plat et froid :\n" +
-      "- ## et ### pour les titres de section/sous-section (varie les sous-sections, ne mets pas tout au même niveau).\n" +
-      "- ** pour mettre en gras les termes clés à chaque première apparition.\n" +
-      "- __ (double underscore, ex. __terme__) pour souligner un mot ou un chiffre vraiment critique (une date, une unité, un résultat) — à utiliser avec parcimonie, seulement pour ce qui doit sauter aux yeux, jamais pour un paragraphe entier.\n" +
-      "- > (chevron en début de ligne, comme une citation Markdown) pour ENCADRER dans un bloc à part LA chose la plus importante de chaque section à retenir par cœur — une formule clé, une définition centrale, un piège fréquent (\"Attention à ne pas confondre...\"). Un encadré par section max, réservé à ce qui mérite vraiment de ressortir visuellement, jamais pour du contenu secondaire.\n" +
-      "- Des listes à puces (-) pour énumérer, jamais de longs paragraphes denses quand une liste serait plus lisible.\n\n" +
-      "LaTeX obligatoire — règle stricte, applique-la à CHAQUE occurrence sans exception : dès qu'un symbole/nombre a un exposant, un indice, une fraction, une racine, une lettre grecque ou une unité scientifique composée, encadre-le avec $...$ (ou $$...$$ s'il est isolé sur sa ligne), JAMAIS en texte brut. Exemples à respecter littéralement : écris $H_2O$ (jamais \"H2O\"), $CO_2$ (jamais \"CO2\"), $x^2$ (jamais \"x2\" ou \"x^2\" hors $...$), $3 \\times 10^{8}$ (jamais \"3 x 10^8\"), $\\frac{1}{2}$ (jamais \"1/2\" pour une vraie fraction mathématique), $m^3$, $km/h$, $25°C$. Relis mentalement chaque formule/valeur scientifique de \"content\" avant de répondre : si elle contient un exposant, un indice ou un symbole spécial et n'est pas entre $...$, corrige-la. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : le texte doit toujours rester dans la couleur par défaut, utilise le gras (**) ou le soulignement (__) si tu veux mettre quelque chose en valeur.\n\n" +
+      SHEET_LAYOUT_RULES +
+      "LaTeX obligatoire — règle stricte, applique-la à CHAQUE occurrence sans exception : dès qu'un symbole/nombre a un exposant, un indice, une fraction, une racine, une lettre grecque ou une unité scientifique composée, encadre-le avec $...$ (ou $$...$$ s'il est isolé sur sa ligne), JAMAIS en texte brut. Exemples à respecter littéralement : écris $H_2O$ (jamais \"H2O\"), $CO_2$ (jamais \"CO2\"), $x^2$ (jamais \"x2\" ou \"x^2\" hors $...$), $3 \\times 10^{8}$ (jamais \"3 x 10^8\"), $\\frac{1}{2}$ (jamais \"1/2\" pour une vraie fraction mathématique), $m^3$, $km/h$, $25°C$. Relis mentalement chaque formule/valeur scientifique de \"content\" avant de répondre : si elle contient un exposant, un indice ou un symbole spécial et n'est pas entre $...$, corrige-la. N'utilise jamais de commande de couleur LaTeX (\\textcolor, \\colorbox, \\color, etc.) pour surligner un terme : pour mettre quelque chose en valeur, utilise le gras ou le code couleur {{...}} / ==...== décrit plus haut (toujours EN DEHORS des $...$).\n\n" +
       "Si le contenu source comporte un tableau (ou si organiser une notion sous forme de tableau serait plus clair), utilise un vrai tableau Markdown, avec EXACTEMENT ce format (jamais de liste à puces à la place) :\n" +
       "| Colonne 1 | Colonne 2 |\n" +
       "|---|---|\n" +
@@ -561,7 +616,7 @@
   }
   function generateRevisionSheetContent(courses, title, subjectName, chapterName, scope) {
     var parts = [{ text: buildRevisionSheetPrompt(title, subjectName, chapterName, scope, courses) }];
-    return callGemini(parts, REVISION_SHEET_SCHEMA);
+    return callGemini(parts, REVISION_SHEET_SCHEMA, 32768, 240000);
   }
   // Laisser l'IA dessiner un schéma "boîtes reliées par des flèches" en SVG libre a été testé deux fois
   // (consignes anti-chevauchement, puis recherche internet avant de dessiner) et reste systématiquement
@@ -584,11 +639,13 @@
     if (cur) lines.push(cur);
     return lines.length ? lines : [""];
   }
+  // Boîtes pastel à bordure franche et texte foncé : plus doux à l'œil et plus lisible que du blanc sur
+  // couleur vive, tout en gardant une couleur par famille de notions.
   var DIAGRAM_COLORS = {
-    vert: { fill: "#4C8C4A", text: "#fff" }, bleu: { fill: "#2F7FC1", text: "#fff" },
-    jaune: { fill: "#D9A51B", text: "#1c1c1c" }, orange: { fill: "#E8862B", text: "#fff" },
-    rose: { fill: "#D44C80", text: "#fff" }, violet: { fill: "#7A4FC4", text: "#fff" },
-    rouge: { fill: "#D14B35", text: "#fff" }, gris: { fill: "#5b6472", text: "#fff" }
+    vert: { fill: "#E4F3DF", stroke: "#4C8C4A", text: "#1E3B1C" }, bleu: { fill: "#DDEBFA", stroke: "#2F7FC1", text: "#173C5E" },
+    jaune: { fill: "#FFF3C4", stroke: "#D9A51B", text: "#4A3A08" }, orange: { fill: "#FDE6CC", stroke: "#E8862B", text: "#5A300A" },
+    rose: { fill: "#FBDDEA", stroke: "#D44C80", text: "#5C1733" }, violet: { fill: "#EAE1FA", stroke: "#7A4FC4", text: "#2F1B5A" },
+    rouge: { fill: "#FADBD5", stroke: "#D14B35", text: "#5A1A10" }, gris: { fill: "#E9ECF0", stroke: "#5b6472", text: "#252A31" }
   };
   function renderDiagramSvg(rawNodes, rawEdges) {
     var nodes = (rawNodes || []).filter(function (n) { return n && n.id && n.label; });
@@ -600,7 +657,7 @@
     nodes.forEach(function (n) {
       n.col = Math.max(0, n.col | 0); n.row = Math.max(0, n.row | 0);
       maxCol = Math.max(maxCol, n.col); maxRow = Math.max(maxRow, n.row);
-      n._lines = diagramWrapText(n.label, MAX_CHARS);
+      n._lines = diagramWrapText((n.icon ? String(n.icon).trim() + " " : "") + n.label, MAX_CHARS);
       n._subLines = n.sublabel ? diagramWrapText(n.sublabel, MAX_CHARS + 6) : [];
       var longest = 0;
       n._lines.concat(n._subLines).forEach(function (l) { longest = Math.max(longest, l.length); });
@@ -642,10 +699,10 @@
       var label = "";
       if (e.label) {
         var lw = Math.max(32, String(e.label).length * 7.2 + 12);
-        label = '<rect x="' + (mx - lw / 2) + '" y="' + (my - 11) + '" width="' + lw + '" height="20" rx="5" fill="#fff" stroke="#999" stroke-width="1"/>' +
-          '<text x="' + mx + '" y="' + (my + 4) + '" font-size="12" font-weight="700" text-anchor="middle" fill="#222">' + esc(e.label) + '</text>';
+        label = '<rect x="' + (mx - lw / 2) + '" y="' + (my - 11) + '" width="' + lw + '" height="20" rx="10" fill="#fff" stroke="#c9ccd2" stroke-width="1"/>' +
+          '<text x="' + mx + '" y="' + (my + 4) + '" font-size="12" font-weight="700" text-anchor="middle" fill="#3a3f47">' + esc(e.label) + '</text>';
       }
-      return '<line x1="' + p1.x + '" y1="' + p1.y + '" x2="' + p2.x + '" y2="' + p2.y + '" stroke="#333" stroke-width="2" marker-end="url(#diagArrow)"/>' + label;
+      return '<line x1="' + p1.x + '" y1="' + p1.y + '" x2="' + p2.x + '" y2="' + p2.y + '" stroke="#6b7280" stroke-width="2.5" stroke-linecap="round" marker-end="url(#diagArrow)"/>' + label;
     }).join("");
     var nodesSvg = nodes.map(function (n) {
       var palette = DIAGRAM_COLORS[n.color] || DIAGRAM_COLORS.gris;
@@ -657,12 +714,13 @@
         var subLines = n._subLines.map(function (l, idx) { return '<tspan x="' + n._cx + '" dy="' + (idx === 0 ? 0 : SUB_LINE_H) + '">' + esc(l) + '</tspan>'; }).join("");
         subSvg = '<text x="' + n._cx + '" y="' + subY + '" font-size="' + SUBFONT + '" text-anchor="middle" fill="' + palette.text + '" opacity="0.92">' + subLines + '</text>';
       }
-      return '<rect x="' + n._x + '" y="' + n._y + '" width="' + n._w + '" height="' + n._h + '" rx="10" fill="' + palette.fill + '"/>' +
+      return '<rect x="' + (n._x + 3) + '" y="' + (n._y + 4) + '" width="' + n._w + '" height="' + n._h + '" rx="14" fill="rgba(0,0,0,0.10)"/>' +
+        '<rect x="' + n._x + '" y="' + n._y + '" width="' + n._w + '" height="' + n._h + '" rx="14" fill="' + palette.fill + '" stroke="' + palette.stroke + '" stroke-width="2.5"/>' +
         '<text x="' + n._cx + '" y="' + ty + '" font-size="' + FONT + '" font-weight="700" text-anchor="middle" fill="' + palette.text + '">' + lines + '</text>' + subSvg;
     }).join("");
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
       '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
-      '<defs><marker id="diagArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker></defs>' +
+      '<defs><marker id="diagArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker></defs>' +
       edgesSvg + nodesSvg + '</svg>';
   }
   var DIAGRAM_NODE_SCHEMA = {
@@ -673,9 +731,10 @@
       sublabel: { type: "string", description: "Texte secondaire optionnel sous le label (ex. une formule écrite en toutes lettres, JAMAIS de LaTeX/symbole brut) — chaîne vide si inutile." },
       col: { type: "integer", description: "Colonne de la boîte dans une grille (0, 1, 2...) : détermine sa position horizontale." },
       row: { type: "integer", description: "Ligne de la boîte dans une grille (0, 1, 2...) : détermine sa position verticale." },
-      color: { type: "string", description: "Une seule couleur parmi : vert, bleu, jaune, orange, rose, violet, rouge, gris." }
+      color: { type: "string", description: "Une seule couleur parmi : vert, bleu, jaune, orange, rose, violet, rouge, gris. Même couleur pour les boîtes de la même famille (ex. toutes les causes en orange, toutes les conséquences en bleu)." },
+      icon: { type: "string", description: "UN emoji qui illustre la boîte (ex. ☀️ pour le soleil, 🫀 pour le cœur, ⚡ pour l'énergie électrique), ou chaîne vide si aucun ne convient." }
     },
-    required: ["id", "label", "sublabel", "col", "row", "color"]
+    required: ["id", "label", "sublabel", "col", "row", "color", "icon"]
   };
   var DIAGRAM_EDGE_SCHEMA = {
     type: "object",
@@ -810,7 +869,40 @@
     });
   }, 500);
 
+  // Image principale d'un article de Wikipédia (français) : l'API autorise l'appel depuis n'importe quel
+  // site (origin=*). Renvoie l'adresse de la vignette, ou "" s'il n'y en a pas.
+  function fetchWikipediaImage(title) {
+    var url = "https://fr.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=640&titles=" + encodeURIComponent(title);
+    return fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+      var pages = j && j.query && j.query.pages;
+      if (!pages) return "";
+      var p = pages[Object.keys(pages)[0]];
+      return (p && p.thumbnail && p.thumbnail.source) || "";
+    }).catch(function () { return ""; });
+  }
+  // Remplace les jetons [[image:N]] par les images trouvées (les autres jetons sont retirés) et ne garde
+  // que les schémas du cours qui existent vraiment.
+  function placeSheetImages(content, images, schemas, courses) {
+    var known = {};
+    (courses || []).forEach(function (co) { (co.figures || []).forEach(function (f) { known[f.id] = true; }); });
+    content = content.replace(/!\[([^\]]*)\]\(figure:([^)\s]+)\)/g, function (m, cap, id) { return known[id] ? m : ""; });
+    var wanted = (images || []).filter(function (im) { return im && im.placeholder && im.wikipediaTitle; }).slice(0, 4);
+    return Promise.all(wanted.map(function (im) { return fetchWikipediaImage(im.wikipediaTitle); })).then(function (urls) {
+      wanted.forEach(function (im, k) {
+        if (urls[k]) {
+          var id = uid();
+          schemas.push({ id: id, image: urls[k], caption: im.caption || "", credit: "Wikipédia · " + im.wikipediaTitle });
+          content = content.split(im.placeholder).join("![" + String(im.caption || "").replace(/[[\]]/g, "") + "](figure:" + id + ")");
+        } else {
+          content = content.split(im.placeholder).join("");
+        }
+      });
+      return content.replace(/\[\[(?:image|schema):\d+\]\]/g, "");
+    });
+  }
   function runRevisionSheetGeneration(sheet, courses, subjectName, chapterName) {
+    // Régénération d'une fiche déjà prête : si ça échoue, on remet l'ancienne plutôt que de la perdre.
+    var previous = sheet.status === "ready" && sheet.content ? { content: sheet.content, schemas: sheet.schemas, format: sheet.format } : null;
     sheet.status = "processing";
     sheet.error = null;
     genStart(sheet.id, [
@@ -825,13 +917,16 @@
       var schemas = [];
       function next(i) {
         if (i >= pending.length) {
-          genEnd(sheet.id, true);
-          sheet.content = content;
-          sheet.schemas = schemas;
-          sheet.status = "ready";
-          saveDB();
-          toast("Fiche générée · " + sheet.title);
-          render();
+          placeSheetImages(content, data.images, schemas, courses).then(function (finalContent) {
+            genEnd(sheet.id, true);
+            sheet.content = finalContent;
+            sheet.schemas = schemas;
+            sheet.format = 2;
+            sheet.status = "ready";
+            saveDB();
+            toast("Fiche générée · " + sheet.title);
+            render();
+          });
           return;
         }
         var sc = pending[i];
@@ -852,6 +947,14 @@
       next(0);
     }).catch(function (err) {
       genEnd(sheet.id, false);
+      if (previous) {
+        sheet.content = previous.content; sheet.schemas = previous.schemas; sheet.format = previous.format;
+        sheet.status = "ready";
+        saveDB();
+        toast("Échec de la régénération, l'ancienne fiche est gardée : " + (err.message || "erreur inconnue"), { status: err.status || null, detail: err.detail || null });
+        render();
+        return;
+      }
       sheet.status = "error";
       sheet.error = err.message || "Erreur inconnue";
       sheet.errorStatus = err.status || null;
