@@ -1608,6 +1608,119 @@
     astuce: { label: "Astuce mémo", icon: "💡" },
     quiz: { label: "Je vérifie que je sais", icon: "❓" }
   };
+  /* Petits dinos en pixel art qui « présentent » les encadrés et les sections des fiches. Dessinés
+     tournés vers la gauche (vers le texte). b = corps, l = ventre, d = ombre, e = œil, w = crème
+     (cornes, coquille), o = plaques, s = taches. Chaque dino prend la couleur de son encadré. */
+  var FICHE_DINOS = {
+    trex: [
+      "..bbbb........",
+      ".bbbbbb.......",
+      ".bebbbb.......",
+      ".bbbbbbb......",
+      ".....bbb...bb.",
+      "....lbbbbbbbbb",
+      "...dlbbbbbbb.b",
+      "....lbbbbbb...",
+      ".....lbbbb....",
+      ".....dd.bb....",
+      ".....d...b...."
+    ],
+    diplo: [
+      "bbb............",
+      "ebbb...........",
+      "..bb...........",
+      "..bb...........",
+      "..bbbbbbbb.....",
+      "..bbbbbbbbbbb..",
+      "...llllllbbbbbb",
+      "...bb.bb.bb...b",
+      "...dd.dd.dd...."
+    ],
+    tricera: [
+      "......dddd......",
+      ".....dbbbbd.....",
+      "ww..dbbbbbbbbb..",
+      "..wbbbbbbbbbbbb.",
+      ".bebbbbbbbbbbbbb",
+      "wbbbbllllllbbbb.",
+      "...bb.bb..bb.bb.",
+      "...dd.dd..dd.dd."
+    ],
+    stego: [
+      "......o.o.o....",
+      ".....ooooooo...",
+      "....bbbbbbbbb..",
+      ".bbbbbbbbbbbbbo",
+      "bebbbbbbbbbbbb.",
+      ".bbllllllllbb..",
+      "..bb.bb..bb.bb.",
+      "..dd.dd..dd.dd."
+    ],
+    raptor: [
+      "..bbbb.........",
+      ".bbebbb........",
+      "bbbbbb.........",
+      "...bbb.........",
+      "...lbbbbb......",
+      "..dlbbbbbbbbbbb",
+      "...lbbbbb......",
+      "....bb.bb......",
+      "....b...b......",
+      "...dd..dd......"
+    ],
+    ankylo: [
+      "....d.d.d.d.......",
+      "..bbbbbbbbbbb.....",
+      ".bbbbbbbbbbbbbb.dd",
+      "bebbbbbbbbbbbbbbdd",
+      ".bblllllllllbb....",
+      "..bb.bb..bb.bb....",
+      "..dd.dd..dd.dd...."
+    ],
+    ptero: [
+      "........b.....b..",
+      ".......bb....bb..",
+      "......bbb...bbb..",
+      ".....bbbb..bbbb..",
+      "..dd.bbbbbbbbb...",
+      "bbebbbbbllbbb....",
+      "...b..bbbbb......",
+      ".......d..d......"
+    ],
+    bebe: [
+      "...bbbb...",
+      "..bebbbb..",
+      "..bbbbbb..",
+      ".wbwbbwbw.",
+      ".wwwwwwwww",
+      ".wwwswwwww",
+      ".wwwwwwsww",
+      "..wwwwwww.",
+      "...wwwww.."
+    ]
+  };
+  var FICHE_DINO_FOR = { essentiel: "trex", def: "diplo", formule: "tricera", exemple: "stego", piege: "raptor", methode: "ankylo", retenir: "ptero", astuce: "bebe", quiz: "trex" };
+  var FICHE_DINO_COLOR = { essentiel: "#D9A51B", def: "#2F7FC1", formule: "#7A4FC4", exemple: "#4C8C4A", piege: "#D14B35", methode: "#E07B1A", retenir: "#D9A51B", astuce: "#D44C80", quiz: "#5b6472" };
+  var SECTION_DINOS = ["trex", "diplo", "tricera", "stego", "raptor", "ankylo", "ptero"];
+  function mixHex(a, b, t) {
+    var pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    var ch = function (sh) { return Math.round(((pa >> sh) & 255) * (1 - t) + ((pb >> sh) & 255) * t); };
+    return "#" + ((1 << 24) + (ch(16) << 16) + (ch(8) << 8) + ch(0)).toString(16).slice(1);
+  }
+  var ficheDinoCache = {};
+  function ficheDinoHtml(name, color, cls, scale) {
+    scale = scale || 3;
+    var rows = FICHE_DINOS[name];
+    if (!rows) return "";
+    var key = name + color;
+    if (!ficheDinoCache[key]) {
+      var w = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+      var padded = rows.map(function (r) { return r + new Array(w - r.length + 1).join("."); });
+      ficheDinoCache[key] = { src: drawSprite(padded, { b: color, l: mixHex(color, "#ffffff", 0.45), d: mixHex(color, "#000000", 0.35), e: "#1b1b1b", w: "#E6D3A3", o: "#E8862B", s: "#9AD48F" }, 4), w: w, h: rows.length };
+    }
+    var d = ficheDinoCache[key];
+    return '<img class="fiche-dino ' + (cls || "") + '" src="' + d.src + '" width="' + d.w * scale + '" height="' + d.h * scale + '" alt="">';
+  }
   var CALLOUT_ALIASES = { definition: "def", regle: "formule", loi: "formule", ex: "exemple", attention: "piege", erreur: "piege", etapes: "methode", cle: "retenir", important: "retenir", memo: "astuce", mnemo: "astuce", test: "quiz", resume: "essentiel" };
   function calloutType(raw) {
     var k = String(raw || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, "");
@@ -1616,7 +1729,7 @@
   }
   // Légende du code couleur, affichée en tête des fiches.
   function ficheLegendHtml() {
-    return '<div class="fiche-legend"><span class="fl-title">Code couleur :</span>' +
+    return '<div class="fiche-legend">' + ficheDinoHtml("trex", "#4C8C4A", "legend-dino") + '<span class="fl-title">Code couleur :</span>' +
       '<span class="fi fi-def">Définition</span><span class="fl-chip fl-formule">Formule</span><span class="fi fi-date">Date / chiffre</span>' +
       '<span class="fi fi-ex">Exemple</span><span class="fi fi-piege">Piège</span><mark class="fi-key">À retenir</mark><span class="fl-chip fl-astuce">Astuce</span></div>';
   }
@@ -1631,6 +1744,7 @@
     var inList = false;
     var closeList = function () { if (inList) { html += "</" + inList + ">"; inList = false; } };
     var nestedOpts = { nested: true, fiche: opts.fiche };
+    var sectionCount = 0;
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       // Blocs de mise en page : « :::cols » (colonnes séparées par « +++ ») et « :::frise » (une ligne
@@ -1758,7 +1872,7 @@
           } else {
             cbody = mdToHtml(quoteLines.slice(1).join("\n"), figures, nestedOpts);
           }
-          html += '<div class="fc-box fc-' + ctype + '"><div class="fc-head"><span class="fc-icon">' + info.icon + '</span>' +
+          html += '<div class="fc-box fc-' + ctype + (opts.fiche ? " fc-has-dino" : "") + '">' + (opts.fiche ? ficheDinoHtml(FICHE_DINO_FOR[ctype], FICHE_DINO_COLOR[ctype], "fc-dino", 4) : "") + '<div class="fc-head"><span class="fc-icon">' + info.icon + '</span>' +
             (typed[2] && ctype !== "def" ? '<span class="fc-kind">' + info.label + '</span>' : "") + '<span class="fc-title">' + ctitle + '</span></div>' +
             (cbody ? '<div class="fc-body">' + cbody + '</div>' : "") + '</div>';
         } else {
@@ -1769,7 +1883,10 @@
         closeList();
         var headingMatch = /^(#{1,6})\s*(.*)$/.exec(line.trim());
         var tag = headingMatch[1].length <= 2 ? "h3" : "h4";
-        html += "<" + tag + ">" + inlineMdPlain(headingMatch[2]) + "</" + tag + ">";
+        // Fiche : chaque bandeau de section a son dino blanc, une espèce différente à chaque section.
+        var secDino = "";
+        if (opts.fiche && !opts.nested && tag === "h3") secDino = ficheDinoHtml(SECTION_DINOS[(sectionCount++) % SECTION_DINOS.length], "#ffffff", "sec-dino");
+        html += "<" + tag + ">" + (secDino ? '<span class="sec-title">' + inlineMdPlain(headingMatch[2]) + "</span>" + secDino : inlineMdPlain(headingMatch[2])) + "</" + tag + ">";
       }
       else if (/^[-*]\s+/.test(line.trim()) && (opts.fiche || /^-/.test(line.trim()))) {
         if (inList !== "ul") { closeList(); html += "<ul>"; inList = "ul"; }

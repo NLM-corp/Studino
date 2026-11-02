@@ -1406,3 +1406,15 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
    des encadrés et des sous-titres prenait la couleur claire du mode sombre et devenait invisible). */
 #print-area { --text: #1d2430; --text-muted: #5a616b; --surface: #ffffff; --surface-2: #f3f4f6; --border-soft: #cfd4da; --border: #555555; color: #1d2430; }
 .md-hr { border: none; border-top: 2px dashed var(--border-soft); margin: 22px 0; max-width: none; }
+
+/* Petits dinos en pixel art des fiches */
+.fiche-dino { image-rendering: pixelated; image-rendering: crisp-edges; display: inline-block; }
+.fc-has-dino { position: relative; overflow: visible; margin-top: 42px; }
+.fc-dino { position: absolute; right: 16px; bottom: calc(100% - 3px); pointer-events: none; }
+.fiche-col > .fc-has-dino:first-child { margin-top: 42px; }
+.fiche > h3 .sec-title { flex: 1; min-width: 0; }
+.fiche > h3 .sec-dino { flex: none; margin-left: auto; }
+.legend-dino { margin-right: 4px; }
+@media print {
+  .fiche > h3 .sec-dino { float: right; margin-top: -2px; }
+}
