@@ -1394,3 +1394,8 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
   .print-fiche-body .fc-body p { margin: 0 0 4px; }
   .print-fiche-body .fc-box strong { background: none; padding: 0; }
 }
+
+/* Le PDF est imprimé sur fond blanc : texte foncé même si l'appli est en mode sombre (sinon le texte
+   des encadrés et des sous-titres prenait la couleur claire du mode sombre et devenait invisible). */
+#print-area { --text: #1d2430; --text-muted: #5a616b; --surface: #ffffff; --surface-2: #f3f4f6; --border-soft: #cfd4da; --border: #555555; color: #1d2430; }
+.md-hr { border: none; border-top: 2px dashed var(--border-soft); margin: 22px 0; max-width: none; }

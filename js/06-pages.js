@@ -1635,6 +1635,8 @@
       var line = lines[i];
       // Blocs de mise en page : « :::cols » (colonnes séparées par « +++ ») et « :::frise » (une ligne
       // « date : événement » par événement), fermés par « ::: ».
+      // Ligne de séparation « --- » : un trait discret plutôt que les tirets affichés tels quels.
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { closeList(); html += '<hr class="md-hr">'; continue; }
       var blockOpen = /^\s*:::\s*(cols?|colonnes|frise|timeline)\s*$/i.exec(line);
       if (blockOpen) {
         closeList();
