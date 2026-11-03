@@ -204,18 +204,27 @@
           : '<button class="btn btn-sm btn-ghost" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">🥚 ' + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') +
         '<button class="btn btn-sm btn-ghost" onclick="App.dpStartSellDino()">💰 Vendre des dinos</button>' +
         luckHtml + '</div>';
-      tableHtml = '<div class="dp-merchant-table">' +
-        shopItems.map(function (sp) {
+      // Comme chez le vendeur d'objets : seulement la marchandise sur le comptoir. Chaque œuf est dans sa
+      // petite caisse remplie de paille (le marchand les apporte comme ça) ; les infos et le bouton
+      // d'achat apparaissent au survol. Une fois l'œuf acheté, la caisse reste là, vide, jusqu'au
+      // prochain réassort du vendeur.
+      var sold = shopState.sold || [];
+      tableHtml = '<div class="dp-merchant-table dp-merchant-table-objects">' +
+        shopItems.map(function (sp, idx) {
+          var boxBack = '<img class="dp-egg-box-layer" src="assets/objects/ui/caisse_oeuf_fond.png" alt="">';
+          var boxFront = '<img class="dp-egg-box-layer dp-egg-box-front" src="assets/objects/ui/caisse_oeuf_devant.png" alt="">';
+          if (sold[idx]) return '<div class="dp-egg-box dp-egg-box-sold" title="Vendu">' + boxBack + boxFront + '</div>';
           var rarity = DP_RARITY[sp.rarity];
           var canBuy = hasEnclosure && dp.points >= rarity.price;
-          return '<div class="dp-merchant-card">' +
-            dpSquareHtml(sp.id, { className: "dp-egg-img", egg: { zone: zoneId, rarity: sp.rarity } }) +
+          return '<div class="dp-egg-box">' + boxBack +
+            '<img class="dp-egg-box-egg dp-egg-box-egg-' + sp.rarity + '" src="' + dpEggArtPath(zoneId, sp.rarity) + '" alt="' + esc(sp.name) + '">' + boxFront +
+            '<div class="dp-crate-tooltip">' +
             '<div class="dp-egg-name">' + esc(sp.name) + '</div>' +
             '<div class="dp-rarity dp-rarity-' + sp.rarity + '">' + rarity.label + '</div>' +
             '<div class="dp-egg-price mono">' + rarity.price + ' pts</div>' +
-            '<button class="btn btn-sm ' + (canBuy ? "btn-primary" : "btn-ghost") + '" onclick="App.dpBuyEgg(\'' + zoneId + '\',\'' + sp.id + '\')">Acheter</button>' +
+            '<button class="btn btn-sm ' + (canBuy ? "btn-primary" : "btn-ghost") + '" onclick="App.dpBuyEgg(\'' + zoneId + '\',\'' + sp.id + '\',' + idx + ')">Acheter</button>' +
             (hasEnclosure ? "" : '<div class="dp-egg-warn">Enclos requis</div>') +
-            '</div>';
+            '</div></div>';
         }).join("") +
         '</div>';
     }

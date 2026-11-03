@@ -688,7 +688,7 @@
      DANS ce cadre, en % et en unités --u (1 % de sa largeur) : ils restent sur le plateau du comptoir
      quel que soit le zoom ou la taille de la fenêtre. */
   .dp-merchant-bg { position: absolute; left: 50%; top: 50%; z-index: 0; width: max(100vw, calc(100vh * 16 / 9)); height: max(100vh, calc(100vw * 9 / 16)); transform: translate(-50%, -50%); --u: calc(max(100vw, calc(100vh * 16 / 9)) / 100); }
-  .dp-merchant-bg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: block; }
+  .dp-merchant-bg > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: block; }
   .dp-merchant-bg-fallback { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 140px; opacity: 0.35; }
   .dp-merchant-close { position: absolute; top: 20px; right: 20px; z-index: 5; width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); color: #fff; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .dp-merchant-tools { position: absolute; top: 20px; left: 20px; z-index: 5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 90px); }
@@ -1466,3 +1466,15 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
 .modal-dino-fiche .modal-warn { color: #7A5A3A; }
 .modal-dino-fiche .btn-ghost { background: #F4E6C2; color: #3A2614; border-color: #8A5A34; box-shadow: 0 3px 0 #4E2E18; border-radius: 0; }
 .modal-dino-fiche .field label { color: #3A2614; }
+
+/* Marchand d'œufs : chaque œuf dans sa petite caisse de paille sur le comptoir (fond / œuf / façade empilés) */
+.dp-egg-box { position: relative; width: calc(var(--u) * 8.4); aspect-ratio: 42 / 36; flex: none; }
+.dp-egg-box-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.dp-egg-box-egg { position: absolute; left: 50%; bottom: 26%; width: 50%; transform: translateX(-50%); transition: transform .15s ease; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.35)); pointer-events: none; }
+.dp-egg-box:not(.dp-egg-box-sold) { cursor: pointer; }
+.dp-egg-box:not(.dp-egg-box-sold):hover .dp-egg-box-egg { transform: translateX(-50%) translateY(-8%); }
+.dp-egg-box:hover .dp-crate-tooltip { opacity: 1; visibility: visible; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+.dp-egg-box > img:first-child { filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5)); }
+/* les œufs épiques et légendaires ont des étincelles / un halo autour : image plus grande pour un œuf de même taille */
+.dp-egg-box-egg-epique { width: 66%; bottom: 24%; }
+.dp-egg-box-egg-legendaire { width: 66%; bottom: 21%; }

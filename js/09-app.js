@@ -1829,11 +1829,15 @@
       dp.points -= z.cost; dp.unlockedZones.push(zoneId);
       saveDB(); toast("Zone " + z.name + " débloquée !"); render();
     },
-    dpBuyEgg: function (zoneId, speciesId) {
+    dpBuyEgg: function (zoneId, speciesId, idx) {
       var dp = dpData(); var sp = dpSpecies(speciesId); var rarity = DP_RARITY[sp.rarity];
+      var shop = dpShop(zoneId);
+      if (typeof idx === "number" && shop.sold && shop.sold[idx]) { toast("Cette caisse est déjà vide"); return; }
       if (!dpEnclosuresInZone(zoneId).length) { toast("Construis d'abord un enclos dans cette zone"); return; }
       if (dp.points < rarity.price) { dpPlayMerchantSound("noCash"); toast("Pas assez de points"); return; }
       dp.points -= rarity.price; dp.eggs.push({ id: uid(), speciesId: speciesId });
+      // la caisse reste sur le comptoir, vide, jusqu'au prochain réassort du vendeur
+      if (typeof idx === "number") { shop.sold = shop.sold || []; shop.sold[idx] = true; }
       saveDB(); dpPlayMerchantSound("thankyou"); toast("Œuf de " + sp.name + " acheté"); render();
     },
     dpBuildEnclosure: function (zoneId) {
