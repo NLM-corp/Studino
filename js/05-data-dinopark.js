@@ -1446,6 +1446,15 @@
     return 5000 + Math.random() * 5000;
   }
   var DT_DINO_BASE_HEIGHT = 200;
+  // Piste du dino dans les terrains (192 × 108, horizon à y 46) : de t 0.56 à 0.76, soit y 81 à 93.
+  // On garde une marge pour que les pattes restent bien dedans.
+  var DT_LANE_F0 = 0.765, DT_LANE_F1 = 0.835;
+  // Le terrain est en « cover » : sa hauteur affichée vaut max(hauteur de l'écran, largeur × 9/16) et il est
+  // centré verticalement ; on place les pattes à la même hauteur relative, quel que soit l'écran.
+  // Plus bas sur la piste = plus près = devant les autres.
+  function dtLaneStyle(f) {
+    return "bottom:calc(50% + max(100%, 56.25vw) * " + (0.5 - f).toFixed(4) + ");z-index:" + (1 + Math.round((f - DT_LANE_F0) / (DT_LANE_F1 - DT_LANE_F0) * 3));   // 1 à 4, sous les boutons (5)
+  }
   // Échelle de taille propre à DinoTime (chrono + Pomorodosaure) : plus contrastée que celle des
   // enclos pour que le Brachiosaure (le plus lourd) impose vraiment sa taille à l'écran.
   var DT_DINO_MIN_SCALE = 0.45, DT_DINO_MAX_SCALE = 2.2;
@@ -1463,6 +1472,8 @@
       hasArt: !!DP_ART[d.speciesId],
       heightPx: Math.round(DT_DINO_BASE_HEIGHT * dtDinoSizeScale(sp ? sp.weightKg : null)),
       x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
+      // hauteur des pattes dans l'image du terrain (fraction de sa hauteur) : sur la piste dégagée
+      laneF: DT_LANE_F0 + Math.random() * (DT_LANE_F1 - DT_LANE_F0),
       dir: Math.random() < 0.5 ? -1 : 1,
       cycleIdx: cycleIdx,
       mode: DT_CYCLE[cycleIdx],
@@ -1483,7 +1494,7 @@
     var zone = dpZone(enc.zone);
     var bg = dtArtPath(enc.zone, enc.level);
     var dinosHtml = dtRunning.dinos.map(function (ds, i) {
-      return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px">' + dtDinoVisualHtml(ds, i) + '</span>';
+      return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px;' + dtLaneStyle(ds.laneF) + '">' + dtDinoVisualHtml(ds, i) + '</span>';
     }).join("");
     var html = '<div class="dt-scene" style="background-color:' + zone.color + '">' +
       '<img class="dt-scene-bg" src="' + bg + '" alt="" onerror="this.style.display=\'none\'">' +
