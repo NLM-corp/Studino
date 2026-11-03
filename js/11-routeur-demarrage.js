@@ -64,7 +64,16 @@
   // puis on démarre le routeur/rendu normalement — aucune interaction n'est possible avant coup.
   // Appli installable sur l'écran d'accueil (téléphone / ordinateur).
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function (err) { console.warn("Service worker :", err); }); });
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(function (reg) { reg.update(); }).catch(function (err) { console.warn("Service worker :", err); });
+    });
+    // Une nouvelle version vient de prendre la main juste après l'ouverture : on recharge une fois pour
+    // afficher tout de suite les nouvelles images (pas plus tard, pour ne pas couper une séance en cours).
+    var swHadController = !!navigator.serviceWorker.controller, swOpenedAt = Date.now(), swReloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!swHadController || swReloaded || Date.now() - swOpenedAt > 15000) return;
+      swReloaded = true; location.reload();
+    });
   }
   window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installPromptEvent = e; });
   window.addEventListener("appinstalled", function () { installPromptEvent = null; toast("📲 Studino est installé sur ton écran d'accueil !"); });
