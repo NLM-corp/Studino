@@ -694,7 +694,20 @@
   .dp-merchant-close { position: absolute; top: 20px; right: 20px; z-index: 5; width: 44px; height: 44px; padding: 0; border: 8px solid transparent; border-image: url("assets/objects/ui/marchand/bouton_normal.png") 16 fill / 8px round; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; image-rendering: pixelated; }
   .dp-merchant-close:hover { border-image-source: url("assets/objects/ui/marchand/bouton_survol.png"); }
   .dp-merchant-close .dp-ui-ic { width: 22px; height: 22px; margin: 0; }
-  .dp-merchant-tools { position: absolute; top: 20px; left: 20px; z-index: 5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 90px); }
+  /* Les commandes sont réparties autour de l'étal : compteurs en haut à gauche, améliorations à gauche,
+     chance et vente à droite. Sur petit écran, tout revient en haut. */
+  .dp-merchant-tools { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+  .dp-mt-top, .dp-mt-left, .dp-mt-right { position: absolute; display: flex; gap: 10px; pointer-events: auto; }
+  .dp-mt-top { top: 20px; left: 20px; align-items: center; }
+  .dp-mt-left { left: 20px; top: 50%; transform: translateY(-50%); flex-direction: column; align-items: flex-start; }
+  .dp-mt-right { right: 20px; top: 50%; transform: translateY(-50%); flex-direction: column; align-items: flex-end; max-width: 270px; }
+  .dp-mt-right .dp-luck-line { flex-basis: auto; }
+  @media (max-width: 900px) {
+    .dp-merchant-tools { position: absolute; inset: auto; top: 14px; left: 14px; right: 70px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
+    .dp-mt-top, .dp-mt-left, .dp-mt-right { position: static; transform: none; flex-direction: row; flex-wrap: wrap; gap: 6px; max-width: none; }
+    .dp-merchant-tools .dp-wood-btn { font-size: 8px; min-height: 30px; }
+    .dp-mt-right .dp-luck-line { max-width: 100%; box-sizing: border-box; }
+  }
   .dp-ui-ic { width: 18px; height: 18px; image-rendering: pixelated; flex: none; margin-right: 8px; vertical-align: middle; }
   .dp-wood-btn { display: inline-flex; align-items: center; min-height: 36px; padding: 2px 8px; border: 8px solid transparent; border-image: url("assets/objects/ui/marchand/bouton_normal.png") 16 fill / 8px round; background: none; image-rendering: pixelated; font-family: 'Press Start 2P', monospace; font-size: 10px; line-height: 1.4; color: #2A1608; text-shadow: 1px 1px 0 rgba(255,230,180,0.55); cursor: pointer; white-space: nowrap; filter: drop-shadow(0 3px 0 rgba(0,0,0,0.45)); transition: transform .08s; }
   .dp-wood-btn:hover:not(:disabled) { border-image-source: url("assets/objects/ui/marchand/bouton_survol.png"); transform: translateY(-1px); }

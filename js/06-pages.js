@@ -151,13 +151,13 @@
     var toolsHtml, tableHtml;
     var mIc = function (name) { return '<img class="dp-ui-ic" src="assets/objects/ui/marchand/icone_' + name + '.png" alt="">'; };
     if (dpMerchantMode === "objects") {
-      toolsHtml = '<div class="dp-merchant-tools"><span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span></div>';
+      toolsHtml = '<div class="dp-merchant-tools"><div class="dp-mt-top"><span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span></div></div>';
       tableHtml = renderObjectMerchantTable(dp);
     } else if (dpSellMode) {
       var zoneDinos = dp.dinosaurs.filter(function (d) { var dsp = dpSpecies(d.speciesId); return dsp && dsp.zone === zoneId; });
       toolsHtml = '<div class="dp-merchant-tools">' +
-        '<span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span>' +
-        '<button class="dp-wood-btn" onclick="App.dpCancelSellDino()">' + mIc("oeuf") + 'Retour aux œufs</button>' +
+        '<div class="dp-mt-top"><span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span></div>' +
+        '<div class="dp-mt-left"><button class="dp-wood-btn" onclick="App.dpCancelSellDino()">' + mIc("oeuf") + 'Retour aux œufs</button></div>' +
         '</div>';
       tableHtml = !zoneDinos.length
         ? '<div class="dp-merchant-table"><p class="dp-empty-note">Tu n\'as aucun dino de cette zone à vendre.</p></div>'
@@ -195,16 +195,16 @@
         '<span class="dp-luck-hint">par case</span>' +
         '</div>';
       toolsHtml = '<div class="dp-merchant-tools">' +
-        '<span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span>' +
-        '<span class="dp-shop-timer mono">' + mIc("sablier") + '<span id="dp-shop-timer" data-zone="' + zoneId + '" data-bare>' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span></span>' +
-        '<button class="dp-wood-btn" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">' + mIc("rafraichir") + 'Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
+        '<div class="dp-mt-top"><span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span>' +
+        '<span class="dp-shop-timer mono">' + mIc("sablier") + '<span id="dp-shop-timer" data-zone="' + zoneId + '" data-bare>' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span></span></div>' +
+        '<div class="dp-mt-left"><button class="dp-wood-btn" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">' + mIc("rafraichir") + 'Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
         '<button class="dp-wood-btn" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">' +
         mIc("trefle") + (luckMaxed ? "Chance max" : "Chance+ → " + dpLuckPercent(luckLevel + 1) + " % (" + DP_SHOP_LUCK_COST + " pts)") + '</button>' +
         (slotsMaxed
           ? '<button class="dp-wood-btn" disabled>' + mIc("oeuf") + DP_SHOP_SLOTS_MAX + ' œufs (max)</button>'
-          : '<button class="dp-wood-btn" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">' + mIc("oeuf") + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') +
-        '<button class="dp-wood-btn" onclick="App.dpStartSellDino()">' + mIc("sac") + 'Vendre des dinos</button>' +
-        luckHtml + '</div>';
+          : '<button class="dp-wood-btn" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">' + mIc("oeuf") + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') + '</div>' +
+        '<div class="dp-mt-right">' + luckHtml + '<button class="dp-wood-btn" onclick="App.dpStartSellDino()">' + mIc("sac") + 'Vendre des dinos</button></div>' +
+        '</div>';
       // Comme chez le vendeur d'objets : seulement la marchandise sur le comptoir. Chaque œuf est dans sa
       // petite caisse remplie de paille (le marchand les apporte comme ça) ; les infos et le bouton
       // d'achat apparaissent au survol. Une fois l'œuf acheté, la caisse reste là, vide, jusqu'au
