@@ -690,14 +690,28 @@
   .dp-merchant-bg { position: absolute; left: 50%; top: 50%; z-index: 0; width: max(100vw, calc(100vh * 16 / 9)); height: max(100vh, calc(100vw * 9 / 16)); transform: translate(-50%, -50%); --u: calc(max(100vw, calc(100vh * 16 / 9)) / 100); }
   .dp-merchant-bg > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: block; }
   .dp-merchant-bg-fallback { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 140px; opacity: 0.35; }
-  .dp-merchant-close { position: absolute; top: 20px; right: 20px; z-index: 5; width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); color: #fff; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  /* Barre du haut du marchand en pixel art : boutons en planche cloutée, compteurs sur panneau bois et fer */
+  .dp-merchant-close { position: absolute; top: 20px; right: 20px; z-index: 5; width: 44px; height: 44px; padding: 0; border: 8px solid transparent; border-image: url("assets/objects/ui/marchand/bouton_normal.png") 16 fill / 8px round; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; image-rendering: pixelated; }
+  .dp-merchant-close:hover { border-image-source: url("assets/objects/ui/marchand/bouton_survol.png"); }
+  .dp-merchant-close .dp-ui-ic { width: 22px; height: 22px; margin: 0; }
   .dp-merchant-tools { position: absolute; top: 20px; left: 20px; z-index: 5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 90px); }
-  .dp-merchant-tools .dp-shop-timer { background: rgba(0,0,0,0.55); color: #fff; border-color: rgba(255,255,255,0.4); }
-  .dp-luck-line { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: rgba(0,0,0,0.55); color: #fff; border: 2px solid rgba(255,255,255,0.4); border-radius: 12px; padding: 6px 10px; }
-  .dp-luck-main { font-weight: 700; font-size: 13px; margin-right: 2px; }
+  .dp-ui-ic { width: 18px; height: 18px; image-rendering: pixelated; flex: none; margin-right: 8px; vertical-align: middle; }
+  .dp-wood-btn { display: inline-flex; align-items: center; min-height: 36px; padding: 2px 8px; border: 8px solid transparent; border-image: url("assets/objects/ui/marchand/bouton_normal.png") 16 fill / 8px round; background: none; image-rendering: pixelated; font-family: 'Press Start 2P', monospace; font-size: 10px; line-height: 1.4; color: #2A1608; text-shadow: 1px 1px 0 rgba(255,230,180,0.55); cursor: pointer; white-space: nowrap; filter: drop-shadow(0 3px 0 rgba(0,0,0,0.45)); transition: transform .08s; }
+  .dp-wood-btn:hover:not(:disabled) { border-image-source: url("assets/objects/ui/marchand/bouton_survol.png"); transform: translateY(-1px); }
+  .dp-wood-btn:active:not(:disabled) { transform: translateY(2px); filter: none; }
+  .dp-wood-btn:disabled { border-image-source: url("assets/objects/ui/marchand/bouton_off.png"); color: #2E2A28; text-shadow: 1px 1px 0 rgba(255,255,255,0.2); cursor: not-allowed; }
+  .dp-wood-btn:disabled .dp-ui-ic { filter: grayscale(1) brightness(0.8); }
+  .dp-merchant-tools .dp-shop-timer, .dp-luck-line { display: inline-flex; align-items: center; min-height: 36px; padding: 2px 10px; border: 8px solid transparent; border-radius: 0; border-image: url("assets/objects/ui/marchand/panneau.png") 16 fill / 8px round; background: none; image-rendering: pixelated; color: #FFE08A; font-size: 11px; text-shadow: 1px 1px 0 #000; filter: drop-shadow(0 3px 0 rgba(0,0,0,0.45)); }
+  .dp-luck-line { flex-basis: 100%; gap: 6px; flex-wrap: wrap; color: #fff; }
+  .dp-luck-main { font-weight: 400; font-size: 11px; margin-right: 4px; display: inline-flex; align-items: center; color: #FFE08A; }
   .dp-luck-pips { display: inline-flex; gap: 3px; margin-right: 6px; }
-  .dp-luck-pips span { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.7); }
-  .dp-luck-pips span.on { background: #6fd36f; border-color: #6fd36f; }
+  .dp-luck-pips span { width: 8px; height: 8px; background: #1A0F08; box-shadow: inset 0 0 0 2px #6A5A48; }
+  .dp-luck-pips span.on { background: #6fd36f; box-shadow: inset 0 0 0 2px #2E7A2A; }
+  .dp-luck-line .dp-rarity { border-radius: 0; background: #1A0F08; padding: 3px 7px; box-shadow: inset 0 0 0 2px currentColor; }
+  .dp-luck-line .dp-rarity-commun { color: #D8CFC0; }
+  .dp-luck-line .dp-rarity-rare { color: #6EC0FF; }
+  .dp-luck-line .dp-rarity-epique { color: #C890FF; }
+  .dp-luck-line .dp-rarity-legendaire { color: #FFC83A; }
   .dp-luck-hint { font-size: 11px; opacity: 0.75; }
   .dp-merchant-table { position: absolute; left: 50%; bottom: 28.5%; transform: translateX(-50%); z-index: 2; display: flex; gap: calc(var(--u) * 0.6); padding: 0; flex-wrap: nowrap; justify-content: center; align-items: flex-end; width: 56%; }
   .dp-merchant-card { background: rgba(255,255,255,0.16); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); border: 2px solid rgba(255,255,255,0.4); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 168px; box-shadow: 0 6px 14px rgba(0,0,0,0.4); flex: none; }

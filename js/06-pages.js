@@ -149,14 +149,15 @@
     overlay.onclick = function (e) { if (e.target === overlay) App.dpCloseMerchant(); };
 
     var toolsHtml, tableHtml;
+    var mIc = function (name) { return '<img class="dp-ui-ic" src="assets/objects/ui/marchand/icone_' + name + '.png" alt="">'; };
     if (dpMerchantMode === "objects") {
-      toolsHtml = '<div class="dp-merchant-tools"><span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span></div>';
+      toolsHtml = '<div class="dp-merchant-tools"><span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span></div>';
       tableHtml = renderObjectMerchantTable(dp);
     } else if (dpSellMode) {
       var zoneDinos = dp.dinosaurs.filter(function (d) { var dsp = dpSpecies(d.speciesId); return dsp && dsp.zone === zoneId; });
       toolsHtml = '<div class="dp-merchant-tools">' +
-        '<span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span>' +
-        '<button class="btn btn-sm btn-ghost" onclick="App.dpCancelSellDino()">← Retour aux œufs</button>' +
+        '<span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span>' +
+        '<button class="dp-wood-btn" onclick="App.dpCancelSellDino()">' + mIc("oeuf") + 'Retour aux œufs</button>' +
         '</div>';
       tableHtml = !zoneDinos.length
         ? '<div class="dp-merchant-table"><p class="dp-empty-note">Tu n\'as aucun dino de cette zone à vendre.</p></div>'
@@ -186,7 +187,7 @@
       var canLuck = !luckMaxed && dp.points >= DP_SHOP_LUCK_COST;
       var odds = DP_LUCK_ODDS[luckLevel];
       var luckHtml = '<div class="dp-luck-line">' +
-        '<span class="dp-luck-main mono">🍀 Chance ' + dpLuckPercent(luckLevel) + ' %</span>' +
+        '<span class="dp-luck-main mono">' + mIc("trefle") + 'Chance ' + dpLuckPercent(luckLevel) + ' %</span>' +
         '<span class="dp-luck-pips" aria-label="Niveau ' + luckLevel + ' sur ' + DP_LUCK_MAX + '">' + DP_LUCK_ODDS.slice(1).map(function (_, i) { return '<span class="' + (i < luckLevel ? "on" : "") + '"></span>'; }).join("") + '</span>' +
         ["commun", "rare", "epique", "legendaire"].map(function (r) {
           return '<span class="dp-rarity dp-rarity-' + r + '">' + DP_RARITY[r].label + ' ' + odds[r] + ' %</span>';
@@ -194,15 +195,15 @@
         '<span class="dp-luck-hint">par case</span>' +
         '</div>';
       toolsHtml = '<div class="dp-merchant-tools">' +
-        '<span class="dp-shop-timer mono">🪙 <span class="dp-points-value">' + dp.points + '</span></span>' +
-        '<span class="dp-shop-timer mono" id="dp-shop-timer" data-zone="' + zoneId + '">⏳ ' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span>' +
-        '<button class="btn btn-sm btn-ghost" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">🔄 Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
-        '<button class="btn btn-sm btn-ghost" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">' +
-        (luckMaxed ? "🍀 Chance max" : "🍀 Chance+ → " + dpLuckPercent(luckLevel + 1) + " % (" + DP_SHOP_LUCK_COST + " pts)") + '</button>' +
+        '<span class="dp-shop-timer mono">' + mIc("piece") + '<span class="dp-points-value">' + dp.points + '</span></span>' +
+        '<span class="dp-shop-timer mono">' + mIc("sablier") + '<span id="dp-shop-timer" data-zone="' + zoneId + '" data-bare>' + dpFormatCountdown(shopState.expiresAt - Date.now()) + '</span></span>' +
+        '<button class="dp-wood-btn" ' + (canRefresh ? "" : "disabled") + ' onclick="App.dpRefreshShop(\'' + zoneId + '\')">' + mIc("rafraichir") + 'Rafraîchir (' + DP_SHOP_REFRESH_COST + ' pts)</button>' +
+        '<button class="dp-wood-btn" ' + (canLuck ? "" : "disabled") + ' onclick="App.dpLuckShop(\'' + zoneId + '\')">' +
+        mIc("trefle") + (luckMaxed ? "Chance max" : "Chance+ → " + dpLuckPercent(luckLevel + 1) + " % (" + DP_SHOP_LUCK_COST + " pts)") + '</button>' +
         (slotsMaxed
-          ? '<button class="btn btn-sm btn-ghost" disabled>🥚 ' + DP_SHOP_SLOTS_MAX + ' œufs (max)</button>'
-          : '<button class="btn btn-sm btn-ghost" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">🥚 ' + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') +
-        '<button class="btn btn-sm btn-ghost" onclick="App.dpStartSellDino()">💰 Vendre des dinos</button>' +
+          ? '<button class="dp-wood-btn" disabled>' + mIc("oeuf") + DP_SHOP_SLOTS_MAX + ' œufs (max)</button>'
+          : '<button class="dp-wood-btn" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">' + mIc("oeuf") + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') +
+        '<button class="dp-wood-btn" onclick="App.dpStartSellDino()">' + mIc("sac") + 'Vendre des dinos</button>' +
         luckHtml + '</div>';
       // Comme chez le vendeur d'objets : seulement la marchandise sur le comptoir. Chaque œuf est dans sa
       // petite caisse remplie de paille (le marchand les apporte comme ça) ; les infos et le bouton
@@ -236,7 +237,7 @@
       // les produits sont DANS le cadre de l'image : ils restent sur le plateau du comptoir quel que soit le zoom
       tableHtml +
       '</div>' +
-      '<button class="dp-merchant-close" onclick="App.dpCloseMerchant()">✕</button>' +
+      '<button class="dp-merchant-close" onclick="App.dpCloseMerchant()" aria-label="Fermer">' + mIc("fermer") + '</button>' +
       toolsHtml;
     document.body.appendChild(overlay);
   }

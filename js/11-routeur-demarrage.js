@@ -92,7 +92,7 @@
         if (!shop) return;
         var remain = shop.expiresAt - Date.now();
         if (remain <= 0) { render(); return; }
-        el.textContent = "⏳ " + dpFormatCountdown(remain);
+        el.textContent = (el.hasAttribute("data-bare") ? "" : "⏳ ") + dpFormatCountdown(remain);   // data-bare : l'icône est déjà à côté
       });
       document.querySelectorAll(".dp-inc-timer").forEach(function (el) {
         var i = +el.getAttribute("data-slot");
