@@ -1345,6 +1345,97 @@
   function dtArtPath(zoneId, level) {
     return "assets/dinotime/enclos_" + (DP_DINOTIME_ZONE_FOLDER[zoneId] || zoneId) + "_level" + level + ".png";
   }
+  // ---- Dinos animés : planches d'images côte à côte (w × h = une image, ms = durée d'une image).
+  // « marche » : stride = distance parcourue par un cycle de pas, en pixels de l'image, pour caler
+  // les pattes sur la vitesse réelle (pas de glissade).
+  var DP_ANIM = {
+    compsognathus: {
+      marche: { file: "Compsognathus_marche.png", n: 8, w: 90, h: 40, ms: 95, stride: 16.4 },
+      repos: { file: "Compsognathus_repos.png", n: 12, w: 90, h: 40, ms: 170 },
+      regard: { file: "Compsognathus_regard.png", n: 12, w: 56, h: 43, ms: 170 }
+    }
+  };
+  function dpAnim(speciesId, kind) {
+    var set = DP_ANIM[speciesId], a = set && set[kind], art = DP_ART[speciesId];
+    if (!a || !art) return null;
+    var sp = dpSpecies(speciesId);
+    return { url: "assets/dinos/" + (sp ? DP_ENCLOS_ZONE_FOLDER[sp.zone] : "") + "/" + art.folder + "/" + a.file, n: a.n, w: a.w, h: a.h, ms: a.ms, stride: a.stride };
+  }
+  function dpAnimStyle(a, durMs) {
+    return "background-image:url('" + a.url + "');aspect-ratio:" + a.w + "/" + a.h + ";--n:" + a.n + ";--dur:" + Math.round(durMs || a.n * a.ms) + "ms";
+  }
+  function dpApplyAnim(el, a, durMs) {
+    el.style.backgroundImage = "url('" + a.url + "')";
+    el.style.aspectRatio = a.w + "/" + a.h;
+    el.style.setProperty("--n", a.n);
+    el.style.setProperty("--dur", Math.round(durMs || a.n * a.ms) + "ms");
+    el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";   // repart de la première image
+  }
+
+  // ---- Décor vivant de l'enclos : 3 positions de vent pour les arbres, nuages qui dérivent,
+  // oiseaux (ou poissons) qui passent, braises sur le volcan, flocons en arctique.
+  var DT_SKY_ZONES = { foret: 1, plaine: 1, desert: 1, arctique: 1 };
+  function dtAnimFrame(zoneId, level, i) { return "assets/dinotime/anim/enclos_" + (DP_DINOTIME_ZONE_FOLDER[zoneId] || zoneId) + "_level" + level + "_" + i + ".png"; }
+  function dtDecorHtml(zoneId, level) {
+    var h = '<div class="dt-stage" id="dt-stage">';
+    for (var i = 0; i < 3; i++) h += '<img class="dt-stage-frame" id="dt-wind-' + i + '" src="' + dtAnimFrame(zoneId, level, i) + '" alt=""' + (i ? ' style="visibility:hidden"' : "") + ' onerror="this.remove()">';
+    if (DT_SKY_ZONES[zoneId]) [[22, 6, "petit", 210], [82, 12, "grand", 260], [122, 4, "petit", 190], [170, 15, "grand", 300]].forEach(function (c) {
+      var wpx = c[2] === "grand" ? 36 : 28, x = c[0] / 192 * 100, dur = c[3];
+      h += '<img class="dt-cloud" src="assets/dinotime/anim/nuage_' + c[2] + '.png" alt="" style="top:' + (c[1] / 108 * 100).toFixed(2) + '%;width:' + (wpx / 192 * 100).toFixed(2) + '%;animation-duration:' + dur + 's;animation-delay:-' + ((x + 20) / 130 * dur).toFixed(1) + 's">';
+    });
+    return h + "</div>";
+  }
+  var dtDecorTimers = [];
+  function dtStopDecor() { dtDecorTimers.forEach(clearTimeout); dtDecorTimers = []; }
+  function dtLater(fn, ms) { dtDecorTimers.push(setTimeout(fn, ms)); }
+  function dtStageAlive() { return document.getElementById("dt-stage"); }
+  function dtStartDecor(zoneId) {
+    dtStopDecor();
+    if (!dtStageAlive()) return;
+    var show = function (i) { for (var k = 0; k < 3; k++) { var f = document.getElementById("dt-wind-" + k); if (f) f.style.visibility = k === i ? "visible" : "hidden"; } };
+    // coups de vent : de temps en temps les arbres se balancent quelques fois, puis tout se calme
+    var gust = function () {
+      if (!dtStageAlive()) return;
+      var seq = [1, 0, 2, 0, 1, 0], n = Math.random() < 0.4 ? 6 : 4, j = 0;
+      var step = function () {
+        if (!dtStageAlive()) return;
+        show(j < n ? seq[j] : 0); j++;
+        if (j <= n) dtLater(step, 380 + Math.random() * 160); else dtLater(gust, 2500 + Math.random() * 6000);
+      };
+      step();
+    };
+    dtLater(gust, 1500 + Math.random() * 3000);
+    // passants : un petit groupe d'oiseaux (ou de poissons sous l'eau) traverse de temps en temps
+    var passers = function () {
+      var st = dtStageAlive(); if (!st) return;
+      var fish = zoneId === "marine", count = 1 + Math.floor(Math.random() * 3), rev = Math.random() < 0.5;
+      var top = fish ? 22 + Math.random() * 30 : 4 + Math.random() * 22, dur = (fish ? 18 : 11) + Math.random() * 6, scale = 0.55 + Math.random() * 0.5;
+      for (var b = 0; b < count; b++) {
+        var el = document.createElement("div");
+        el.className = "dt-critter " + (fish ? "dt-fish" : "dt-bird") + (rev ? " dt-critter-rev" : "");
+        el.style.top = (top + (Math.random() - 0.5) * 5).toFixed(2) + "%";
+        el.style.width = (9 / 192 * 100 * scale).toFixed(2) + "%";
+        el.style.animationDuration = dur.toFixed(1) + "s, " + (fish ? 0.5 : 0.28 + Math.random() * 0.12).toFixed(2) + "s";
+        el.style.animationDelay = (b * 0.6 + Math.random() * 0.4).toFixed(2) + "s, 0s";
+        el.addEventListener("animationend", function (e) { if (e.animationName.indexOf("dtFly") === 0) this.remove(); });
+        st.appendChild(el);
+      }
+      dtLater(passers, 7000 + Math.random() * 12000);
+    };
+    if (zoneId !== "volcanique") dtLater(passers, 2000 + Math.random() * 4000);
+    // particules : braises qui montent du volcan, flocons qui tombent en arctique
+    var particle = function (cls, x, y, dur, dx) {
+      var st = dtStageAlive(); if (!st) return;
+      var el = document.createElement("div");
+      el.className = cls; el.style.left = x.toFixed(2) + "%"; el.style.top = y.toFixed(2) + "%";
+      el.style.animationDuration = dur.toFixed(1) + "s"; el.style.setProperty("--dx", dx.toFixed(1) + "vw");
+      el.addEventListener("animationend", function () { this.remove(); });
+      st.appendChild(el);
+    };
+    if (zoneId === "volcanique") { var embers = function () { if (!dtStageAlive()) return; particle("dt-ember", Math.random() * 100, 55 + Math.random() * 40, 4 + Math.random() * 4, (Math.random() - 0.5) * 6); dtLater(embers, 250 + Math.random() * 450); }; embers(); }
+    if (zoneId === "arctique") { var flakes = function () { if (!dtStageAlive()) return; particle("dt-flake", Math.random() * 105 - 5, -3, 9 + Math.random() * 6, 2 + Math.random() * 6); dtLater(flakes, 220 + Math.random() * 380); }; flakes(); }
+  }
+
   function dtAllEnclosures() { return dpData().enclosures.slice(); }
   function dtEnclosureDinos(encId) { return dpData().dinosaurs.filter(function (d) { return d.enclosureId === encId; }); }
 
@@ -1470,6 +1561,7 @@
     return {
       speciesId: d.speciesId,
       hasArt: !!DP_ART[d.speciesId],
+      anim: !!(DP_ANIM[d.speciesId] && DP_ART[d.speciesId]),
       heightPx: Math.round(DT_DINO_BASE_HEIGHT * dtDinoSizeScale(sp ? sp.weightKg : null)),
       x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
       // hauteur des pattes dans l'image du terrain (fraction de sa hauteur) : sur la piste dégagée
@@ -1484,6 +1576,7 @@
     };
   }
   function dtDinoVisualHtml(ds, i) {
+    if (ds.anim) return '<div class="dt-dino dt-anim" id="dt-dino-' + i + '" style="' + dpAnimStyle(dpAnim(ds.speciesId, "repos")) + '"></div>';
     if (ds.hasArt) return '<img class="dt-dino" id="dt-dino-' + i + '" src="' + dpArtPath(ds.speciesId, "profil") + '" alt="">';
     return '<div class="dt-dino dt-dino-fallback" id="dt-dino-' + i + '" style="background:' + dpHashColor(ds.speciesId) + ';height:' + ds.heightPx + 'px"></div>';
   }
@@ -1498,6 +1591,7 @@
     }).join("");
     var html = '<div class="dt-scene" style="background-color:' + zone.color + '">' +
       '<img class="dt-scene-bg" src="' + bg + '" alt="" onerror="this.style.display=\'none\'">' +
+      dtDecorHtml(enc.zone, enc.level) +
       '<button class="dt-stop" onclick="App.dtStop()">✕</button>' +
       '<button class="dt-pause" id="dt-pause-btn" onclick="App.dtTogglePause()">⏸</button>' +
       '<div class="dt-timer mono" id="dt-timer-display">' + dpFormatCountdown(dtRunning.remainingSec * 1000) + '</div>' +
@@ -1506,6 +1600,7 @@
     document.getElementById("app").innerHTML = html;
     dtEnsureTimerInterval();
     dtStartWalkLoop();
+    dtStartDecor(enc.zone);
   }
 
   var DT_POMO_PHASE_LABEL = { work: "Travail", break: "☕ Pause courte" };
@@ -1526,8 +1621,11 @@
     var looking = p.phase !== "work";
     var artPath = sp ? dpArtPath(sp.id, looking ? "face" : "profil") : null;
     var pomoScale = dtDinoSizeScale(sp ? sp.weightKg : null);
-    var dinoHtml;
-    if (artPath) {
+    var dinoHtml, pomoAnim = sp ? dpAnim(sp.id, looking ? "regard" : "marche") : null;
+    if (pomoAnim) {
+      // dino animé : il marche pendant le travail, il te regarde et respire pendant la pause
+      dinoHtml = '<div class="dt-pomo-dino dt-anim" style="height:' + Math.round(DT_POMO_DINO_BASE_HEIGHT * pomoScale) + 'px;' + dpAnimStyle(pomoAnim, looking ? null : pomoAnim.n * pomoAnim.ms * 2) + '"></div>';
+    } else if (artPath) {
       dinoHtml = '<img class="dt-pomo-dino' + (looking ? " sprite-bob" : "") + '" src="' + artPath + '" alt="" style="height:' + Math.round(DT_POMO_DINO_BASE_HEIGHT * pomoScale) + 'px" onerror="this.style.display=\'none\'">';
     } else if (sp) {
       dinoHtml = '<div class="dt-pomo-dino-fallback' + (looking ? " sprite-bob" : "") + '" style="background:' + dpHashColor(sp.id) + ';height:' + Math.round(DT_POMO_DINO_FALLBACK_H * pomoScale) + 'px;width:' + Math.round(DT_POMO_DINO_FALLBACK_W * pomoScale) + 'px"></div>';
@@ -1613,8 +1711,13 @@
         }
         wrap.style.transform = "translateX(-50%) " + (ds.mode === "look" ? "scaleX(1)" : (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)"));
         if (ds.mode !== ds.lastMode) {
-          img.classList.toggle("dt-dino-walking", ds.mode === "walk");
-          if (ds.hasArt) img.src = dpArtPath(ds.speciesId, ds.mode === "look" ? "face" : "profil");
+          if (ds.anim) {
+            // marche : la durée d'un cycle de pas est calée sur la vitesse, pour que les pieds ne glissent pas
+            var a = dpAnim(ds.speciesId, ds.mode === "walk" ? "marche" : ds.mode === "look" ? "regard" : "repos");
+            var cycleMs = ds.mode === "walk" && a.stride ? a.stride * (ds.heightPx / a.h) / (ds.speed * window.innerWidth / 100) : null;
+            dpApplyAnim(img, a, cycleMs ? Math.max(450, Math.min(2400, cycleMs)) : null);
+          } else img.classList.toggle("dt-dino-walking", ds.mode === "walk");
+          if (ds.hasArt && !ds.anim) img.src = dpArtPath(ds.speciesId, ds.mode === "look" ? "face" : "profil");
           ds.lastMode = ds.mode;
         }
         ds.lastTs = ts;

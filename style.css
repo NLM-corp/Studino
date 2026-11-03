@@ -874,6 +874,31 @@
   .dt-dino-walking { animation: dtBob 0.6s ease-in-out infinite alternate; }
   .dt-scene.paused .dt-dino-walking { animation-play-state: paused; }
   @keyframes dtBob { from { transform: translateY(0); } to { transform: translateY(-5px); } }
+  /* Dinos animés : planche d'images côte à côte, une image à la fois (--n images, --dur pour le cycle) */
+  .dt-anim { background-repeat: no-repeat; background-size: calc(var(--n) * 100%) 100%; image-rendering: pixelated; animation: dtSheet var(--dur) steps(var(--n)) infinite; }
+  .dt-dino-wrap .dt-anim { height: 100%; width: auto; filter: drop-shadow(0 8px 6px rgba(0,0,0,0.35)); }
+  @keyframes dtSheet { from { background-position: 0 0; } to { background-position: calc(100% * var(--n) / (var(--n) - 1)) 0; } }
+  .dt-scene.paused .dt-anim { animation-play-state: paused; }
+  .dt-pomo-runner.working .dt-pomo-dino.dt-anim { animation: dtSheet var(--dur) steps(var(--n)) infinite; }
+  .dt-pomo-scene.paused .dt-pomo-dino.dt-anim { animation-play-state: paused; }
+  /* Décor vivant : calé sur le terrain (même cadrage « cover » 16:9), sous les dinos et les boutons */
+  .dt-stage { position: absolute; left: 50%; top: 50%; width: max(100%, calc(100vh * 16 / 9)); height: max(100%, 56.25vw); transform: translate(-50%, -50%); overflow: hidden; pointer-events: none; z-index: 0; }
+  .dt-stage-frame { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+  .dt-cloud { position: absolute; left: -20%; height: auto; image-rendering: pixelated; animation: dtCloud linear infinite; }
+  @keyframes dtCloud { from { left: -20%; } to { left: 110%; } }
+  .dt-critter { position: absolute; left: -6%; aspect-ratio: 9 / 4; background-size: 200% 100%; background-repeat: no-repeat; image-rendering: pixelated; animation-name: dtFly, dtFlap; animation-timing-function: linear, step-end; animation-iteration-count: 1, infinite; animation-fill-mode: forwards, none; }
+  .dt-critter-rev { animation-name: dtFlyRev, dtFlap; }
+  .dt-bird { background-image: url("assets/dinotime/anim/oiseau.png"); }
+  .dt-fish { background-image: url("assets/dinotime/anim/poisson.png"); aspect-ratio: 9 / 5; transform: scaleX(-1); }
+  .dt-fish.dt-critter-rev { transform: none; }
+  @keyframes dtFly { from { left: -6%; } to { left: 106%; } }
+  @keyframes dtFlyRev { from { left: 106%; } to { left: -6%; } }
+  @keyframes dtFlap { 0%, 100% { background-position: 0 0; } 50% { background-position: 100% 0; } }
+  .dt-ember, .dt-flake { position: absolute; width: calc(100% / 192); aspect-ratio: 1; animation-timing-function: ease-out; animation-fill-mode: forwards; }
+  .dt-ember { background: #FFB020; box-shadow: 0 0 6px 2px rgba(255, 120, 30, 0.7); animation-name: dtRise; }
+  .dt-flake { background: #FFFFFF; opacity: 0.9; animation-name: dtFall; animation-timing-function: linear; }
+  @keyframes dtRise { from { transform: translate(0, 0); opacity: 1; } to { transform: translate(var(--dx), -38vh); opacity: 0; } }
+  @keyframes dtFall { from { transform: translate(0, 0); } to { transform: translate(var(--dx), 105vh); } }
 
   .dt-pomo-fields { display: flex; flex-wrap: wrap; gap: 18px; }
   .dt-pomo-field-card {
