@@ -879,6 +879,13 @@
   .dt-dino-wrap .dt-anim { height: 100%; width: auto; filter: drop-shadow(0 8px 6px rgba(0,0,0,0.35)); }
   @keyframes dtSheet { from { background-position: 0 0; } to { background-position: calc(100% * var(--n) / (var(--n) - 1)) 0; } }
   .dt-scene.paused .dt-anim { animation-play-state: paused; }
+  /* une seule fois (transition « il se tourne vers toi »), à l'endroit ou à l'envers ; s'arrête sur la dernière image */
+  .dt-anim.dt-once { animation: dtSheetOnce var(--dur) steps(var(--n), jump-none) 1 forwards; }
+  .dt-anim.dt-once.dt-rev { animation-name: dtSheetOnceRev; }
+  @keyframes dtSheetOnce { from { background-position: 0 0; } to { background-position: 100% 0; } }
+  @keyframes dtSheetOnceRev { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  .dt-pomo-runner.working .dt-pomo-dino.dt-anim.dt-once { animation: dtSheetOnce var(--dur) steps(var(--n), jump-none) 1 forwards; }
+  .dt-pomo-runner.working .dt-pomo-dino.dt-anim.dt-once.dt-rev { animation-name: dtSheetOnceRev; }
   .dt-pomo-runner.working .dt-pomo-dino.dt-anim { animation: dtSheet var(--dur) steps(var(--n)) infinite; }
   .dt-pomo-scene.paused .dt-pomo-dino.dt-anim { animation-play-state: paused; }
   /* Décor vivant : calé sur le terrain (même cadrage « cover » 16:9), sous les dinos et les boutons */
