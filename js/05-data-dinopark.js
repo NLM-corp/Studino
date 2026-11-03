@@ -1348,6 +1348,8 @@
   // ---- Dinos animés : planches d'images côte à côte (w × h = une image, ms = durée d'une image).
   // Toutes les planches d'un dino ont le même format, pieds au même endroit : pas de saut entre deux.
   // « tourne » : il tourne la tête et le corps vers le joueur (jouée à l'envers quand il repart).
+  // « demitour » : il se tourne vers le joueur en se recentrant sur ses hanches (pivot, en px de l'image) ;
+  // la dernière image est symétrique, on la retourne là puis on rejoue la planche à l'envers.
   // « marche » : stride = distance parcourue par un cycle de pas, en pixels de l'image, pour caler
   // les pattes sur la vitesse réelle (pas de glissade).
   var DP_ANIM = {
@@ -1355,6 +1357,7 @@
       marche: { file: "Compsognathus_marche.png", n: 8, w: 90, h: 43, ms: 95, stride: 16.4 },
       repos: { file: "Compsognathus_repos.png", n: 12, w: 90, h: 43, ms: 170 },
       tourne: { file: "Compsognathus_tourne.png", n: 4, w: 90, h: 43, ms: 110 },
+      demitour: { file: "Compsognathus_demitour.png", n: 4, w: 90, h: 43, ms: 120, pivot: 33.4 },
       regard: { file: "Compsognathus_regard.png", n: 12, w: 90, h: 43, ms: 170 }
     }
   };
@@ -1362,7 +1365,14 @@
     var set = DP_ANIM[speciesId], a = set && set[kind], art = DP_ART[speciesId];
     if (!a || !art) return null;
     var sp = dpSpecies(speciesId);
-    return { url: "assets/dinos/" + (sp ? DP_ENCLOS_ZONE_FOLDER[sp.zone] : "") + "/" + art.folder + "/" + a.file, n: a.n, w: a.w, h: a.h, ms: a.ms, stride: a.stride };
+    return { url: "assets/dinos/" + (sp ? DP_ENCLOS_ZONE_FOLDER[sp.zone] : "") + "/" + art.folder + "/" + a.file, n: a.n, w: a.w, h: a.h, ms: a.ms, stride: a.stride, pivot: a.pivot };
+  }
+  // charge toutes les planches d'un dino d'avance : sinon, la première fois qu'une animation se joue,
+  // l'image n'est pas encore arrivée et le dino disparaît un instant
+  var dpAnimLoaded = {};
+  function dpPreloadAnim(speciesId) {
+    if (dpAnimLoaded[speciesId] || !DP_ANIM[speciesId]) return;
+    dpAnimLoaded[speciesId] = Object.keys(DP_ANIM[speciesId]).map(function (k) { var im = new Image(), a = dpAnim(speciesId, k); if (a) im.src = a.url; return im; });
   }
   function dpAnimStyle(a, durMs) {
     return "background-image:url('" + a.url + "');aspect-ratio:" + a.w + "/" + a.h + ";--n:" + a.n + ";--dur:" + Math.round(durMs || a.n * a.ms) + "ms";
@@ -1598,7 +1608,10 @@
     var zone = dpZone(enc.zone);
     var bg = dtArtPath(enc.zone, enc.level);
     var dinosHtml = dtRunning.dinos.map(function (ds, i) {
-      return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px;' + dtLaneStyle(ds.laneF) + '">' + dtDinoVisualHtml(ds, i) + '</span>';
+      // dino animé : il se retourne autour de ses hanches (pas du centre de l'image), sinon il « sauterait »
+      var pivot = ds.anim ? dpAnim(ds.speciesId, "demitour") : null;
+      if (ds.anim) dpPreloadAnim(ds.speciesId);
+      return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px;' + dtLaneStyle(ds.laneF) + (pivot && pivot.pivot ? ";transform-origin:" + (pivot.pivot / pivot.w * 100).toFixed(1) + "% 100%" : "") + '">' + dtDinoVisualHtml(ds, i) + '</span>';
     }).join("");
     var html = '<div class="dt-scene" style="background-color:' + zone.color + '">' +
       '<img class="dt-scene-bg" src="' + bg + '" alt="" onerror="this.style.display=\'none\'">' +
@@ -1634,6 +1647,7 @@
     var artPath = sp ? dpArtPath(sp.id, looking ? "face" : "profil") : null;
     var pomoScale = dtDinoSizeScale(sp ? sp.weightKg : null);
     var dinoHtml, pomoAnim = sp ? dpAnim(sp.id, looking ? "regard" : "marche") : null;
+    if (pomoAnim) dpPreloadAnim(sp.id);
     if (pomoAnim) {
       // dino animé : il marche pendant le travail, il te regarde et respire pendant la pause
       dinoHtml = '<div class="dt-pomo-dino dt-anim" id="dt-pomo-dino" style="height:' + Math.round(DT_POMO_DINO_BASE_HEIGHT * pomoScale) + 'px;' + dpAnimStyle(pomoAnim, looking ? null : pomoAnim.n * pomoAnim.ms * 2) + '"></div>';
@@ -1706,6 +1720,24 @@
     dtWalkRaf = requestAnimationFrame(dtTickWalk);
   }
 
+  // durée d'un cycle de pas calée sur la vitesse, pour que les pieds ne glissent pas sur le sol
+  function dtWalkCycleMs(ds, a) {
+    if (!a.stride) return null;
+    return Math.max(450, Math.min(2400, a.stride * (ds.heightPx / a.h) / (ds.speed * window.innerWidth / 100)));
+  }
+  // demi-tour : il se tourne vers toi en pivotant sur ses hanches, puis repart de l'autre côté
+  // (la planche se termine sur une image symétrique : on la retourne là, puis on la rejoue à l'envers)
+  function dtStartUTurn(ds, el) {
+    var u = dpAnim(ds.speciesId, "demitour"), walkA = dpAnim(ds.speciesId, "marche");
+    ds.wantFlip = false;
+    if (!u) { ds.dir *= -1; return; }
+    ds.turning = true;
+    dpPlayOnce(el, u, false, function () {
+      ds.dir *= -1;
+      var wrap = el.parentNode; if (wrap) wrap.style.transform = "translateX(-50%) " + (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)");
+      dpPlayOnce(el, u, true, function () { ds.turning = false; dpApplyAnim(el, walkA, dtWalkCycleMs(ds, walkA)); });
+    });
+  }
   function dtTickWalk(ts) {
     if (!dtRunning || !document.querySelector(".dt-scene")) { dtWalkRaf = null; return; }
     if (!dtRunning.paused) {
@@ -1713,34 +1745,38 @@
         var wrap = document.getElementById("dt-dino-wrap-" + i);
         var img = document.getElementById("dt-dino-" + i);
         if (!wrap || !img) return;
-        if (ts > ds.modeUntil) {
+        // pendant un demi-tour, il finit son mouvement avant de changer d'activité
+        if (ts > ds.modeUntil && !ds.turning) {
           ds.cycleIdx = (ds.cycleIdx + 1) % DT_CYCLE.length;
           ds.mode = DT_CYCLE[ds.cycleIdx];
           ds.modeUntil = ts + dtDurationFor(ds.mode);
-          if (ds.mode === "walk" && Math.random() < 0.5) ds.dir *= -1;
+          if (ds.mode === "walk" && Math.random() < 0.5) { if (ds.anim) ds.wantFlip = true; else ds.dir *= -1; }
         }
-        var dt = ds.lastTs ? (ts - ds.lastTs) : 16;
-        if (ds.mode === "walk") {
-          ds.x += ds.dir * ds.speed * dt;
-          if (ds.x < DT_MIN_X) { ds.x = DT_MIN_X; ds.dir = 1; }
-          if (ds.x > DT_MAX_X) { ds.x = DT_MAX_X; ds.dir = -1; }
-          wrap.style.left = ds.x + "%";
-        }
-        // un dino animé garde son sens quand il te regarde (il tourne juste la tête et le corps vers toi)
-        wrap.style.transform = "translateX(-50%) " + (ds.mode === "look" && !ds.anim ? "scaleX(1)" : (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)"));
         if (ds.mode !== ds.lastMode) {
           if (ds.anim) {
-            // marche : la durée d'un cycle de pas est calée sur la vitesse, pour que les pieds ne glissent pas
             var a = dpAnim(ds.speciesId, ds.mode === "walk" ? "marche" : ds.mode === "look" ? "regard" : "repos");
-            var cycleMs = ds.mode === "walk" && a.stride ? a.stride * (ds.heightPx / a.h) / (ds.speed * window.innerWidth / 100) : null;
+            var cycleMs = ds.mode === "walk" ? dtWalkCycleMs(ds, a) : null;
             var turn = dpAnim(ds.speciesId, "tourne"), el0 = img;
             if (turn && ds.mode === "look") dpPlayOnce(img, turn, false, function () { dpApplyAnim(el0, a); });          // il se tourne vers toi
-            else if (turn && ds.lastMode === "look") dpPlayOnce(img, turn, true, function () { dpApplyAnim(el0, a, cycleMs ? Math.max(450, Math.min(2400, cycleMs)) : null); });   // il se remet de profil
-            else dpApplyAnim(img, a, cycleMs ? Math.max(450, Math.min(2400, cycleMs)) : null);
+            else if (turn && ds.lastMode === "look") dpPlayOnce(img, turn, true, function () { dpApplyAnim(el0, a, cycleMs); });   // il se remet de profil
+            else dpApplyAnim(img, a, cycleMs);
           } else img.classList.toggle("dt-dino-walking", ds.mode === "walk");
           if (ds.hasArt && !ds.anim) img.src = dpArtPath(ds.speciesId, ds.mode === "look" ? "face" : "profil");
           ds.lastMode = ds.mode;
         }
+        var dt = ds.lastTs ? (ts - ds.lastTs) : 16;
+        if (ds.mode === "walk" && !ds.turning) {
+          if (ds.anim && ds.wantFlip) dtStartUTurn(ds, img);
+          else {
+            ds.x += ds.dir * ds.speed * dt;
+            // au bord de l'enclos : un dino animé fait demi-tour, les autres se retournent d'un coup
+            if (ds.x < DT_MIN_X) { ds.x = DT_MIN_X; if (ds.anim) { if (ds.dir < 0) dtStartUTurn(ds, img); } else ds.dir = 1; }
+            if (ds.x > DT_MAX_X) { ds.x = DT_MAX_X; if (ds.anim) { if (ds.dir > 0) dtStartUTurn(ds, img); } else ds.dir = -1; }
+            wrap.style.left = ds.x + "%";
+          }
+        }
+        // un dino animé garde son sens quand il te regarde (il tourne juste la tête et le corps vers toi)
+        wrap.style.transform = "translateX(-50%) " + (ds.mode === "look" && !ds.anim ? "scaleX(1)" : (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)"));
         ds.lastTs = ts;
       });
     }
