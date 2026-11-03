@@ -1348,16 +1348,17 @@
   // ---- Dinos animés : planches d'images côte à côte (w × h = une image, ms = durée d'une image).
   // Toutes les planches d'un dino ont le même format, pieds au même endroit : pas de saut entre deux.
   // « tourne » : il tourne la tête et le corps vers le joueur (jouée à l'envers quand il repart).
-  // « demitour » : il se tourne vers le joueur en se recentrant sur ses hanches (pivot, en px de l'image) ;
-  // la dernière image est symétrique, on la retourne là puis on rejoue la planche à l'envers.
+  // « virage1 » puis « virage2 » : demi-tour en marchant, en petit arc (profil → face, puis face → profil
+  // affiché retourné). pivot = x des hanches dans l'image : il se retourne autour d'elles, pas du centre.
   // « marche » : stride = distance parcourue par un cycle de pas, en pixels de l'image, pour caler
   // les pattes sur la vitesse réelle (pas de glissade).
   var DP_ANIM = {
     compsognathus: {
-      marche: { file: "Compsognathus_marche.png", n: 8, w: 90, h: 43, ms: 95, stride: 16.4 },
+      marche: { file: "Compsognathus_marche.png", n: 8, w: 90, h: 43, ms: 95, stride: 16.4, pivot: 33.4 },
       repos: { file: "Compsognathus_repos.png", n: 12, w: 90, h: 43, ms: 170 },
       tourne: { file: "Compsognathus_tourne.png", n: 4, w: 90, h: 43, ms: 110 },
-      demitour: { file: "Compsognathus_demitour.png", n: 4, w: 90, h: 43, ms: 120, pivot: 33.4 },
+      virage1: { file: "Compsognathus_virage1.png", n: 6, w: 90, h: 43, ms: 95 },
+      virage2: { file: "Compsognathus_virage2.png", n: 6, w: 90, h: 43, ms: 95 },
       regard: { file: "Compsognathus_regard.png", n: 12, w: 90, h: 43, ms: 170 }
     }
   };
@@ -1387,10 +1388,11 @@
     el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";   // repart de la première image
   }
   // joue une planche une seule fois (à l'endroit ou à l'envers), puis enchaîne sur la suivante
-  function dpPlayOnce(el, a, reverse, next) {
-    dpApplyAnim(el, a);
+  function dpPlayOnce(el, a, reverse, next, durMs) {
+    durMs = durMs || a.n * a.ms;
+    dpApplyAnim(el, a, durMs);
     el.classList.add("dt-once"); if (reverse) el.classList.add("dt-rev");
-    el._animNext = setTimeout(function () { el._animNext = null; if (el.isConnected) next(); }, a.n * a.ms);
+    el._animNext = setTimeout(function () { el._animNext = null; if (el.isConnected) next(); }, durMs);
   }
 
   // ---- Décor vivant de l'enclos : 3 positions de vent pour les arbres, nuages qui dérivent,
@@ -1587,6 +1589,7 @@
       x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
       // hauteur des pattes dans l'image du terrain (fraction de sa hauteur) : sur la piste dégagée
       laneF: DT_LANE_F0 + Math.random() * (DT_LANE_F1 - DT_LANE_F0),
+      laneBase: null,   // sa place d'origine sur la piste (fixée au premier virage)
       dir: Math.random() < 0.5 ? -1 : 1,
       cycleIdx: cycleIdx,
       mode: DT_CYCLE[cycleIdx],
@@ -1609,7 +1612,7 @@
     var bg = dtArtPath(enc.zone, enc.level);
     var dinosHtml = dtRunning.dinos.map(function (ds, i) {
       // dino animé : il se retourne autour de ses hanches (pas du centre de l'image), sinon il « sauterait »
-      var pivot = ds.anim ? dpAnim(ds.speciesId, "demitour") : null;
+      var pivot = ds.anim ? dpAnim(ds.speciesId, "marche") : null;
       if (ds.anim) dpPreloadAnim(ds.speciesId);
       return '<span class="dt-dino-wrap" id="dt-dino-wrap-' + i + '" style="left:' + ds.x + '%;height:' + ds.heightPx + 'px;' + dtLaneStyle(ds.laneF) + (pivot && pivot.pivot ? ";transform-origin:" + (pivot.pivot / pivot.w * 100).toFixed(1) + "% 100%" : "") + '">' + dtDinoVisualHtml(ds, i) + '</span>';
     }).join("");
@@ -1725,18 +1728,25 @@
     if (!a.stride) return null;
     return Math.max(450, Math.min(2400, a.stride * (ds.heightPx / a.h) / (ds.speed * window.innerWidth / 100)));
   }
-  // demi-tour : il se tourne vers toi en pivotant sur ses hanches, puis repart de l'autre côté
-  // (la planche se termine sur une image symétrique : on la retourne là, puis on la rejoue à l'envers)
+  // demi-tour en marchant : il continue ses pas en décrivant un petit arc (il avance encore un peu,
+  // vient vers toi en passant de face, puis repart de l'autre côté). À mi-chemin il est de face et
+  // symétrique : c'est là qu'on retourne l'image, sans que ça se voie.
+  var DT_TURN_DEPTH = 0.03;   // de combien il se rapproche de toi pendant le virage (fraction de l'image)
   function dtStartUTurn(ds, el) {
-    var u = dpAnim(ds.speciesId, "demitour"), walkA = dpAnim(ds.speciesId, "marche");
+    var v1 = dpAnim(ds.speciesId, "virage1"), v2 = dpAnim(ds.speciesId, "virage2"), walkA = dpAnim(ds.speciesId, "marche");
     ds.wantFlip = false;
-    if (!u) { ds.dir *= -1; return; }
-    ds.turning = true;
-    dpPlayOnce(el, u, false, function () {
+    if (!v1 || !v2) { ds.dir *= -1; return; }
+    var frameMs = (dtWalkCycleMs(ds, walkA) || walkA.n * walkA.ms) / walkA.n, half = v1.n * frameMs;   // même cadence que ses pas
+    if (ds.laneBase == null) ds.laneBase = ds.laneF;
+    ds.turning = { start: performance.now(), dur: half * 2, x0: ds.x, f0: ds.laneF, dir0: ds.dir, rx: ds.heightPx * 0.35 / window.innerWidth * 100 };
+    dpPlayOnce(el, v1, false, function () {
       ds.dir *= -1;
-      var wrap = el.parentNode; if (wrap) wrap.style.transform = "translateX(-50%) " + (ds.dir > 0 ? "scaleX(-1)" : "scaleX(1)");
-      dpPlayOnce(el, u, true, function () { ds.turning = false; dpApplyAnim(el, walkA, dtWalkCycleMs(ds, walkA)); });
-    });
+      dpPlayOnce(el, v2, false, function () { ds.turning = null; dpApplyAnim(el, walkA, dtWalkCycleMs(ds, walkA)); }, half);
+    }, half);
+  }
+  function dtSetLane(wrap, f) {
+    wrap.style.bottom = "calc(50% + max(100%, 56.25vw) * " + (0.5 - f).toFixed(4) + ")";
+    wrap.style.zIndex = 1 + Math.round(Math.max(0, Math.min(1, (f - DT_LANE_F0) / (DT_LANE_F1 - DT_LANE_F0))) * 3);
   }
   function dtTickWalk(ts) {
     if (!dtRunning || !document.querySelector(".dt-scene")) { dtWalkRaf = null; return; }
@@ -1765,9 +1775,18 @@
           ds.lastMode = ds.mode;
         }
         var dt = ds.lastTs ? (ts - ds.lastTs) : 16;
+        if (ds.turning) {
+          // le long de l'arc : il avance encore puis revient, en se rapprochant de toi
+          var tr = ds.turning, s = Math.max(0, Math.min(1, (ts - tr.start) / tr.dur)), ang = Math.PI * s;
+          ds.x = tr.x0 + tr.dir0 * tr.rx * Math.sin(ang);
+          ds.laneF = tr.f0 + DT_TURN_DEPTH * (1 - Math.cos(ang)) / 2;
+          wrap.style.left = ds.x + "%"; dtSetLane(wrap, ds.laneF);
+        }
         if (ds.mode === "walk" && !ds.turning) {
           if (ds.anim && ds.wantFlip) dtStartUTurn(ds, img);
           else {
+            // après un virage il est un peu plus près : il regagne doucement sa place sur la piste
+            if (ds.laneBase != null && Math.abs(ds.laneF - ds.laneBase) > 0.0005) { ds.laneF += (ds.laneBase - ds.laneF) * Math.min(1, dt / 5000); dtSetLane(wrap, ds.laneF); }
             ds.x += ds.dir * ds.speed * dt;
             // au bord de l'enclos : un dino animé fait demi-tour, les autres se retournent d'un coup
             if (ds.x < DT_MIN_X) { ds.x = DT_MIN_X; if (ds.anim) { if (ds.dir < 0) dtStartUTurn(ds, img); } else ds.dir = 1; }
