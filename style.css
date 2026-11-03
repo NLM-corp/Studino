@@ -699,7 +699,7 @@
   .dp-luck-pips span { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.7); }
   .dp-luck-pips span.on { background: #6fd36f; border-color: #6fd36f; }
   .dp-luck-hint { font-size: 11px; opacity: 0.75; }
-  .dp-merchant-table { position: absolute; left: 50%; bottom: 30%; transform: translateX(-50%); z-index: 2; display: flex; gap: calc(var(--u) * 0.6); padding: 0; flex-wrap: nowrap; justify-content: center; align-items: flex-end; width: 56%; }
+  .dp-merchant-table { position: absolute; left: 50%; bottom: 28.5%; transform: translateX(-50%); z-index: 2; display: flex; gap: calc(var(--u) * 0.6); padding: 0; flex-wrap: nowrap; justify-content: center; align-items: flex-end; width: 56%; }
   .dp-merchant-card { background: rgba(255,255,255,0.16); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); border: 2px solid rgba(255,255,255,0.4); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 168px; box-shadow: 0 6px 14px rgba(0,0,0,0.4); flex: none; }
   .dp-merchant-card { flex: none; width: calc(var(--u) * 10.2); padding: calc(var(--u) * 0.6) !important; border-radius: calc(var(--u) * 0.6) !important; gap: calc(var(--u) * 0.25) !important; }
   .dp-merchant-card .dp-egg-img { width: calc(var(--u) * 5.4); height: calc(var(--u) * 5.4); }
@@ -710,7 +710,7 @@
   .dp-merchant-card[onclick] { cursor: pointer; }
   .dp-merchant-card-selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 6px 14px rgba(0,0,0,0.4); }
 
-  .dp-merchant-table-objects { justify-content: center; gap: calc(var(--u) * 0.4); bottom: 30%; }
+  .dp-merchant-table-objects { justify-content: center; gap: calc(var(--u) * 0.4); bottom: 28.5%; }
 
   .dp-crate-card { position: relative; width: calc(var(--u) * 7.2); height: calc(var(--u) * 6.9); flex: none; display: flex; align-items: flex-end; justify-content: center; }
   .dp-crate-card .dp-crate-img, .dp-crate-card .dp-object-icon { width: 100%; height: 100%; object-fit: contain; object-position: bottom; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5)); transition: transform .15s ease; }
