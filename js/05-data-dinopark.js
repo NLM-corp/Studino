@@ -1408,6 +1408,12 @@
     });
     return h + "</div>";
   }
+  // premier plan (buissons, rochers, herbes devant la piste) : par-dessus les dinos, qui passent derrière
+  function dtDecorFrontHtml(zoneId, level) {
+    var h = '<div class="dt-stage dt-stage-front">';
+    for (var i = 0; i < 3; i++) h += '<img class="dt-stage-frame" id="dt-windf-' + i + '" src="' + dtAnimFrame(zoneId, level, "avant_" + i) + '" alt=""' + (i ? ' style="visibility:hidden"' : "") + ' onerror="this.remove()">';
+    return h + "</div>";
+  }
   var dtDecorTimers = [];
   function dtStopDecor() { dtDecorTimers.forEach(clearTimeout); dtDecorTimers = []; }
   function dtLater(fn, ms) { dtDecorTimers.push(setTimeout(fn, ms)); }
@@ -1415,7 +1421,7 @@
   function dtStartDecor(zoneId) {
     dtStopDecor();
     if (!dtStageAlive()) return;
-    var show = function (i) { for (var k = 0; k < 3; k++) { var f = document.getElementById("dt-wind-" + k); if (f) f.style.visibility = k === i ? "visible" : "hidden"; } };
+    var show = function (i) { for (var k = 0; k < 3; k++) ["dt-wind-", "dt-windf-"].forEach(function (id) { var f = document.getElementById(id + k); if (f) f.style.visibility = k === i ? "visible" : "hidden"; }); };
     // coups de vent : de temps en temps les arbres se balancent quelques fois, puis tout se calme
     var gust = function () {
       if (!dtStageAlive()) return;
@@ -1622,7 +1628,7 @@
       '<button class="dt-stop" onclick="App.dtStop()">✕</button>' +
       '<button class="dt-pause" id="dt-pause-btn" onclick="App.dtTogglePause()">⏸</button>' +
       '<div class="dt-timer mono" id="dt-timer-display">' + dpFormatCountdown(dtRunning.remainingSec * 1000) + '</div>' +
-      dinosHtml +
+      dinosHtml + dtDecorFrontHtml(enc.zone, enc.level) +
       '</div>';
     document.getElementById("app").innerHTML = html;
     dtEnsureTimerInterval();

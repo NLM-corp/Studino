@@ -891,6 +891,7 @@
   /* Décor vivant : calé sur le terrain (même cadrage « cover » 16:9), sous les dinos et les boutons */
   .dt-stage { position: absolute; left: 50%; top: 50%; width: max(100%, calc(100vh * 16 / 9)); height: max(100%, 56.25vw); transform: translate(-50%, -50%); overflow: hidden; pointer-events: none; z-index: 0; }
   .dt-stage-frame { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+  .dt-stage-front { z-index: 5; }   /* au-dessus des dinos (1 à 4) */
   .dt-cloud { position: absolute; left: -20%; height: auto; image-rendering: pixelated; animation: dtCloud linear infinite; }
   @keyframes dtCloud { from { left: -20%; } to { left: 110%; } }
   .dt-critter { position: absolute; left: -6%; aspect-ratio: 9 / 4; background-size: 200% 100%; background-repeat: no-repeat; image-rendering: pixelated; animation-name: dtFly, dtFlap; animation-timing-function: linear, step-end; animation-iteration-count: 1, infinite; animation-fill-mode: forwards, none; }
