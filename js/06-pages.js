@@ -203,7 +203,7 @@
         (slotsMaxed
           ? '<button class="dp-wood-btn" disabled>' + mIc("oeuf") + DP_SHOP_SLOTS_MAX + ' œufs (max)</button>'
           : '<button class="dp-wood-btn" ' + (dp.points >= slotCost ? "" : "disabled") + ' onclick="App.dpUpgradeShopSlots(\'' + zoneId + '\')">' + mIc("oeuf") + curSlots + ' → ' + (curSlots + 1) + ' œufs (' + slotCost + ' pts)</button>') + '</div>' +
-        '<div class="dp-mt-right">' + luckHtml + '<button class="dp-wood-btn" onclick="App.dpStartSellDino()">' + mIc("sac") + 'Vendre des dinos</button></div>' +
+        '<div class="dp-mt-luck">' + luckHtml + '</div><div class="dp-mt-right"><button class="dp-wood-btn" onclick="App.dpStartSellDino()">' + mIc("sac") + 'Vendre des dinos</button></div>' +
         '</div>';
       // Comme chez le vendeur d'objets : seulement la marchandise sur le comptoir. Chaque œuf est dans sa
       // petite caisse remplie de paille (le marchand les apporte comme ça) ; les infos et le bouton
