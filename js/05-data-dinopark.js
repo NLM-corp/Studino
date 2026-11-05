@@ -373,7 +373,7 @@
     { id: "struthiomimus", name: "Struthiomimus", zone: "plaine", diet: "omnivore", weightKg: 150, rarity: "commun" },
     { id: "thescelosaure", name: "Thescelosaure", zone: "plaine", diet: "frugivore", weightKg: 270, rarity: "commun" },
     { id: "ankylosaure", name: "Ankylosaure", zone: "plaine", diet: "herbivore", weightKg: 6000, rarity: "rare" },
-    { id: "allosaure", name: "Allosaure", zone: "plaine", diet: "carnivore", weightKg: 2300, rarity: "rare" },
+    { id: "allosaure", name: "Allosaure", zone: "foret", diet: "carnivore", weightKg: 2300, rarity: "rare" },
     { id: "chasmosaure", name: "Chasmosaure", zone: "plaine", diet: "herbivore", weightKg: 2200, rarity: "rare" },
     { id: "torosaure", name: "Torosaure", zone: "plaine", diet: "herbivore", weightKg: 8000, rarity: "rare" },
     { id: "deinocheirus", name: "Deinocheirus", zone: "plaine", diet: "omnivore", weightKg: 6000, rarity: "rare" },
@@ -480,7 +480,7 @@
     { id: "metriorhynchus", name: "Metriorhynchus", zone: "marine", diet: "piscivore", weightKg: 1000, rarity: "epique" },
     { id: "mosasaure", name: "Mosasaure", zone: "marine", diet: "piscivore", weightKg: 15000, rarity: "legendaire" },
     { id: "tylosaure", name: "Tylosaure", zone: "marine", diet: "piscivore", weightKg: 12000, rarity: "legendaire" },
-    { id: "ceratosaure", name: "Ceratosaure", zone: "volcanique", diet: "carnivore", weightKg: 700, rarity: "commun" },
+    { id: "ceratosaure", name: "Cératosaure", zone: "foret", diet: "carnivore", weightKg: 700, rarity: "commun" },
     { id: "dilophosaure", name: "Dilophosaure", zone: "volcanique", diet: "carnivore", weightKg: 400, rarity: "commun" },
     { id: "baryonyx", name: "Baryonyx", zone: "volcanique", diet: "piscivore", weightKg: 1700, rarity: "commun" },
     { id: "suchomimus", name: "Suchomimus", zone: "volcanique", diet: "piscivore", weightKg: 3800, rarity: "commun" },
@@ -516,12 +516,12 @@
   // définies (retired) uniquement pour que les dinos déjà possédés continuent de fonctionner : elles
   // n'apparaissent plus dans les œufs, la boutique ni l'encyclopédie.
   var DP_ACTIVE_SPECIES = {
-    foret: { commun: ["compsognathus", "iguanodon", "archaeopteryx", "coelophysis"], rare: ["velociraptor", "stegosaure", "deinonychus"], epique: ["diplodocus", "apatosaure"], legendaire: ["brachiosaure"] },
-    plaine: { commun: ["gallimimus", "pachycephalosaure", "styracosaure", "maiasaura"], rare: ["triceratops", "ankylosaure", "parasaurolophus"], epique: ["allosaure", "albertosaure"], legendaire: ["tyrannosaure"] },
+    foret: { commun: ["compsognathus", "iguanodon", "archaeopteryx", "coelophysis"], rare: ["ceratosaure", "stegosaure", "deinonychus"], epique: ["diplodocus", "allosaure"], legendaire: ["brachiosaure"] },
+    plaine: { commun: ["gallimimus", "pachycephalosaure", "styracosaure", "maiasaura"], rare: ["triceratops", "ankylosaure", "parasaurolophus"], epique: ["albertosaure"], legendaire: ["tyrannosaure"] },
     desert: { commun: ["protoceratops", "oviraptor", "psittacosaure", "mononykus"], rare: ["carnotaurus", "pinacosaure", "pentaceratops"], epique: ["nigersaurus", "alioramus"], legendaire: ["spinosaure"] },
     arctique: { commun: ["troodon", "pachyrhinosaure", "leaellynasaura", "minmi"], rare: ["edmontosaure", "muttaburrasaure", "nanuqsaurus"], epique: ["cryolophosaure", "antarctopelta"], legendaire: ["yutyrannus"] },
     marine: { commun: ["ichtyosaure", "plesiosaure", "nothosaure", "pliosaure"], rare: ["elasmosaure", "kronosaure", "shonisaure"], epique: ["liopleurodon", "tylosaure"], legendaire: ["mosasaure"] },
-    volcanique: { commun: ["dilophosaure", "ceratosaure", "baryonyx", "suchomimus"], rare: ["majungasaure", "concavenator", "sinraptor"], epique: ["acrocanthosaure", "torvosaure"], legendaire: ["giganotosaure"] }
+    volcanique: { commun: ["dilophosaure", "baryonyx", "suchomimus"], rare: ["majungasaure", "concavenator", "sinraptor"], epique: ["acrocanthosaure", "torvosaure"], legendaire: ["giganotosaure"] }
   };
   (function () {
     var active = {};
@@ -628,7 +628,8 @@
     alioramus: { folder: "Alioramus", face: "Alioramus_face.png", profil: "Alioramus_profil.png" },
     gobisaure: { folder: "Gobisaurus", face: "Gobisaurus_face.png", profil: "Gobisaurus_profil.png" },
     linhenykus: { folder: "Linhenykus", face: "Linhenykus_face.png", profil: "Linhenykus_profil.png" },
-    spinosaure: { folder: "spinosaure", face: "Spinosaure_face.png", profil: "Spinosaure_profil.png" }
+    spinosaure: { folder: "spinosaure", face: "Spinosaure_face.png", profil: "Spinosaure_profil.png" },
+    ceratosaure: { folder: "Ceratosaure", face: "Ceratosaure_face.png", profil: "Ceratosaure_profil.png" }
   };
   function dpArtPath(speciesId, kind) {
     var a = DP_ART[speciesId];
@@ -1352,7 +1353,21 @@
   // affiché retourné). pivot = x des hanches dans l'image : il se retourne autour d'elles, pas du centre.
   // « marche » : stride = distance parcourue par un cycle de pas, en pixels de l'image, pour caler
   // les pattes sur la vitesse réelle (pas de glissade).
+  function dpAnimSet(name, w, h, pivot, stride) {
+    var part = function (kind, n, ms) { return { file: name + "_" + kind + ".png", n: n, w: w, h: h, ms: ms }; }, marche = part("marche", 8, 95);
+    marche.stride = stride; marche.pivot = pivot;
+    return { marche: marche, repos: part("repos", 12, 170), tourne: part("tourne", 4, 110), virage1: part("virage1", 6, 95), virage2: part("virage2", 6, 95), regard: part("regard", 12, 170) };
+  }
   var DP_ANIM = {
+    iguanodon: dpAnimSet("Iguanodon", 102, 43, 51, 18),
+    archaeopteryx: dpAnimSet("Archaeopteryx", 84, 42, 37, 16),
+    coelophysis: dpAnimSet("Coelophysis", 100, 40, 43, 20),
+    ceratosaure: dpAnimSet("Ceratosaure", 100, 38, 47, 22),
+    stegosaure: dpAnimSet("Stegosaure", 106, 43, 53, 14),
+    deinonychus: dpAnimSet("Deinonychus", 102, 39, 45, 20),
+    diplodocus: dpAnimSet("Diplodocus", 144, 49, 61, 16),
+    allosaure: dpAnimSet("Allosaure", 104, 37, 47, 22),
+    brachiosaure: dpAnimSet("Brachiosaure", 112, 56, 53, 16),
     compsognathus: {
       marche: { file: "Compsognathus_marche.png", n: 8, w: 90, h: 43, ms: 95, stride: 16.4, pivot: 33.4 },
       repos: { file: "Compsognathus_repos.png", n: 12, w: 90, h: 43, ms: 170 },
@@ -1587,11 +1602,18 @@
   function dtInitDinoState(d) {
     var cycleIdx = Math.floor(Math.random() * DT_CYCLE.length);
     var sp = dpSpecies(d.speciesId);
+    var scale = dtDinoSizeScale(sp ? sp.weightKg : null), heightPx = DT_DINO_BASE_HEIGHT * scale, sheet = dpAnim(d.speciesId, "repos");
+    // les planches animées n'ont pas toutes le même format (longues queues) : c'est leur largeur à l'écran
+    // qui suit le poids, de 20 % (les plus légers) à 65 % de l'écran (le Brachiosaure)
+    if (sheet) {
+      var heavy = (scale - DT_DINO_MIN_SCALE) / (DT_DINO_MAX_SCALE - DT_DINO_MIN_SCALE);
+      heightPx = Math.min(window.innerWidth * (0.2 + 0.45 * heavy) * sheet.h / sheet.w, window.innerHeight * 0.62);
+    }
     return {
       speciesId: d.speciesId,
       hasArt: !!DP_ART[d.speciesId],
       anim: !!(DP_ANIM[d.speciesId] && DP_ART[d.speciesId]),
-      heightPx: Math.round(DT_DINO_BASE_HEIGHT * dtDinoSizeScale(sp ? sp.weightKg : null)),
+      heightPx: Math.round(heightPx),
       x: DT_MIN_X + Math.random() * (DT_MAX_X - DT_MIN_X),
       // hauteur des pattes dans l'image du terrain (fraction de sa hauteur) : sur la piste dégagée
       laneF: DT_LANE_F0 + Math.random() * (DT_LANE_F1 - DT_LANE_F0),
