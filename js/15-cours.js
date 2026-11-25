@@ -24,13 +24,14 @@
       });
       el.querySelectorAll("p, li").forEach(function (p) {
         if (p.closest("table")) return;
+        if (p.tagName === "P" && /^\s*(\d{1,2}|[a-z])\s?[.)°]\s/i.test(p.textContent)) p.classList.add("nbl-num");
         var t = p.textContent.trim(), hit = LESSON_LEADS.find(function (l) { return l[0].test(t); });
         if (!hit) return;
         var colon = t.indexOf(":"); if (colon < 2 || colon > 60) { if (t.length < 50) p.classList.add(hit[1]); return; }
         var left = p.textContent.indexOf(":") + 1, span = document.createElement("span"); span.className = hit[1];
         var r = document.createRange(), walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT), node, acc = 0;
-        while ((node = walk.nextNode())) { if (acc + node.data.length >= left) { r.setStart(p, 0); r.setEnd(node, left - acc); break; } acc += node.data.length; }
-        try { var f = r.extractContents(); if (f.querySelector && f.querySelector(".math-chip")) { p.insertBefore(f, p.firstChild); return; } span.appendChild(f); p.insertBefore(span, p.firstChild); p.querySelectorAll("strong, em").forEach(function (x) { if (!x.textContent.trim()) x.remove(); }); } catch (e) {}
+        while ((node = walk.nextNode())) { if (acc + node.data.length >= left) { if (node.parentElement.closest(".math-chip")) return; r.setStart(p, 0); r.setEnd(node, left - acc); break; } acc += node.data.length; }
+        try { var f = r.extractContents(); span.appendChild(f); p.insertBefore(span, p.firstChild); p.querySelectorAll("strong, em").forEach(function (x) { if (!x.textContent.trim()) x.remove(); }); } catch (e) {}
       });
       el.querySelectorAll("img").forEach(function (im) { if (!im.complete) im.addEventListener("load", function () { lessonSnap(el); }); });
     }
@@ -41,11 +42,17 @@
     b.innerHTML = '<span class="' + (tag === "h3" || tag === "h4" ? "nbl-u" : "") + '">x<i style="display:inline-block;width:0;height:0"></i></span>'; host.appendChild(b);
     var y = b.querySelector("i").getBoundingClientRect().bottom - b.getBoundingClientRect().top; b.remove(); return y;
   }
+  function lessonAscent(host, tag) {
+    var b = document.createElement(tag); b.style.cssText = "visibility:hidden;margin:0;padding:0;top:0;position:relative";
+    b.innerHTML = '<span>x<i style="display:inline-block;width:0;height:0"></i></span>'; host.appendChild(b);
+    var y = b.querySelector("i").getBoundingClientRect().bottom - b.querySelector("span").getClientRects()[0].top; b.remove(); return y;
+  }
   function lessonSnap(el) {
     if (!el.isConnected) return;
     var probe = document.createElement("div"); probe.style.cssText = "height:var(--g);visibility:hidden"; el.appendChild(probe);
     var g = probe.getBoundingClientRect().height; probe.remove(); if (!(g > 8)) return;
     var base = lessonBase(el, "p");
+    ["p", "h3", "h4"].forEach(function (t) { el.style.setProperty("--uy-" + t, (lessonAscent(el, t) + g * 0.045) + "px"); });
     ["h3", "h4"].forEach(function (t) { el.style.setProperty("--shift-" + t, (base - lessonBase(el, t)) + "px"); });
     var h1 = el.querySelector(".nbl-title"), top = el.getBoundingClientRect().top;
     el.style.setProperty("--base", (parseFloat(getComputedStyle(el).paddingTop) + base + g * 0.045) + "px");

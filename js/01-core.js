@@ -2,7 +2,7 @@
 // Studino — stockage, images, audio, schémas
 // Fichier chargé dans l'ordre par index.html : les fichiers partagent les mêmes variables globales.
 
-  var APP_VERSION = "16.5"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "16.6"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   // Installation sur l'écran d'accueil : Chrome/Edge/Android proposent l'installation par un événement
   // qu'on garde pour le bouton des paramètres ; l'iPhone n'en a pas, on explique la marche à suivre.
   var installPromptEvent = null;
@@ -1068,7 +1068,7 @@
           // bords l'agrandit jusqu'à ce que plus aucun trait ne soit coupé.
           if ((f.tileH < s.h && f.h > f.tileH * 0.9) || (f.tileW < s.w && f.w > f.tileW * 0.9)) {
             var bp = Math.max(10, Math.min(f.w, f.h) * 0.04);
-            return cropUntilEdgesClear(s, { x: f.x - bp, y: f.y - bp, w: f.w + 2 * bp, h: f.h + 2 * bp }).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) {
+            return cropUntilEdgesClear(s, { x: f.x - bp, y: f.y - bp, w: f.w + 2 * bp, h: f.h + 2 * bp }).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) { return figureFinish(s, res, f.caption); }).then(function (res) {
               if (res) { crops[i] = res.url; finals[i] = res.box; }
             });
           }
@@ -1088,7 +1088,7 @@
                 }
                 var pad = Math.max(10, Math.min(box.w, box.h) * 0.04);
                 var r = { x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
-                return cropUntilEdgesClear(s, r).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) {
+                return cropUntilEdgesClear(s, r).then(function (res) { return res ? reviewFigureCrop(s, res.box, f.caption) : null; }).then(function (res) { return figureFinish(s, res, f.caption); }).then(function (res) {
                   if (res) { crops[i] = res.url; finals[i] = res.box; }
                 });
               });

@@ -1840,3 +1840,18 @@ mark.fi-key { background: linear-gradient(transparent 38%, var(--c-mark) 38%, va
   .nb-screen .nb-bubble, .nb-screen .nb-postit, .nb-screen .nb-formule { max-width: none; }
   .nb-lesson .nbl-u, .nb.nb-lesson u, .nb-lesson span.nbl-def, .nb-lesson span.nbl-ex, .nb-lesson span.nbl-att, .nb-lesson span.nbl-ret, .nb-lesson span.nbl-rem { text-underline-offset: calc(var(--g) * 0.045); }
   .fc-nav { padding-right: 0; margin-bottom: 70px; }
+
+  .nb-lesson .math-chip { vertical-align: baseline; padding: 0 1px; }
+  .nb-lesson .math-chip .katex { font-size: 1.06em; }
+  .nb-lesson h3 .math-chip .katex, .nb-lesson h4 .math-chip .katex { font-size: 0.84em; -webkit-text-stroke: 0.35px currentColor; }
+  .nb-lesson .nbl-u .math-chip, .nb-lesson strong .math-chip, .nb-lesson em .math-chip, .nb-lesson u .math-chip, .nb-lesson .nbl-def .math-chip, .nb-lesson .nbl-ex .math-chip, .nb-lesson .nbl-att .math-chip, .nb-lesson .nbl-ret .math-chip, .nb-lesson .nbl-rem .math-chip, .nb h3 .math-chip, .nb h4 .math-chip, .nb h5 .math-chip, .nb h6 .math-chip { color: inherit; }
+  .nb-lesson strong .math-chip .katex { -webkit-text-stroke: 0.35px currentColor; }
+  .nb-lesson .nbl-u, .nb.nb-lesson u, .nb-lesson span.nbl-def, .nb-lesson span.nbl-ex, .nb-lesson span.nbl-att, .nb-lesson span.nbl-ret, .nb-lesson span.nbl-rem { text-decoration: none; background: linear-gradient(currentColor, currentColor) 0 var(--uy-p, 1.1em) / 100% 2px no-repeat; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .nb.nb-lesson u { background-image: linear-gradient(var(--pen-red), var(--pen-red)); }
+  .nb-lesson h3 .nbl-u { background-position: 0 var(--uy-h3, 1.1em); } .nb-lesson h4 .nbl-u { background-position: 0 var(--uy-h4, 1.1em); }
+  .nb h4.nb-h4, .nb h5.nb-h4, .nb h6.nb-h4 { text-decoration: none; }
+  .nb .nb-u { background: linear-gradient(rgba(35, 48, 77, 0.5), rgba(35, 48, 77, 0.5)) 0 94% / 100% 1.5px no-repeat; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .content .nb.nb-lesson > p.nbl-num { text-indent: calc(var(--g) * -0.75); padding-left: calc(var(--g) * 1.75); }
+  .prose-lesson h3 .math-chip { color: inherit; border-bottom: 2px solid currentColor; border-radius: 0; }
+  .prose-lesson h4 .math-chip, .prose-lesson strong .math-chip { color: inherit; }
+  @media (max-width: 780px) { .content .nb.nb-lesson > p.nbl-num { text-indent: calc(var(--g) * -0.75); padding-left: calc(var(--g) * 0.75); } }

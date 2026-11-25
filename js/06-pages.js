@@ -1974,7 +1974,7 @@
           if (tag === "h3" && !opts.nested) {
             var n = ++sectionCount, sp = SECTION_DINOS[(n - 1) % SECTION_DINOS.length];
             html += '<h3 class="nb-h nb-c' + ((n - 1) % 5) + '"><span class="nb-num">' + n + '</span>' + ficheDinoHtml(sp, NB_STICKER_COLORS[(n - 1) % NB_STICKER_COLORS.length], "nb-sticker", 3) + '<span class="nb-ht">' + inlineMdPlain(htxt) + '</span></h3>';
-          } else html += '<' + tag + ' class="nb-h4">' + inlineMdPlain(htxt) + '</' + tag + '>';
+          } else html += '<' + tag + ' class="nb-h4"><span class="nb-u">' + inlineMdPlain(htxt) + '</span></' + tag + '>';
           continue;
         }
         var secDino = "";

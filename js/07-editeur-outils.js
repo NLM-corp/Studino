@@ -982,7 +982,7 @@
     var fieldFigureSvg = field === "transcription" ? course.transcriptionFigureSvg : course.explanationFigureSvg;
     return (field === "transcription" ? lessonHtml(course) : '<div class="prose prose-lesson">' + mdToHtml(fieldValue, course.figures) + '</div>') +
       exerciseFigureHtml({ prompt: fieldValue, figureSvg: fieldFigureSvg }) +
-      '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>';
+      '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>' + (field === "transcription" ? figureCleanButton(course) : "");
   }
   function renderTabBody(course, tab, loc) {
     if (tab === "transcription") {
