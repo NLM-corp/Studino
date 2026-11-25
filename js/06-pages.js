@@ -1821,7 +1821,11 @@
   function mdToHtml(rawMd, figures, opts) {
     opts = opts || {};
     var extracted = opts.nested ? { text: String(rawMd || ""), chips: [] } : mdExtractMath(rawMd);
-    var md = extracted.text;
+    var md = extracted.text.split("\n").map(function (l) {
+      l = l.replace(/!+(\[[^\]\n]*\]\((?:figure|schema):[^)\s]+\))/g, "!$1");
+      if (l.indexOf("|") !== -1) return l;
+      return l.replace(/[ \t]*(!\[[^\]\n]*\]\((?:figure|schema):[^)\s]+\))[ \t]*/g, "\n$1\n").replace(/^\n+|\n+$/g, "");
+    }).join("\n");
     var lines = md.split("\n");
     var html = "";
     var inList = false;
