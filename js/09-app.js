@@ -1147,7 +1147,7 @@
       // contexte différents, même notion) avant de démarrer, pour éviter de retomber mot pour mot sur le
       // même exercice à chaque répétition.
       // (Les exercices, eux, sont remplacés par des exercices inédits : inutile de les reformuler.)
-      var repeats = picked.filter(function (it) { return it.kind === "open" && prep.itemUseCount[it.id]; });
+      var repeats = picked.filter(function (it) { return it.kind === "open" && prep.itemUseCount[it.id] && !it.figureSvg; });
       picked.forEach(function (it) { (it.parts || [it.id]).forEach(function (pid) { prep.itemUseCount[pid] = (prep.itemUseCount[pid] || 0) + 1; }); });
       saveDB();
       if (!repeats.length || !getApiKey()) { finalizeLaunch(picked); return; }
@@ -1210,7 +1210,7 @@
       s.status = "grading";
       render();
       var referenceAnswer = item.kind === "exercise" ? item.solution : item.answer;
-      gradeExerciseAnswer(item.prompt, referenceAnswer, answerText).then(function (result) {
+      gradeExerciseAnswer(item.prompt, referenceAnswer, answerText, item.figureSvg, item.solutionSvg).then(function (result) {
         s.status = "graded";
         s.revealed = true;
         s.aiFeedback = result.feedback || "";
@@ -1342,7 +1342,7 @@
       ex.answerText = answerText;
       ex.answerStatus = "grading";
       saveDB(); render();
-      gradeExerciseAnswer(ex.statement, ex.solution, answerText).then(function (result) {
+      gradeExerciseAnswer(ex.statement, ex.solution, answerText, ex.figureSvg).then(function (result) {
         ex.answerStatus = "graded";
         var level = normalizeGradeLevel(result);
         ex.level = level;
@@ -2017,7 +2017,7 @@
       qz.answer = answerText;
       qz.status = "grading";
       render();
-      gradeExerciseAnswer(q.prompt, q.answer, answerText).then(function (result) {
+      gradeExerciseAnswer(q.prompt, q.answer, answerText, q.figureSvg, q.solutionSvg).then(function (result) {
         qz.status = "graded";
         qz.revealed = true;
         qz.aiFeedback = result.feedback || "";
@@ -2059,7 +2059,7 @@
       qz.answer = answer;
       qz.status = "grading";
       render();
-      gradeExerciseAnswer(qz.exercise.prompt, qz.exercise.solution, qz.answer).then(function (result) {
+      gradeExerciseAnswer(qz.exercise.prompt, qz.exercise.solution, qz.answer, qz.exercise.figureSvg, qz.exercise.solutionSvg).then(function (result) {
         qz.status = "graded";
         var level = normalizeGradeLevel(result);
         qz.level = level;

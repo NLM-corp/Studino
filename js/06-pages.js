@@ -1040,8 +1040,7 @@
     { id: "transcription", label: "Retranscription" },
     { id: "explication", label: "Explication" },
     { id: "videos", label: "Vidéos" },
-    { id: "flashcards", label: "Flashcards" },
-    { id: "quiz", label: "Contrôle" }
+    { id: "flashcards", label: "Flashcards" }
   ];
 
   // Schémas propres à la fiche + schémas découpés dans les cours de la matière (la fiche peut les reprendre).
@@ -1223,7 +1222,7 @@
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (s.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<div style="font-size:13.5px;margin-bottom:14px"><b>Réponse attendue :</b>' + mdToHtml(item.answer || "") + '</div>';
+        '<div style="font-size:13.5px;margin-bottom:14px"><b>Réponse attendue :</b>' + mdToHtml(item.answer || "") + '</div>' + exoSolutionFigureHtml(item);
     }
     if (s.revealed && s.wasCorrect != null) {
       var slvl = s.level || (s.wasCorrect ? "correct" : "wrong");
@@ -1234,7 +1233,7 @@
         (s.aiFeedback ? '<div class="correction-exp">' + mdToHtml(s.aiFeedback) + '</div>' : "") +
         (item.kind === "exercise" ? '' : '<div class="correction-exp">' + mdToHtml(item.explanation || "") + '</div>') +
         '</div>' +
-        (item.kind === "exercise" ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.solution)) + '</div></div>' : '') +
+        (item.kind === "exercise" ? '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(item.solution)) + '</div>' + exoSolutionFigureHtml(item) + '</div>' : '') +
         '<div class="quiz-nav" style="margin-top:14px"><span></span><button class="btn btn-primary" style="width:auto" onclick="App.examPrepNext()">' + (s.idx === s.pool.length - 1 ? "Terminer" : "Suivante →") + '</button></div>';
     }
     renderShell(["examprep", prep.id], backBtn + head + '<div class="exercise-layout"><div class="quiz-wrap">' + body + '</div>' + dinoCompanionHtml() + '</div>');
@@ -1519,7 +1518,7 @@
     var loc = locateCourse(courseId);
     if (!loc) { navigate("#/"); return; }
     var course = loc.course;
-    tab = tab || "transcription";
+    tab = TABS.some(function (t) { return t.id === tab; }) ? tab : "transcription";
     var head = '<div class="course-head">' +
       (course.images && course.images.length ? (isPdfDataUrl(course.images[0]) ? '<div class="course-thumb file-thumb-pdf">📄<span>PDF</span></div>' : '<img class="course-thumb" src="' + course.images[0] + '">') : '') +
       '<div><h1 class="page-title" style="margin-bottom:6px">' + esc(course.title) + '</h1>' +
@@ -1527,6 +1526,7 @@
       (course.status !== "processing" ? (
         '<div style="display:flex;gap:10px;margin-left:auto">' +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openDownloadCourseModal(\'' + course.id + '\')">⬇️ Télécharger en PDF</button>' : "") +
+        exoButtonHtml(course) +
         (course.status === "ready" ? '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.retryGeneration(\'' + course.id + '\')">🔄 Régénérer</button>' : "") +
         '<button class="btn btn-ghost btn-sm" style="width:auto" onclick="App.openAddCourseDocsModal(\'' + course.id + '\')">' + icon("camera") + ' Ajouter des documents</button>' +
         '</div>'

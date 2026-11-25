@@ -90,6 +90,8 @@
     merged.subjects = mergeSubjectsTree(merged.subjects, loser.subjects);
     merged.importedExercises = mergeArraysById(merged.importedExercises, loser.importedExercises);
     merged.revisionSheets = mergeArraysById(merged.revisionSheets, loser.revisionSheets);
+    ["podcasts", "methodologies"].forEach(function (k) { if (merged[k] || loser[k]) merged[k] = mergeArraysById(merged[k], loser[k]); });
+    Object.keys(loser).forEach(function (k) { if (k !== "dinoPark" && merged[k] === undefined) merged[k] = loser[k]; });
     merged.examPreps = mergeArraysById(merged.examPreps, loser.examPreps);
     merged.calendarEvents = mergeArraysById(merged.calendarEvents || [], loser.calendarEvents || []);
     // Dino Park n'est pas qu'un objet à prendre en bloc d'un seul côté : dinosaures/œufs/enclos ont
@@ -1297,7 +1299,7 @@
     } else {
       body += '<div class="rte-display" style="color:var(--text-muted);font-size:13.5px;margin-bottom:6px">Ta réponse :</div>' +
         '<div class="rte-display" style="margin-bottom:14px">' + (qz.answerHtml || "<em>(vide)</em>") + '</div>' +
-        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + inlineMd(q.answer) + '</strong></p>';
+        '<p style="font-size:13.5px;margin-bottom:14px">Réponse attendue : <strong>' + inlineMd(q.answer) + '</strong></p>' + exoSolutionFigureHtml(q);
     }
 
     if (qz.revealed && qz.wasCorrect != null) {
@@ -1330,7 +1332,7 @@
         gradeMistakesHtml(qz.mistakes) +
         '<div class="correction-exp">' + mdToHtml(qz.feedback) + '</div>' +
         '</div>' +
-        '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(ex.solution)) + '</div></div>' +
+        '<div class="dp-exercise-box" style="margin-top:14px"><div class="dp-exercise-label">Solution de référence</div><div class="dp-exercise-text">' + mdToHtml(splitInlineNumberedQuestions(ex.solution)) + '</div>' + exoSolutionFigureHtml(ex) + '</div>' +
         '<div class="quiz-nav" style="margin-top:14px"><button class="btn btn-ghost" style="width:auto" onclick="App.dpGoQuiz()">Choisir un autre cours</button><button class="btn btn-ghost" style="width:auto" onclick="App.downloadDpExercisePdf()">⬇️ Télécharger en PDF</button></div>';
     } else {
       body += '<div class="field"><label>Ta réponse</label>' + richEditorHtml("dp-exercise-answer", "Écris ton raisonnement et ta réponse…", qz.answerHtml || "", true) + '</div>' +

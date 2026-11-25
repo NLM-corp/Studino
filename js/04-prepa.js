@@ -212,10 +212,10 @@
     courses.forEach(function (co) {
       (co.quizQuestions || []).forEach(function (q) {
         if (q.type === "qcm") pool.push({ id: q.id, kind: "qcm", category: q.category || "", prompt: q.prompt, choices: q.choices, correctIndex: q.correctIndex, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
-        else pool.push({ id: q.id, kind: "open", category: q.category || "", prompt: q.prompt, answer: q.answer, explanation: q.explanation, figureSvg: q.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        else pool.push({ id: q.id, kind: "open", category: q.category || "", prompt: q.prompt, answer: q.answer, explanation: q.explanation, figureSvg: q.figureSvg || "", solutionSvg: q.solutionSvg || "", courseId: co.id, courseTitle: co.title });
       });
       (co.exercises || []).forEach(function (ex) {
-        pool.push({ id: ex.id, kind: "exercise", category: "", prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "", courseId: co.id, courseTitle: co.title });
+        pool.push({ id: ex.id, kind: "exercise", category: "", prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "", solutionSvg: ex.solutionSvg || "", courseId: co.id, courseTitle: co.title });
       });
     });
     return pool;
@@ -335,7 +335,7 @@
           prompt: "Questions de cours (réponds à chaque partie) :\n\n" + chunk.map(function (c, n) { return (n + 1) + ". " + c.prompt; }).join("\n\n"),
           answer: chunk.map(function (c, n) { return (n + 1) + ". " + (c.answer || ""); }).join("\n\n"),
           explanation: chunk.map(function (c, n) { return c.explanation ? (n + 1) + ". " + c.explanation : ""; }).filter(Boolean).join("\n\n"),
-          figureSvg: (chunk.find(function (c) { return c.figureSvg; }) || {}).figureSvg || ""
+          figureSvg: (chunk.find(function (c) { return c.figureSvg; }) || {}).figureSvg || "", solutionSvg: (chunk.find(function (c) { return c.solutionSvg; }) || {}).solutionSvg || ""
         });
       }
     });
@@ -542,28 +542,33 @@
           type: "object",
           properties: {
             prompt: { type: "string", description: "Énoncé complet en Markdown : le support (texte, extrait, données, situation, document...) puis les questions numérotées." },
+            figure: null,
             solution: { type: "string", description: "Corrigé complet et détaillé, question par question, avec toutes les réponses attendues." },
             topic: { type: "string", description: "La notion du jour principalement travaillée, recopiée telle quelle depuis la liste fournie." }
           },
-          required: ["prompt", "solution", "topic"]
+          required: ["prompt", "figure", "solution", "topic"]
         }
       }
     },
     required: ["exercises"]
   };
-  function buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid) {
+  function buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) {
     var mode = prep.revisionMode || "auto";
     var share = typeof prep.practiceShare === "number" ? prep.practiceShare : 50;
     var kindRule = mode === "cours" || share <= 20
       ? "Ce sont des exercices de RESTITUTION du cours (l'élève révise surtout du par cœur) : chacun enchaîne plusieurs questions qui demandent de définir, expliquer, illustrer par un exemple, comparer, situer, justifier... sur un même thème, comme une vraie partie « questions de cours » d'un contrôle."
       : "Ce sont des exercices d'APPLICATION : l'élève doit mettre en œuvre les notions, méthodes et savoir-faire du cours sur un support NOUVEAU.";
-    var source = courses.map(function (co) { return "### " + co.title + "\n" + stripFigureMarkdown(co.transcription || ""); }).join("\n\n");
+    var inScope = {}; courses.forEach(function (co) { inScope[co.id] = 1; });
+    var extra = [], seenDoc = {}, extraLeft = 14000;
+    courses.forEach(function (co) { exoChapterDocs(co).forEach(function (d) { if (inScope[d.course.id] || seenDoc[d.course.id] || d.role === "cours" || extraLeft < 400) return; seenDoc[d.course.id] = 1; var t = stripFigureMarkdown(d.course.transcription || "").slice(0, Math.min(7000, extraLeft)); extraLeft -= t.length; extra.push("### « " + d.course.title + " » — nature probable : " + EXO_ROLES[d.role].label + "\n" + t); }); });
+    var source = EXO_DOCS_RULE + courses.map(function (co) { return "### « " + co.title + " » — nature probable : " + EXO_ROLES[exoRole(co.title)].label + "\n" + stripFigureMarkdown(co.transcription || ""); }).concat(extra).join("\n\n");
     return "Tu es un professeur qui prépare la séance de révision du jour d'un élève pour « " + prep.title + " ».\n" +
       "Notions du jour : " + (dayEntry.topics || []).join(" ; ") + ". Objectif du jour : " + (dayEntry.focus || "") + "\n\n" +
-      COURSE_LANGUAGE_RULE +
+      COURSE_LANGUAGE_RULE + exoGuideText(guide) + EXO_RULES + EXO_FIGURE_RULES +
+      (courses.some(exoVisual) ? "Ces cours utilisent des supports visuels : au moins un exercice sur deux (et au moins un) a une figure indispensable pour répondre, ou fait produire un schéma.\n" : "") +
       "Crée EXACTEMENT " + count + " exercice(s) NOUVEAU(X), centrés sur les notions du jour. " + kindRule + "\n\n" +
       "Règles :\n" +
-      "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 8 à 12 minutes de travail : la séance entière ne dure que 30 minutes) : un support riche mais court, suivi de 3 ou 4 questions numérotées qui vont à l'essentiel. JAMAIS une question unique et courte. Exemples : en français, pour des procédés stylistiques, un extrait de 6 à 12 lignes (écrit par toi dans l'esprit des textes du cours, ou une citation exacte du cours) qui contient PLUSIEURS procédés différents, avec des questions pour les repérer, les nommer, citer le passage et analyser l'effet de chacun ; en maths/physique-chimie, un problème à plusieurs étapes avec des données nouvelles ; en histoire-géographie, un document ou une situation à analyser avec plusieurs questions ; en langues, un texte avec compréhension et production.\n" +
+      "- Chaque exercice est un VRAI exercice de contrôle, substantiel (environ 8 à 12 minutes de travail : la séance entière ne dure que 30 minutes) : un support riche mais court, suivi de 2 à 4 questions denses qui s'enchaînent, la dernière demandant une vraie idée. JAMAIS une question unique et courte.\n" +
       "- VARIÉTÉ : les exercices de cette séance ont des formes et des supports DIFFÉRENTS entre eux (repérage + analyse, problème, étude de document, rédaction courte, vrai/faux justifié, mise en relation...). Ils ne doivent PAS être une simple reformulation des exercices déjà existants ou déjà donnés listés plus bas : autre support, autre situation, autres questions.\n" +
       "- FIDÉLITÉ : uniquement des notions qui figurent dans le cours ci-dessous, au niveau de l'élève. N'invente aucun fait, aucune date, aucune définition qui n'y soit pas.\n" +
       "- MISE EN PAGE de \"prompt\" (en Markdown, jamais tout sur une seule ligne) : une courte consigne, puis le support (un texte ou extrait cité en bloc de citation, chaque ligne commençant par « > »), puis une ligne vide, puis CHAQUE question sur sa propre ligne, numérotée « 1. », « 2. », « 3. »..., avec une ligne vide entre deux questions.\n" +
@@ -625,18 +630,50 @@
     courses.forEach(function (co) { (co.exercises || []).forEach(function (ex) { avoid.push(String(ex.prompt || "").replace(/\s+/g, " ").slice(0, 160)); }); });
     (prep.freshHistory || []).forEach(function (h) { avoid.push(h); });
     avoid = avoid.slice(-40);
-    genStart(progressKey, [{ label: "Création d'exercices inédits pour ta séance", weight: 100, type: "prepExercises", scale: Math.max(1, count / 3) }]);
-    var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000);
-    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 120000); });
-    return Promise.race([task, timeout]).then(function (data) {
-      var fresh = (data && data.exercises || []).filter(function (ex) { return ex && ex.prompt && ex.solution; });
+    genStart(progressKey, [{ label: "Recherche de vrais exercices", weight: 25, type: "exoSearch" }, { label: "Création d'exercices inédits pour ta séance", weight: 50, type: "prepExercises", scale: Math.max(1, count / 3) }, { label: "Vérification des exercices", weight: 25, type: "exoReview" }]);
+    EXAM_PREP_FRESH_SCHEMA.properties.exercises.items.properties.figure = EXO_FIGURE_SCHEMA;
+    EXAM_PREP_FRESH_SCHEMA.properties.exercises.items.properties.solutionFigure = EXO_FIGURE_SCHEMA;
+    var lowTopics = (dayEntry.topics || []).map(function (t) { return t.toLowerCase(); });
+    var near = courses.filter(function (co) { var t = (co.title || "").toLowerCase(); return lowTopics.some(function (x) { return x && (t.indexOf(x) !== -1 || x.indexOf(t) !== -1); }); });
+    if (!near.length) near = courses;
+    prep.bankUsed = prep.bankUsed || {};
+    var refill = function () {
+      var target = near.concat(courses).find(function (co) { return exoRole(co.title) === "cours" && !exoJobs[co.id] && (co.exercises || []).filter(function (x) { return x.v === 2 && !prep.bankUsed[x.id]; }).length < count + 1; });
+      var l = target && locateCourse(target.id);
+      if (l) setTimeout(function () { improveCourseExercises(target, l.subject.name, l.chapter.name, false, true); }, 4000);
+    };
+    var bank = [], seenBank = {};
+    near.concat(courses).forEach(function (co) { (co.exercises || []).forEach(function (x) { if (x.v === 2 && !prep.bankUsed[x.id] && !seenBank[x.id]) { seenBank[x.id] = 1; bank.push({ x: x, co: co, near: near.indexOf(co) >= 0, r: Math.random() }); } }); });
+    bank.sort(function (a, b) { return (b.near - a.near) || (a.r - b.r); });
+    var bankNear = bank.filter(function (b) { return b.near; });
+    if (bankNear.length >= count) {
+      var withFig = bankNear.filter(function (b) { return b.x.figureSvg || b.x.solutionSvg; }), chosen = withFig.slice(0, 1);
+      bankNear.forEach(function (b) { if (chosen.length < count && chosen.indexOf(b) < 0) chosen.push(b); });
+      var bankPool = pool.filter(function (it) { return it.kind !== "exercise"; }).concat(chosen.map(function (b) { prep.bankUsed[b.x.id] = 1; return { id: b.x.id, kind: "exercise", category: "", prompt: b.x.prompt, solution: b.x.solution, figureSvg: b.x.figureSvg || "", solutionSvg: b.x.solutionSvg || "", courseId: b.co.id, courseTitle: b.co.title, fresh: true }; }));
+      for (var bj = bankPool.length - 1; bj > 0; bj--) { var bk = Math.floor(Math.random() * (bj + 1)), bt = bankPool[bj]; bankPool[bj] = bankPool[bk]; bankPool[bk] = bt; }
+      genEnd(progressKey, true); saveDB(); refill();
+      return Promise.resolve(bankPool);
+    }
+    var guides = Promise.race([Promise.all(near.slice(0, 2).map(function (co) { var l = locateCourse(co.id); return l ? exoGuide(co, l.subject.name, l.chapter.name) : ""; })), new Promise(function (ok) { setTimeout(function () { ok([]); }, 60000); })]);
+    return guides.then(function (gs) {
+      genPhase(progressKey, "Création d'exercices inédits pour ta séance");
+      var guide = gs.filter(Boolean).map(function (g) { return g.slice(0, 5000); }).join("\n\n");
+      var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000);
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 140000); });
+      return Promise.race([task, timeout]);
+    }).then(function (data) {
+      var made = (data && data.exercises || []).map(function (x) { var it = exoItem(x, true); if (it) it.topic = x.topic; return it; }).filter(Boolean);
+      genPhase(progressKey, "Vérification des exercices");
+      return exoReview(made, 75000).then(function (ok) { return exoVerifyFigures(ok, 2, 150000); });
+    }).then(function (fresh) {
       genEnd(progressKey, !!fresh.length);
+      refill();
       if (!fresh.length) return pool;
       prep.freshHistory = (prep.freshHistory || []).concat(fresh.map(function (ex) { return String(ex.prompt).replace(/\s+/g, " ").slice(0, 160); })).slice(-30);
       var first = courses[0];
       var freshItems = fresh.map(function (ex) {
         var co = courses.find(function (c) { return String(ex.topic || "") && (c.title || "").toLowerCase().indexOf(String(ex.topic).toLowerCase()) !== -1; }) || first;
-        return { id: uid(), kind: "exercise", category: "", prompt: ex.prompt + (ex.topic ? "\n\n*Notion : " + ex.topic + "*" : ""), solution: ex.solution, figureSvg: "", courseId: co.id, courseTitle: co.title, fresh: true };
+        return { id: uid(), kind: "exercise", category: "", prompt: ex.prompt + (ex.topic ? "\n\n*Notion : " + ex.topic + "*" : ""), solution: ex.solution, figureSvg: ex.figureSvg || "", solutionSvg: ex.solutionSvg || "", courseId: co.id, courseTitle: co.title, fresh: true };
       });
       var rest = pool.filter(function (it) { return it.kind !== "exercise"; });
       var merged = rest.concat(freshItems);
@@ -728,9 +765,9 @@
   var EXERCISE_GRADE_SCHEMA = {
     type: "object",
     properties: {
-      mistakes: { type: "array", items: { type: "string" }, description: "UNE entrée par erreur RÉELLEMENT commise (tableau vide seulement si la réponse est irréprochable sur le fond). Chaque entrée nomme précisément la notion ou l'étape du raisonnement en cause, en quelques mots (ex: \"confond vitesse moyenne et instantanée (-2 pt)\", \"oublie de convertir en mètres (-1 pt)\"), jamais une formule vague comme \"erreur de calcul\", et se termine TOUJOURS par le nombre de points retirés pour cette erreur précise entre parenthèses au format \"(-X pt)\". Ne fusionne jamais deux erreurs distinctes en une seule entrée, et ne minimise rien : toute imprécision, approximation ou maladresse compte comme une erreur à part entière (sauf l'orthographe/grammaire, presque jamais sanctionnée — voir consigne). N'invente en revanche aucune erreur qui n'existe pas : une formulation différente mais juste sur le fond n'est pas une erreur." },
+      mistakes: { type: "array", items: { type: "string" }, description: "UNE entrée par erreur réellement commise (tableau vide si la réponse est juste). Chaque entrée nomme précisément la notion ou l'étape en cause et se termine par les points retirés au format \"(-X pt)\", proportionnés à la gravité : très peu pour une réponse approchée, une seule fois par cause. Aucune erreur inventée." },
       scoreMax: { type: "integer", description: "Barème choisi pour CET exercice précis selon son ampleur et ses points clés (ex. 5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes)." },
-      score: { type: "number", description: "Note obtenue sur scoreMax, décimale autorisée (ex. 3.5) = scoreMax moins la somme des points retirés listés dans mistakes. Jamais gonflée pour rassurer l'élève : une réponse avec des erreurs de fond reste loin du score maximal." },
+      score: { type: "number", description: "Note obtenue sur scoreMax, décimale autorisée (ex. 3.5) = scoreMax moins la somme des points retirés listés dans mistakes. Juste et proportionnée : ni gonflée, ni écrasée pour des détails." },
       feedback: { type: "string" }
     },
     required: ["mistakes", "scoreMax", "score", "feedback"]
@@ -780,24 +817,31 @@
     return '<span class="mono" style="font-size:16px;flex:none">' + display + '/' + scoreMax + '</span>';
   }
   function buildExerciseGradePrompt(exercisePrompt, referenceSolution, studentAnswer) {
-    return "Tu es un correcteur d'examen EXTRÊMEMENT EXIGEANT pour un élève francophone. Ta mission n'est pas de rassurer l'élève : c'est de lui dire précisément où il en est réellement, même si c'est désagréable à entendre. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
+    return "Tu es un professeur exigeant et juste qui corrige la copie d'un élève francophone. Tu notes comme dans un vrai contrôle : strict et franc sur ce qui est faux ou manquant, proportionné dans les points, sans complaisance ni humiliation. Voici un exercice, sa solution de référence, et la réponse fournie par l'élève.\n\n" +
       "Exercice : " + exercisePrompt + "\n\n" +
       "Solution de référence : " + referenceSolution + "\n\n" +
       "Réponse de l'élève : " + (studentAnswer && studentAnswer.trim() ? studentAnswer : "(aucune réponse fournie)") + "\n\n" +
       "Règles de correction :\n" +
-      "- Liste dans \"mistakes\" CHAQUE erreur, imprécision, approximation ou maladresse réellement présente par rapport à la solution de référence, une entrée par erreur distincte. Pour CHAQUE entrée, termine par le nombre de points retirés pour CETTE erreur précise entre parenthèses, au format \"(-X pt)\" ou \"(-X,X pt)\" (ex. \"confond vitesse moyenne et instantanée (-2 pt)\") — le barème complet (score/scoreMax) doit être la conséquence transparente et vérifiable de cette liste, jamais un chiffre sorti de nulle part. Ne limite pas leur nombre et ne les minimise pas : si la réponse est mauvaise, dis-le clairement et liste tout ce qui ne va pas. À l'inverse, n'invente aucune erreur qui n'existe pas juste pour paraître sévère : une réponse formulée différemment mais juste sur le fond ne compte pour aucune erreur.\n" +
+      "- Répartis d'abord le barème : des points pour la DÉMARCHE (choix de la méthode, étapes, données trouvées) et des points pour les RÉSULTATS. Chaque étape juste rapporte ses points, même si la fin est fausse.\n" +
+      "- Liste dans \"mistakes\" chaque erreur réelle, une entrée par erreur distincte, terminée par les points retirés au format \"(-X pt)\" ou \"(-X,X pt)\" : la note (score/scoreMax) est exactement le barème moins ces retraits. N'oublie aucune vraie erreur et n'en invente aucune : une formulation ou une méthode différente mais juste ne coûte rien.\n" +
+      "- RETRAITS PROPORTIONNÉS (en part du barème de la question concernée) : petite imprécision, réponse approchée, arrondi, unité oubliée, mot pas tout à fait exact mais idée juste → 5 à 10 % au plus ; élément attendu manquant ou étape mal justifiée → 10 à 25 % ; erreur de calcul dans une démarche juste → 10 à 20 % ; mauvaise méthode ou contresens → la plupart des points de cette question, sans toucher aux autres. Une réponse proche de la bonne ne peut jamais perdre la moitié des points.\n" +
+      "- Une erreur ne se paie qu'UNE fois : si un résultat faux est ensuite utilisé correctement, la suite garde tous ses points. Ne retire jamais deux fois pour la même cause.\n" +
+      "- DÉFINITIONS, propriétés, formules et dates à connaître : la référence est celle du cours (solution de référence). Sois strict sur les éléments qui la composent : tout élément essentiel absent ou remplacé par un mot qui change le sens coûte des points. Les mots de liaison, l'ordre et un synonyme exact ne coûtent rien ; une définition approchée garde la part des éléments justes.\n" +
       "- Orthographe et grammaire : ne retire PRESQUE JAMAIS de points pour ça. Au grand maximum 1 point sur l'ensemble du barème, et seulement si le sujet n'est ni scientifique ni technique. Deux seules exceptions où une faute d'orthographe compte comme une erreur normale : (1) un terme scientifique/technique précis mal orthographié (ex. un nom d'unité, une notion, un nom propre scientifique) dans une matière où ce terme est justement ce qui est évalué, (2) une faute dans la conjugaison du verbe quand l'exercice porte spécifiquement sur la conjugaison. En dehors de ces deux cas (donc pour la quasi-totalité des exercices de maths, sciences, et de la rédaction générale dans les autres matières), l'orthographe ne doit JAMAIS faire perdre plus d'un point : c'est le fond — le raisonnement, le résultat, la compréhension de la notion — qui est évalué, pas la forme.\n" +
-      "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées (score = scoreMax moins la somme des points retirés listés dans \"mistakes\"). N'arrondis jamais à la hausse par gentillesse : une réponse avec des erreurs de fond ne doit jamais approcher le score maximal.\n" +
-      "- Le \"feedback\" doit être factuel et sans complaisance : dis explicitement ce qui est faux, incomplet ou hors sujet, sans formules vagues type \"pas tout à fait\" ou \"presque\" qui adoucissent le constat. Explique aussi ce qui est juste, le cas échéant, mais sans laisser croire que la réponse est meilleure qu'elle ne l'est.\n\n" +
+      "- Choisis un \"scoreMax\" adapté à l'ampleur réelle de l'exercice (5 pour une question courte, 10 ou 20 pour un exercice à plusieurs étapes), puis donne un \"score\" sur ce barème, décimale si besoin (ex. 3.5), qui reflète fidèlement la gravité et le nombre des erreurs listées (score = scoreMax moins la somme des points retirés listés dans \"mistakes\"). Ni cadeau, ni sévérité gratuite : une réponse avec une vraie erreur de fond n'a pas la note maximale, et une copie en partie juste garde tous les points mérités.\n" +
+      "- Le \"feedback\" dit la VÉRITÉ, en accord avec la note. Première phrase = verdict net : sous 30 % « C'est raté », de 30 à 55 % « C'est insuffisant », de 55 à 80 % « C'est en partie juste, mais... », de 80 à 95 % « C'est presque ça, il manque... », au-dessus « C'est juste ». Ensuite : ce qui est faux ou manquant et POURQUOI, ce que l'élève aurait dû faire, et le point précis à retravailler. Ne mentionne ce qui est juste que si c'est vraiment juste et utile à savoir, en une phrase, jamais pour adoucir. INTERDIT si la note est sous 80 % : « bravo », « très bien », « bon travail », « bel effort », « bon début », « tu es sur la bonne voie » et tout compliment du même genre. Ne va jamais dans le sens de l'élève parce qu'il a l'air sûr de lui ; une réponse vide, hors sujet ou inventée est dite comme telle. Être franc ne veut pas dire humilier : critique la copie, jamais la personne.\n\n" +
       "Pour toute formule mathématique dans ton feedback, utilise du LaTeX ($...$ ou $$...$$).\n\n" +
       "Réponds uniquement en respectant le schéma JSON fourni, en français — mais si l'exercice est dans une langue étrangère (cours de langue), évalue la réponse dans cette langue (sens, vocabulaire, grammaire attendus), et cite les corrections dans cette langue.";
   }
-  async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer) {
+  async function gradeExerciseAnswer(exercisePrompt, referenceSolution, studentAnswer, figureSvg, solutionSvg) {
     // Dessins de l'élève (outil Dessin) : joints en images, et la consigne de correction les mentionne.
     var drawn = drawingsForAnswer(studentAnswer);
     var promptText = buildExerciseGradePrompt(stripFigureMarkdown(exercisePrompt), stripFigureMarkdown(referenceSolution), drawn.text);
     if (drawn.images.length) promptText = promptText.replace("Règles de correction :\n", "Règles de correction :\n" + DRAWING_GRADE_RULE);
-    var parts = drawingParts(drawn.images).concat([{ text: promptText }]);
+    var figPng = figureSvg ? await svgToPng(figureSvg) : "";
+    if (figPng) promptText = promptText.replace("Règles de correction :\n", "Règles de correction :\n- FIGURE : la figure fournie à l'élève est jointe. Pour une mesure ou une lecture sur la figure, accepte un écart raisonnable (environ 0,2 cm, 3° ou une demi-graduation, et l'effet de cet écart sur la suite des calculs) : ce n'est pas une erreur.\n");
+    var solPng = solutionSvg ? await svgToPng(solutionSvg) : "";
+    var parts = (solPng ? [{ text: "Schéma attendu (corrigé, pas la copie de l'élève) :" }].concat(geminiImageParts([solPng])) : []).concat(figPng ? [{ text: "Figure de l'énoncé (fournie à l'élève) :" }].concat(geminiImageParts([figPng])) : []).concat(drawingParts(drawn.images), [{ text: promptText }]);
     var result = await callGemini(parts, EXERCISE_GRADE_SCHEMA);
     result.mistakes = result.mistakes || [];
     var ratio = result.scoreMax > 0 && typeof result.score === "number" ? result.score / result.scoreMax : null;
@@ -1014,27 +1058,6 @@
   // une suggestion de recherche. On cherche maintenant réellement sur internet (grounding Google Search)
   // de vraies vidéos existantes et on ne garde que les liens youtube.com/youtu.be effectivement trouvés,
   // sans jamais inventer de vidéo ou d'URL.
-  function buildCourseVideoSearchPrompt(title, subjectName, chapterName, content) {
-    return "Cherche sur internet 3 vraies vidéos YouTube pédagogiques de qualité (de préférence en français, adaptées à un élève) qui expliquent bien le sujet du cours suivant.\n\n" +
-      "Matière : " + subjectName + ", chapitre : " + chapterName + ", titre du cours : " + title + "\n\n" +
-      "Résumé du contenu du cours (pour bien cibler les vidéos) :\n\n" + String(content || "").slice(0, 2500) + "\n\n" +
-      "Pour chacune des vidéos que tu trouves réellement en cherchant, donne son titre exact et explique en une phrase pourquoi elle est pertinente. N'invente JAMAIS une vidéo ou un lien qui n'existe pas : si tu ne trouves vraiment aucune vidéo pertinente, dis-le simplement plutôt que d'en inventer une.";
-  }
-  function generateCourseVideoLinks(title, subjectName, chapterName, content) {
-    return callGeminiSearch([{ text: buildCourseVideoSearchPrompt(title, subjectName, chapterName, content) }])
-      .then(function (res) {
-        var seen = {};
-        return (res.sources || []).filter(function (s) {
-          return s.uri && /(?:youtube\.com\/watch\?v=|youtu\.be\/)/i.test(s.uri);
-        }).filter(function (s) {
-          if (seen[s.uri]) return false;
-          seen[s.uri] = true;
-          return true;
-        }).slice(0, 3).map(function (s) { return { title: s.title || "Vidéo YouTube", sub: subjectName, url: s.uri }; });
-      })
-      .catch(function () { return []; });
-  }
-
   function runCourseGeneration(course, subjectName, chapterName, imagesOverride, priorTranscription, attempt) {
     attempt = attempt || 1;
     course.status = "processing";
@@ -1112,9 +1135,9 @@
           return;
         }
         var quizQuestions = (data.quizQuestions || []).map(function (q) {
-          return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation, figureSvg: q.figureSvg || "" };
-        });
-        var exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution, figureSvg: ex.figureSvg || "" }; });
+          return { id: uid(), type: q.type === "ouverte" ? "ouverte" : "qcm", category: q.category, prompt: q.prompt, choices: q.choices || [], correctIndex: q.correctIndex, answer: q.answer || "", explanation: q.explanation, figureSvg: "" };
+        }).filter(function (q) { return !statementMissesFigure(q.prompt); });
+        var exercises = (data.exercises || []).map(function (ex) { return { id: uid(), prompt: ex.prompt, solution: ex.solution, figureSvg: "" }; }).filter(function (ex) { return !statementMissesFigure(ex.prompt); });
         // Transcription/explication n'ont pas de "figureSvg" dédié comme les exercices/questions : on
         // les enveloppe dans le même format {prompt, figureSvg} pour pouvoir les passer avec eux à la
         // même passe de reconstruction (un seul appel, plutôt que d'en refaire un par catégorie).
@@ -1161,9 +1184,8 @@
           // Recherche de vraies vidéos en arrière-plan, après coup : le cours reste utilisable tout de
           // suite sans attendre cette passe, et si aucune vidéo pertinente n'est trouvée, on laisse
           // simplement la liste vide plutôt que d'inventer un lien.
-          generateCourseVideoLinks(course.title, subjectName, chapterName, transcription).then(function (videos) {
-            if (videos.length) { course.videos = videos; saveDB(); render(); }
-          });
+          improveCourseExercises(course, subjectName, chapterName);
+          findCourseVideos(course);
         });
       });
     }).catch(function (err) {

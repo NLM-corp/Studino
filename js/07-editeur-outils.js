@@ -522,7 +522,7 @@
     var text = (item && item.prompt) || "";
     if (/\(figure:/.test(text)) return ""; // une vraie image (photo importée) est déjà intégrée au texte via mdToHtml, rien à ajouter ici
     var clean = sanitizeSvg(resolveExerciseFigureSvg(item));
-    if (clean) return '<div class="exercise-figure">' + clean + '</div>';
+    if (clean) return figBoxHtml(clean);
     if (statementMissesFigure(text)) {
       return '<div class="figure-missing-warning">⚠️ Cet énoncé fait référence à un schéma ou un graphique (« ci-contre »/« ci-dessous »…) qui n\'a pas pu être récupéré. Clique sur « 🔄 Régénérer » en haut de la page pour relancer la détection (les photos source sont conservées) ; si ça persiste, réimporte une photo plus nette et mieux cadrée sur ce schéma.</div>';
     }
@@ -980,7 +980,7 @@
     }
     var fieldValue = field === "transcription" ? course.transcription : course.explanation;
     var fieldFigureSvg = field === "transcription" ? course.transcriptionFigureSvg : course.explanationFigureSvg;
-    return '<div class="prose prose-lesson">' + mdToHtml(fieldValue, course.figures) + '</div>' +
+    return (field === "transcription" ? lessonHtml(course) : '<div class="prose prose-lesson">' + mdToHtml(fieldValue, course.figures) + '</div>') +
       exerciseFigureHtml({ prompt: fieldValue, figureSvg: fieldFigureSvg }) +
       '<button class="btn btn-ghost btn-sm" style="width:auto;margin-top:14px" onclick="App.startEditCourseField(\'' + course.id + '\',\'' + field + '\')">✏️ Modifier</button>';
   }
@@ -991,16 +991,8 @@
     if (tab === "explication") {
       return courseFieldEditorHtml(course, "explanation");
     }
-    if (tab === "videos") {
-      if (!course.videos || !course.videos.length) {
-        return '<p class="dp-empty-note">Aucune vidéo pertinente trouvée pour ce cours' + (course.status === "ready" ? " (recherche en cours ou sans résultat)" : "") + '.</p>';
-      }
-      return '<span class="demo-badge">Vidéos trouvées sur YouTube</span><div class="video-list">' + course.videos.map(function (v) {
-        return '<a class="video-item" href="' + v.url + '" target="_blank" rel="noopener noreferrer"><div class="video-ico">' + icon("play") + '</div><div><div class="video-title">' + esc(v.title) + '</div><div class="video-sub">' + esc(v.sub) + '</div></div></a>';
-      }).join("") + '</div>';
-    }
-    if (tab === "flashcards") return renderFlashcards(course);
-    if (tab === "quiz") return renderQuiz(course);
+    if (tab === "videos") return courseVideosHtml(course);
+    if (tab === "flashcards") return courseFlashHtml(course);
     return "";
   }
 
@@ -1057,54 +1049,3 @@
   function courseQcmQuestions(course) {
     return (course.quizQuestions || []).filter(function (q) { return q.type === "qcm"; });
   }
-  function renderQuiz(course) {
-    var questions = courseQcmQuestions(course);
-    if (!questions.length) return '<div class="quiz-done-empty"><h3>Aucune question</h3></div>';
-    var st = quizState[course.id];
-    if (!st) { st = { idx: 0, answers: new Array(questions.length).fill(null), submitted: false }; quizState[course.id] = st; }
-    if (st.submitted) return renderQuizResult(course, st);
-    var q = questions[st.idx];
-    var dots = questions.map(function (_, i) {
-      return '<div class="quiz-dot ' + (st.answers[i] != null ? "done" : "") + (i === st.idx ? " current" : "") + '"></div>';
-    }).join("");
-    var choices = q.choices.map(function (c, i) {
-      return '<label class="quiz-choice ' + (st.answers[st.idx] === i ? "selected" : "") + '" onclick="App.answerQuiz(\'' + course.id + '\',' + i + ')">' +
-        '<input type="radio" name="q' + q.id + '" ' + (st.answers[st.idx] === i ? "checked" : "") + ' readonly><span>' + esc(c) + '</span></label>';
-    }).join("");
-    var isLast = st.idx === questions.length - 1;
-    var canNext = st.answers[st.idx] != null;
-    return '<div class="exercise-layout"><div class="quiz-wrap">' +
-      '<div class="quiz-progress-dots">' + dots + '</div>' +
-      '<div class="quiz-q-num">Question ' + (st.idx + 1) + ' / ' + questions.length + '</div>' +
-      '<div class="quiz-q-text">' + escAi(q.prompt) + '</div>' + exerciseFigureHtml(q) +
-      choices +
-      '<div class="quiz-nav">' +
-      '<button class="btn btn-ghost" ' + (st.idx === 0 ? "disabled" : "") + ' onclick="App.quizNav(\'' + course.id + '\',-1)">← Précédente</button>' +
-      (isLast
-        ? '<button class="btn btn-primary" style="width:auto" ' + (canNext ? "" : "disabled") + ' onclick="App.submitQuiz(\'' + course.id + '\')">Valider le contrôle</button>'
-        : '<button class="btn btn-primary" style="width:auto" ' + (canNext ? "" : "disabled") + ' onclick="App.quizNav(\'' + course.id + '\',1)">Suivante →</button>') +
-      '</div></div>' + dinoCompanionHtml() + '</div>';
-  }
-
-  function renderQuizResult(course, st) {
-    var questions = courseQcmQuestions(course);
-    var correct = 0;
-    questions.forEach(function (q, i) { if (st.answers[i] === q.correctIndex) correct++; });
-    var total = questions.length;
-    var score20 = Math.round((correct / total) * 20 * 10) / 10;
-    var items = questions.map(function (q, i) {
-      var ok = st.answers[i] === q.correctIndex;
-      return '<div class="correction-item ' + (ok ? "correct" : "wrong") + '">' +
-        '<div class="correction-q">' + escAi(q.prompt) + '</div>' + exerciseFigureHtml(q) +
-        '<div class="correction-ans ' + (ok ? "good" : "bad") + '">Ta réponse : ' + esc(q.choices[st.answers[i]]) + '</div>' +
-        (ok ? '' : '<div class="correction-ans good">Bonne réponse : ' + esc(q.choices[q.correctIndex]) + '</div>') +
-        '<div class="correction-exp">' + mdToHtml(q.explanation) + '</div>' +
-        '</div>';
-    }).join("");
-    return '<div class="quiz-wrap">' +
-      '<div class="result-hero"><div class="result-score mono">' + score20 + '<span style="font-size:22px;color:var(--text-muted)">/20</span></div><div class="result-total">' + correct + ' bonnes réponses sur ' + total + '</div></div>' +
-      '<button class="btn btn-ghost" style="width:auto;margin:0 auto 26px;display:flex" onclick="App.retryQuiz(\'' + course.id + '\')">Refaire le contrôle</button>' +
-      '<h3 style="font-size:16px;margin-bottom:12px">Correction</h3>' + items +
-      '</div>';
-  }
-
