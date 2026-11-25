@@ -444,6 +444,7 @@
       COURSE_LANGUAGE_RULE +
       "Retranscris fidèlement et INTÉGRALEMENT tout le contenu de " + label + ", en Markdown structuré (## et ### pour les titres, - pour les listes, ** pour le gras). C'est une vraie retranscription, pas un résumé :\n" +
       "- N'oublie RIEN : chaque titre, chaque paragraphe, chaque définition, chaque exercice (avec son numéro et son titre, son énoncé complet, TOUTES ses questions numérotées ou lettrées, ses données et ses encadrés), même s'il y en a beaucoup et même si c'est long. Si la page contient plusieurs colonnes, retranscris une colonne entière puis la suivante, dans l'ordre de lecture.\n" +
+      "- HIÉRARCHIE : chaque exercice est un titre « ## » (son numéro et son titre). Tout ce qui lui appartient (énoncé, document, schéma, Données, questions, aide, barème, solution, mise en application...) va EN DESSOUS de lui, avec des titres « ### », jamais « ## » : sinon on croit que c'est une partie à part.\n" +
       "- Une question par ligne, numérotée comme dans le document, avec une ligne vide entre deux questions.\n" +
       "- Corrige seulement les fautes évidentes, garde le sens et les valeurs exacts.\n" +
       "- Si un passage correspond mot pour mot à un texte déjà public (manuel, site...), reformule légèrement sa formulation en gardant strictement les mêmes informations, données et questions.\n" +

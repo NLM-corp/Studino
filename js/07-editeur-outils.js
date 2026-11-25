@@ -932,6 +932,7 @@
     return scaleStyle + '<div class="print-doc print-nb">' + nbSheetHtml(sheet, subjectName, chapterName) + '</div>';
   }
   function buildCoursePrintHtml(course, subjectName, chapterName, includeExplanation) {
+    if (typeof buildLessonPrintHtml === "function") return buildLessonPrintHtml(course, subjectName, chapterName, includeExplanation);
     var fs = ficheHueAndScaleStyle();
     var sections = '<h3>Retranscription</h3>' + mdToHtml(course.transcription, course.figures);
     if (includeExplanation && course.explanation) sections += '<h3>Explication</h3>' + mdToHtml(course.explanation, course.figures);
@@ -964,6 +965,7 @@
     if (!area) { area = document.createElement("div"); area.id = "print-area"; document.body.appendChild(area); }
     area.innerHTML = html;
     renderMath();
+    if (typeof lessonPrepareForPrint === "function") lessonPrepareForPrint(area);
     var originalTitle = document.title;
     if (filename) document.title = String(filename).replace(/[\\/:*?"<>|]/g, "_");
     var restore = function () { document.title = originalTitle; window.removeEventListener("afterprint", restore); };

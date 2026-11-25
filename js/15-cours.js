@@ -1,10 +1,15 @@
 "use strict";
 
   function lessonHtml(course) {
-    Promise.resolve().then(lessonEnhanceAll);
     var loc = locateCourse(course.id);
-    return '<div class="prose nb nb-lesson"><div class="nbl-top">' + (loc ? esc(loc.subject.name) + ' · ' + esc(loc.chapter.name) : "") + '</div><h1 class="nbl-title"><span>' + esc(course.title) + '</span></h1>' + mdToHtml(course.transcription, course.figures) + '</div>';
+    return lessonPageHtml(course.transcription, course.figures, course.title, loc ? loc.subject.name + " · " + loc.chapter.name : "");
   }
+  function lessonPageHtml(md, figures, title, sub) {
+    Promise.resolve().then(lessonEnhanceAll);
+    return '<div class="prose nb nb-lesson"><div class="nbl-top">' + esc(sub || "") + '</div><h1 class="nbl-title"><span>' + esc(title) + '</span></h1>' + mdToHtml(md, figures) + '</div>';
+  }
+  var LESSON_SUB = /^(donn[ée]es?|document|doc\.?\s*\d*|annexe|questions?|[ée]nonc[ée]|consignes?|aide|coup de pouce|indices?|rappels?|analyse|pour bien r[ée]pondre|solution|correction|corrig[ée]|r[ée]ponses?|mise en application|bar[èe]me|d[ée]tails? du bar[èe]me|crit[èe]res|sch[ée]ma|figure|tableau|graphique|photo|partie\s+[a-z0-9]|[ée]tude|application|m[ée]thode|conseils?|to do|à faire|résultats?|exp[ée]rience|protocole|mat[ée]riel)\b/i;
+  var LESSON_EXO = /^(\d{1,3}\s*[).:-]?\s+\S|exercices?\s*(n[°o]\s*)?\d|ex\.?\s*\d|probl[èe]me\s*\d|activit[ée]\s*\d)/i;
   var LESSON_LEADS = [
     [/^(d[ée]finitions?|propri[ée]t[ée]s?|th[ée]or[èe]mes?|r[èe]gles?|lois?|formules?|principes?|vocabulaire|notions?)\b/i, "nbl-def"],
     [/^(exemples?|ex\.?|illustration|application|cas)\b/i, "nbl-ex"],
@@ -15,8 +20,16 @@
   function lessonEnhance(el) {
     if (!el._done) {
       el._done = true;
+      var exo = null;
+      Array.prototype.slice.call(el.children).forEach(function (c) {
+        var head = c.tagName === "H3" || c.tagName === "H4", t = head ? c.textContent.trim() : "";
+        if (head && LESSON_EXO.test(t)) { exo = document.createElement("div"); exo.className = "nbl-exo"; c.parentNode.insertBefore(exo, c); c.classList.add("nbl-exo-h"); exo.appendChild(c); return; }
+        if (head && c.tagName === "H3" && !LESSON_SUB.test(t)) { exo = null; return; }
+        if (exo) { if (head) c.classList.add("nbl-sub"); exo.appendChild(c); }
+      });
       var n = 0;
-      Array.prototype.forEach.call(el.children, function (c) {
+      Array.prototype.forEach.call(el.querySelectorAll(":scope > *, :scope > .nbl-exo > *"), function (c) {
+        if (c.classList.contains("nbl-exo")) return;
         if (c.tagName === "H3") n++;
         c.classList.add("nbl-s" + (n % 5));
         if (c.tagName === "H3" || c.tagName === "H4") { var s = document.createElement("span"); s.className = "nbl-u"; while (c.firstChild) s.appendChild(c.firstChild); c.appendChild(s); }
@@ -56,7 +69,8 @@
     ["h3", "h4"].forEach(function (t) { el.style.setProperty("--shift-" + t, (base - lessonBase(el, t)) + "px"); });
     var h1 = el.querySelector(".nbl-title"), top = el.getBoundingClientRect().top;
     el.style.setProperty("--base", (parseFloat(getComputedStyle(el).paddingTop) + base + g * 0.045) + "px");
-    var items = el.querySelectorAll(":scope > p, :scope > ul > li, :scope > ol > li, :scope > h3, :scope > h4, :scope > figure, :scope > pre, :scope > .nbl-table, :scope > .prose-callout, :scope > .prose-figure-removed, :scope > .fiche-frise, :scope > .fiche-cols, :scope > .fc-box, :scope > hr, :scope > .nbl-top, :scope > .nbl-title");
+    var parts = ["p", "ul > li", "ol > li", "h3", "h4", "figure", "pre", ".nbl-table", ".prose-callout", ".prose-figure-removed", ".fiche-frise", ".fiche-cols", ".fc-box", "hr", ".nbl-top", ".nbl-title"];
+    var items = el.querySelectorAll(parts.map(function (p) { return ":scope > " + p + ", :scope > .nbl-exo > " + p; }).join(", "));
     Array.prototype.forEach.call(items, function (b) { b.style.marginBottom = ""; });
     Array.prototype.forEach.call(items, function (b) {
       var h = b.getBoundingClientRect().height, gap = Math.ceil((h - 1) / g) * g - h, mb = parseFloat(getComputedStyle(b).marginBottom) || 0;
@@ -135,4 +149,17 @@
   function courseFlashHtml(course) {
     var busy = !!courseMediaJobs["f" + course.id];
     return '<div class="fc-tools"><button class="btn btn-ghost btn-sm" style="width:auto"' + (busy ? " disabled" : "") + ' onclick="App.makeFlashcards(\'' + course.id + '\')">' + (busy ? "⏳ Création des cartes…" : (course.flashcards || []).length ? "✨ Refaire des flashcards plus complètes" : "✨ Créer les flashcards") + '</button></div>' + renderFlashcards(course);
+  }
+
+  function buildLessonPrintHtml(course, subjectName, chapterName, includeExplanation) {
+    var fs = (13 * getPrintScale()).toFixed(2), sub = (subjectName || "") + (chapterName ? " · " + chapterName : "");
+    return '<style>.print-lesson .nb.nb-lesson{--fs:' + fs + 'px}</style><div class="content print-lesson">' + lessonPageHtml(course.transcription, course.figures, course.title, sub) +
+      (includeExplanation && course.explanation ? '<div class="print-lesson-break"></div>' + lessonPageHtml(course.explanation, course.figures, "Explication — " + course.title, sub) : "") + "</div>";
+  }
+  function lessonPrepareForPrint(area) {
+    if (!area.querySelector(".nb-lesson")) return;
+    var keep = area.getAttribute("style") || "";
+    area.setAttribute("style", "display:block;position:absolute;left:-20000px;top:0;width:720px");
+    area.querySelectorAll(".nb-lesson").forEach(function (el) { el._done = false; lessonEnhance(el); });
+    area.setAttribute("style", keep);
   }
