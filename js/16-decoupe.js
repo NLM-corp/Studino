@@ -83,19 +83,12 @@
         box = { x: nx, y: ny, w: Math.min(source.w, g.x + g.w) - nx, h: Math.min(source.h, g.y + g.h) - ny };
         canvas = await source.renderCanvas(box.x, box.y, box.w, box.h);
       }
-      var c = await figureCleanCanvas(canvas, caption);
-      return { url: (c ? c.canvas : canvas).toDataURL("image/jpeg", 0.92), box: box };
+      return { url: canvas.toDataURL("image/jpeg", 0.92), box: box };
     } catch (err) { return res; }
   }
   var FIG_QUICK_MODELS = ["gemini-3.5-flash", "gemini-3.6-flash"];
   async function callGeminiQuick(parts, schema, timeoutMs) {
-    var key = getApiKey();
-    if (key) for (var i = 0; i < FIG_QUICK_MODELS.length; i++) {
-      var r = await tryGeminiModel(key, FIG_QUICK_MODELS[i], parts, schema, 0, 16384, timeoutMs || 45000);
-      if (r.ok) return r.value;
-      if (!r.retryable) break;
-    }
-    return callGemini(parts, schema, 16384, 90000);
+    return callGemini(parts, schema, 16384, Math.max(60000, timeoutMs || 0), { lite: true });
   }
   var FIG_BATCH_CHECK_SCHEMA = { type: "object", properties: { results: { type: "array", items: { type: "object", properties: { index: { type: "integer" }, lost: { type: "string" }, ok: { type: "boolean" } }, required: ["index", "lost", "ok"] } } }, required: ["results"] };
   var FIG_BATCH_SCHEMA = { type: "object", properties: { results: { type: "array", items: { type: "object", properties: {
@@ -211,4 +204,15 @@
     if (!(course.figures || []).length) return "";
     var job = figCleanJobs[course.id];
     return '<button class="btn btn-ghost btn-sm" style="width:auto;margin:14px 0 0 10px"' + (job ? " disabled" : "") + ' onclick="App.cleanCourseFigures(\'' + course.id + '\')" title="Retire les bouts de texte restés autour des schémas">' + (job ? "⏳ Nettoyage… " + job.done + " / " + job.total : "✂️ Nettoyer les schémas") + '</button>';
+  }
+
+  async function cleanCropsBatch(crops, captions) {
+    var idx = [], items = [];
+    for (var i = 0; i < crops.length; i++) {
+      if (!crops[i]) continue;
+      try { var im = await new Promise(function (ok, ko) { var x = new Image(); x.onload = function () { ok(x); }; x.onerror = ko; x.src = crops[i]; }); var c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext("2d").drawImage(im, 0, 0); idx.push(i); items.push({ canvas: c, caption: captions[i] || "", i: i }); } catch (e) {}
+    }
+    var batches = []; for (var b = 0; b < items.length; b += 5) batches.push(items.slice(b, b + 5));
+    await runWithConcurrency(batches.map(function (batch) { return function () { return figureCleanBatch(batch).then(function (ch) { ch.forEach(function (c) { crops[c.it.i] = c.after.toDataURL("image/jpeg", 0.92); }); }).catch(function () {}); }; }), 2);
+    return crops;
   }

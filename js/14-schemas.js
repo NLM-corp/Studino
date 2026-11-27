@@ -186,7 +186,7 @@
         parts.push({ text: "\n===== FIGURE index " + k + (n.sol ? " (figure du CORRIGÉ)" : " (figure de l'ÉNONCÉ)") + " =====\nÉNONCÉ :\n" + n.it.prompt + "\n\nCORRIGÉ :\n" + (n.it.solution || n.it.answer) + (exoGeometry(n.spec) ? "\n\nVALEURS EXACTES :\n" + exoGeometry(n.spec) : "") + "\nImage :" });
         parts = parts.concat(pngs[k] ? geminiImageParts([pngs[k]]) : [{ text: "(image impossible à produire : ok = false)" }]);
       });
-      return Promise.race([callGemini(parts, EXO_LOOK_SCHEMA, 32768, timeoutMs), new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
+      return Promise.race([callGemini(parts, EXO_LOOK_SCHEMA, 32768, timeoutMs, { high: true }), new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
     }).then(function (d) {
       if (!d) return null;
       var by = {}; (d.results || []).forEach(function (r) { if (r) by[r.index] = r; });
@@ -201,7 +201,7 @@
         parts.push({ text: "\n===== index " + k + (n.sol ? " (figure du CORRIGÉ : elle montre la réponse)" : "") + " =====\nÉNONCÉ :\n" + n.it.prompt + "\n\nCORRIGÉ :\n" + (n.it.solution || n.it.answer) + "\n\nFIGURE REFUSÉE :\n" + JSON.stringify(n.spec).slice(0, 5000) + "\n\nDÉFAUTS :\n- " + n.problems.join("\n- ") });
         if (pngs[k]) parts = parts.concat(geminiImageParts([pngs[k]]));
       });
-      return Promise.race([callGemini(parts, schema, 32768, timeoutMs), new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
+      return Promise.race([callGemini(parts, schema, 32768, timeoutMs, { high: true }), new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
     }).then(function (d) { var by = {}; (d && d.results || []).forEach(function (r) { if (r && r.figure) by[r.index] = r.figure; }); return by; }).catch(function () { return {}; });
   }
   async function exoVerifyFigures(items, rounds, deadlineMs) {
@@ -213,7 +213,9 @@
     var pending = list.slice();
     for (var r = 0; r <= rounds && pending.length && Date.now() < end; r++) {
       pending.forEach(function (n) { n.svg = exoFigureSvg(n.spec); n.problems = exoFigureFaults(n.spec, n.svg); });
-      var clean = pending.filter(function (n) { return !n.problems.length; }), by = await exoLook(clean, false, Math.min(120000, left()));
+      var clean = pending.filter(function (n) { return !n.problems.length; });
+      if (r === 0) { clean.forEach(function (n) { var lk = n.it[n.sol ? "solLook" : "figLook"]; if (lk) { if (lk.ok) n.ok = true; else n.problems = lk.problems.length ? lk.problems : ["refusée à la relecture"]; } }); clean = clean.filter(function (n) { return !n.ok && !n.problems.length; }); }
+      var by = clean.length ? await exoLook(clean, false, Math.min(120000, left())) : {};
       if (!by) break;
       clean.forEach(function (n, k) { var v = by[k]; if (v && v.ok && !(v.problems || []).length) n.ok = true; else n.problems = v && v.problems && v.problems.length ? v.problems : ["refusée au contrôle visuel" + (v && v.seen ? " : on y voit " + v.seen : "")]; });
       pending = pending.filter(function (n) { return !n.ok; });
@@ -222,16 +224,11 @@
       pending.forEach(function (n, k) { if (fix[k] && fix[k].kind && fix[k].kind !== "aucune") { n.spec = fix[k]; got++; } });
       if (!got) break;
     }
-    var okList = list.filter(function (n) { return n.ok; });
-    if (okList.length && Date.now() < end) {
-      var by2 = await exoLook(okList, true, Math.min(120000, left()));
-      okList.forEach(function (n, k) { var v = by2 && by2[k]; if (!v || !v.ok || (v.problems || []).length) n.ok = false; });
-    } else okList.forEach(function (n) { n.ok = false; });
     var out = items.filter(function (it) { return !list.some(function (n) { return n.it === it && !n.sol && !n.ok; }); });
     out.forEach(function (it) {
       it.figureSvg = ""; it.solutionSvg = "";
       list.forEach(function (n) { if (n.it === it && n.ok) it[n.sol ? "solutionSvg" : "figureSvg"] = n.svg; });
-      delete it.figureSpec; delete it.solutionSpec; delete it.geo;
+      delete it.figureSpec; delete it.solutionSpec; delete it.geo; delete it.figLook; delete it.solLook;
     });
     return out;
   }

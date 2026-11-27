@@ -658,13 +658,26 @@
     return guides.then(function (gs) {
       genPhase(progressKey, "Création d'exercices inédits pour ta séance");
       var guide = gs.filter(Boolean).map(function (g) { return g.slice(0, 5000); }).join("\n\n");
-      var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000);
+      var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000, { high: true });
       var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 140000); });
       return Promise.race([task, timeout]);
     }).then(function (data) {
       var made = (data && data.exercises || []).map(function (x) { var it = exoItem(x, true); if (it) it.topic = x.topic; return it; }).filter(Boolean);
       genPhase(progressKey, "Vérification des exercices");
-      return exoReview(made, 75000).then(function (ok) { return exoVerifyFigures(ok, 2, 150000); });
+      return exoReview(made, 90000).then(function (ok) { return exoVerifyFigures(ok, 1, 150000); }).then(function (ok) {
+        if (!courses.some(exoVisual) || ok.some(function (x) { return x.figureSvg || x.solutionSvg; })) return ok;
+        var co = near[0], l = co && locateCourse(co.id);
+        if (!l) return ok;
+        return Promise.race([callGemini([{ text: buildExoPrompt(co, l.subject.name, l.chapter.name, "", [], 2) }], EXO_SCHEMA, 32768, 120000, { high: true }), new Promise(function (r) { setTimeout(function () { r(null); }, 120000); })]).then(function (d) {
+          var vis = (d && d.exercises || []).map(function (x) { return exoItem(x, true); }).filter(function (x) { return x && (x.figureSpec || x.solutionSpec); });
+          return exoReview(vis, 60000).then(function (r) { return exoVerifyFigures(r, 1, 120000); });
+        }).then(function (vis) {
+          vis = vis.filter(function (x) { return x.figureSvg || x.solutionSvg; }).slice(0, 1);
+          if (!vis.length) return ok;
+          vis[0].topic = (dayEntry.topics || [])[0] || "";
+          return vis.concat(ok).slice(0, Math.max(1, count));
+        }).catch(function () { return ok; });
+      });
     }).then(function (fresh) {
       genEnd(progressKey, !!fresh.length);
       refill();

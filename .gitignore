@@ -4,3 +4,5 @@ Thumbs.db
 *.local
 *.exe
 assets/objects/ui/Outils maths 1ère spe.pdf
+cle-gemini*
+*.key

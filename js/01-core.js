@@ -2,7 +2,7 @@
 // Studino — stockage, images, audio, schémas
 // Fichier chargé dans l'ordre par index.html : les fichiers partagent les mêmes variables globales.
 
-  var APP_VERSION = "16.9"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
+  var APP_VERSION = "17.1"; // +0.1 à chaque push sur GitHub, pour que l'utilisateur puisse vérifier qu'il a bien la dernière version
   // Installation sur l'écran d'accueil : Chrome/Edge/Android proposent l'installation par un événement
   // qu'on garde pour le bouton des paramètres ; l'iPhone n'en a pas, on explique la marche à suivre.
   var installPromptEvent = null;
@@ -942,7 +942,7 @@
     for (var round = 0; round < 3; round++) {
       var url = await source.renderRegion(cur.x, cur.y, cur.w, cur.h);
       var r = null;
-      try { r = await callGemini(geminiImageParts([url]).concat([{ text: buildFigureReviewPrompt(caption) }]), FIGURE_REVIEW_SCHEMA); } catch (e) { r = null; }
+      try { r = await callGemini(geminiImageParts([url]).concat([{ text: buildFigureReviewPrompt(caption) }]), FIGURE_REVIEW_SCHEMA, null, null, { lite: true }); } catch (e) { r = null; }
       if (!r) return { url: url, box: cur };
       var cut = (r.cutSides || []).filter(function (sd) {
         return (sd === "top" && cur.y > 0) || (sd === "left" && cur.x > 0) || (sd === "bottom" && cur.y + cur.h < source.h) || (sd === "right" && cur.x + cur.w < source.w);
@@ -1134,6 +1134,7 @@
         var dup = Object.keys(finalKeep).some(function (j) { return kept[j].si === kept[i].si && figBoxOverlap(finals[j], finals[i]) > 0.5; });
         if (!dup) finalKeep[i] = true;
       });
+      try { await cleanCropsBatch(crops, kept.map(function (f) { return f.caption; })); } catch (e) {}
       var list = [], subs = [], figures = [];
       kept.forEach(function (f, i) {
         if (!crops[i] || !finalKeep[i]) return;

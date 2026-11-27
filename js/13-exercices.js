@@ -170,25 +170,35 @@
       "Réponds uniquement en respectant le schéma JSON, en français (sauf ce que la RÈGLE DE LANGUE impose).";
   }
   var EXO_REVIEW_SCHEMA = { type: "object", properties: { results: { type: "array", items: { type: "object", properties: {
-    index: { type: "integer" }, verdict: { type: "string", description: "ok, corrige ou rejette" }, reason: { type: "string" },
+    index: { type: "integer" },
+    figureSeen: { type: "string", description: "S'il y a une figure : décris d'abord ce qu'elle montre réellement, sans t'aider de l'énoncé. Vide sinon." },
+    figureOk: { type: "boolean", description: "La figure de l'énoncé est exacte, propre, conforme à l'énoncé, ne donne pas la réponse. true s'il n'y en a pas." },
+    figureProblems: { type: "array", items: { type: "string" } },
+    solutionFigureOk: { type: "boolean", description: "La figure du corrigé est exacte et complète. true s'il n'y en a pas." },
+    solutionFigureProblems: { type: "array", items: { type: "string" } }, verdict: { type: "string", description: "ok, corrige ou rejette" }, reason: { type: "string" },
     prompt: { type: "string", description: "Nouvel énoncé complet si tu le corriges, sinon vide." }, solution: { type: "string", description: "Nouveau corrigé complet si tu le corriges, sinon vide." }
   }, required: ["index", "verdict", "prompt", "solution"] } } }, required: ["results"] };
   function exoReview(items, timeoutMs) {
     if (!items.length) return Promise.resolve(items);
-    return Promise.all(items.map(function (it) { return it.figureSvg ? svgToPng(it.figureSvg) : ""; })).then(function (pngs) {
+    var specSvg = function (sp) { return sp ? exoFigureSvg(sp) : ""; };
+    return Promise.all(items.map(function (it) { return Promise.all([svgToPng(specSvg(it.figureSpec) || it.figureSvg || ""), svgToPng(specSvg(it.solutionSpec))]); })).then(function (pngs) {
       var parts = [{ text: "Tu es un professeur relecteur très exigeant. Fais chaque exercice ci-dessous toi-même, comme l'élève, uniquement avec ce qui lui est fourni, puis compare à son corrigé.\n\n" + EXO_RULES +
         "Pour chaque exercice :\n- \"rejette\" s'il est infaisable, s'il se résout en recopiant la leçon.\n- \"corrige\" aussi s'il se résout en une seule étape (formule ou règle appliquée directement) : complique l'énoncé selon les règles d bis et d ter et refais le corrigé ; si la figure ne le permet pas, \"rejette\".\n" +
-        "- \"corrige\" si le corrigé est faux ou incomplet, si l'énoncé donne ce que l'élève devrait obtenir lui-même, ou s'il manque une donnée : réécris alors en entier l'énoncé et/ou le corrigé. Pour une mesure sur figure, sers-toi des valeurs EXACTES listées (calculées par le site), pas d'une estimation à l'œil. Les figures sont contrôlées à part : ne rejette pas un exercice à cause d'un défaut de dessin, et suppose la figure conforme à ses valeurs. Tu ne peux pas la modifier : l'énoncé corrigé doit rester compatible avec elle.\n- \"ok\" sinon, avec prompt et solution vides.\n\nLes corrigés et énoncés restent en Markdown, formules en LaTeX entre $...$, dans la langue de l'exercice." }];
+        "- \"corrige\" si le corrigé est faux ou incomplet, si l'énoncé donne ce que l'élève devrait obtenir lui-même, ou s'il manque une donnée : réécris alors en entier l'énoncé et/ou le corrigé. Pour une mesure sur figure, sers-toi des valeurs EXACTES listées (calculées par le site), pas d'une estimation à l'œil. Les figures sont jugées à part (champs figure...) : ne rejette pas un exercice à cause d'un défaut de dessin, il sera redessiné. Tu ne peux pas modifier la figure : l'énoncé corrigé doit rester compatible avec elle.\n- \"ok\" sinon, avec prompt et solution vides.\n\nLes corrigés et énoncés restent en Markdown, formules en LaTeX entre $...$, dans la langue de l'exercice." }];
+      parts.push({ text: "\nFIGURES : pour chaque figure (énoncé ou corrigé), décris-la d'abord dans figureSeen sans regarder l'énoncé, puis juge-la avec la plus grande sévérité : objets de la bonne nature et au bon endroit (un triangle a 3 côtés, un angle droit est droit...), conforme à l'énoncé mot par mot, rien en trop, traits nets et propres, rien de superposé ou coupé, conventions de la discipline respectées, l'élève peut faire tout ce qu'on lui demande avec, et la figure de l'énoncé ne donne pas la réponse. Au moindre doute : false, avec les défauts précis.\n" + exoLookPrompt(false).split("\n").slice(-1)[0] });
       items.forEach(function (it, k) {
-        parts.push({ text: "\n===== EXERCICE index " + k + " =====\nÉNONCÉ :\n" + it.prompt + "\n\nCORRIGÉ :\n" + (it.solution || it.answer) + (it.geo ? "\n\nVALEURS EXACTES DE LA FIGURE :\n" + it.geo : "") + (pngs[k] ? "\n\nFigure :" : "") });
-        if (pngs[k]) parts = parts.concat(geminiImageParts([pngs[k]]));
+        parts.push({ text: "\n===== EXERCICE index " + k + " =====\nÉNONCÉ :\n" + it.prompt + "\n\nCORRIGÉ :\n" + (it.solution || it.answer) + (it.geo ? "\n\nVALEURS EXACTES DE LA FIGURE :\n" + it.geo : "") + (pngs[k][0] ? "\n\nFigure de l'énoncé :" : "") });
+        if (pngs[k][0]) parts = parts.concat(geminiImageParts([pngs[k][0]]));
+        if (pngs[k][1]) parts = parts.concat([{ text: "Figure du corrigé :" }], geminiImageParts([pngs[k][1]]));
       });
-      var task = callGemini(parts, EXO_REVIEW_SCHEMA, 65536, timeoutMs);
+      var task = callGemini(parts, EXO_REVIEW_SCHEMA, 65536, timeoutMs, { high: true });
       return Promise.race([task, new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
     }).then(function (data) {
       var by = {}; (data && data.results || []).forEach(function (r) { if (r) by[r.index] = r; });
       return items.filter(function (it, k) {
         var r = by[k]; if (!r) return true;
+        it.figLook = { ok: r.figureOk !== false && !(r.figureProblems || []).length, problems: r.figureProblems || [] };
+        it.solLook = { ok: r.solutionFigureOk !== false && !(r.solutionFigureProblems || []).length, problems: r.solutionFigureProblems || [] };
         if (/rejet/i.test(r.verdict)) return false;
         if (/corrig/i.test(r.verdict)) {
           if (String(r.prompt || "").trim().length > 30) it.prompt = r.prompt;
@@ -218,18 +228,20 @@
     var refresh = function () { var p = parseHash(); if (p[0] === "course" && p[1] === course.id) render(); };
     if (manual) refresh();
     var avoid = (course.exercises || []).filter(function (x) { return x.v === 2; }).map(function (x) { return String(x.prompt).replace(/\s+/g, " ").slice(0, 140); }).slice(-25);
-    var make = function (guide, imgs, onlyVisual) { return callGemini([{ text: buildExoPrompt(course, subjectName, chapterName, guide, avoid, onlyVisual) }].concat(imgs), EXO_SCHEMA, 65536, 240000); };
+    var make = function (guide, imgs, onlyVisual) { return callGemini([{ text: buildExoPrompt(course, subjectName, chapterName, guide, avoid, onlyVisual) }].concat(imgs), EXO_SCHEMA, 65536, 240000, { high: true }); };
     return exoGuide(course, subjectName, chapterName).then(function (guide) {
       return exoDocImages(course).then(function (imgs) {
         return make(guide, imgs, 0).then(function (data) {
           var items = function (d, k, sol) { return (d[k] || []).map(function (x) { return exoItem(x, sol); }).filter(Boolean); };
-          var check = function (l, ms) { return exoReview(l, ms).then(function (ok) { return exoVerifyFigures(ok, 4, 600000); }); };
+          var check = function (l, ms) { return exoReview(l, ms).then(function (ok) { return exoVerifyFigures(ok, 1, 400000); }); };
           var visual = (data.visuals || []).length > 0 || exoVisual(course);
-          return check(items(data, "exercises", true), 150000).then(function (exs) {
+          var allEx = items(data, "exercises", true), allApps = items(data, "applications", false);
+          return check(allEx.concat(allApps), 180000).then(function (all) {
+            var exs = all.filter(function (x) { return x.solution != null; }), apps = all.filter(function (x) { return x.solution == null; });
             var need = visual ? Math.max(2, Math.ceil(exs.length / 2)) - exs.filter(function (x) { return x.figureSvg || x.solutionSvg; }).length : 0;
-            if (need <= 0) return exs;
-            return make(guide, imgs, need + 1).then(function (d2) { return check(items(d2, "exercises", true).filter(function (x) { return x.figureSpec || x.solutionSpec; }), 120000); }).then(function (more) { return exs.concat(more); }).catch(function () { return exs; });
-          }).then(function (exs) { return check(items(data, "applications", false), 120000).then(function (apps) { return { exs: exs, apps: apps }; }); });
+            if (need <= 0) return { exs: exs, apps: apps };
+            return make(guide, imgs, need + 1).then(function (d2) { return check(items(d2, "exercises", true).filter(function (x) { return x.figureSpec || x.solutionSpec; }), 120000); }).then(function (more) { return { exs: exs.concat(more), apps: apps }; }).catch(function () { return { exs: exs, apps: apps }; });
+          });
         });
       });
     }).then(function (r) {

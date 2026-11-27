@@ -1820,7 +1820,7 @@
   // opts.fiche : fiche de révision (listes numérotées rendues en vraie liste).
   function mdToHtml(rawMd, figures, opts) {
     opts = opts || {};
-    var extracted = opts.nested ? { text: String(rawMd || ""), chips: [] } : mdExtractMath(rawMd);
+    var extracted = opts.nested ? { text: String(rawMd || ""), chips: [] } : mdExtractMath(fixLiteralNewlines(rawMd || ""));
     var md = extracted.text.split("\n").map(function (l) {
       l = l.replace(/!+(\[[^\]\n]*\]\((?:figure|schema):[^)\s]+\))/g, "!$1");
       if (l.indexOf("|") !== -1) return l;

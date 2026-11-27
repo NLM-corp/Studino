@@ -133,7 +133,7 @@
       "\"a\" : la réponse complète et courte. Pour une définition, une formule ou une date : exactement celle du cours.\n" +
       (role === "cours" || role === "methode" ? "" : "Ce document n'est pas une leçon : les cartes portent sur les méthodes, réflexes et pièges qu'il fait travailler, pas sur ses énoncés.\n") +
       "Formules en LaTeX entre $...$, jamais de commande de couleur.\n\nDOCUMENT :\n" + source;
-    return callGemini([{ text: prompt }], FLASH_SCHEMA, 32768, 150000).then(function (d) {
+    return callGemini([{ text: prompt }], FLASH_SCHEMA, 32768, 150000, { lite: true }).then(function (d) {
       var old = {}; (course.flashcards || []).forEach(function (f) { old[String(f.q).toLowerCase().trim()] = f.status; });
       var cards = (d.flashcards || []).filter(function (f) { return f && String(f.q || "").trim() && String(f.a || "").trim(); }).map(function (f) { return { id: uid(), q: f.q, a: f.a, status: old[f.q.toLowerCase().trim()] || "new" }; });
       if (cards.length < 3) throw new Error("pas assez de cartes, réessaie");

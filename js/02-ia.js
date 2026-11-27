@@ -5,7 +5,17 @@
   /* ---------------- Gemini AI generation ---------------- */
   var API_KEY_STORAGE = "studino_gemini_key";
   var BACKUP_API_KEY_STORAGE = "studino_gemini_key_backup";
-  var GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
+  var GEMINI_HIGH_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
+  var GEMINI_LITE_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+  var GEMINI_MODELS = GEMINI_HIGH_MODELS.concat(GEMINI_LITE_MODELS);
+  var QUOTA_OUT_KEY = "studino-quota-out";
+  function quotaDay() { return new Date(Date.now() - 8 * 3600000).toISOString().slice(0, 10); }
+  function quotaTag(key, model) { return String(key || "").slice(-6) + ":" + model; }
+  function quotaOut(key, model) { try { return (JSON.parse(localStorage.getItem(QUOTA_OUT_KEY) || "{}")[quotaTag(key, model)]) === quotaDay(); } catch (e) { return false; } }
+  function quotaMark(key, model) { try { var m = JSON.parse(localStorage.getItem(QUOTA_OUT_KEY) || "{}"), d = quotaDay(); Object.keys(m).forEach(function (k) { if (m[k] !== d) delete m[k]; }); m[quotaTag(key, model)] = d; localStorage.setItem(QUOTA_OUT_KEY, JSON.stringify(m)); } catch (e) {} }
+  function quotaHighLeft() { var k = [getApiKey(), getBackupApiKey()].filter(Boolean); return k.some(function (key) { return GEMINI_HIGH_MODELS.some(function (m) { return !quotaOut(key, m); }); }); }
+  function geminiModelsFor(opts) { opts = opts || {}; return opts.high ? GEMINI_HIGH_MODELS : opts.lite ? GEMINI_LITE_MODELS.concat(GEMINI_HIGH_MODELS) : GEMINI_MODELS; }
+  var QUOTA_HIGH_MESSAGE = "Le quota gratuit des bons modèles Gemini est épuisé pour aujourd'hui (20 demandes par modèle et par jour). Il se recharge vers 9 h. Une clé de secours (autre compte Google, dans les paramètres) double ce quota.";
 
   function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ""; }
   function setApiKey(k) { if (k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }
@@ -178,8 +188,9 @@
   // garder tel quel, ce qui casse l'affichage ("\text{...}" devient une tabulation suivie de "ext{...}").
   // Ces 3 caractères de contrôle n'ont eux-mêmes aucune raison légitime d'apparaître dans un texte
   // généré, donc on restaure sans risque le backslash littéral partout où on les trouve après coup.
+  function fixLiteralNewlines(s) { return String(s).replace(/\\r\\n|\\n(?![a-z])/g, "\n"); }
   function repairStrayLatexEscapes(value) {
-    if (typeof value === "string") return value.replace(/[\b\t\f]/g, function (ch) { return "\\" + { "\b": "b", "\t": "t", "\f": "f" }[ch]; });
+    if (typeof value === "string") return fixLiteralNewlines(value.replace(/[\b\t\f]/g, function (ch) { return "\\" + { "\b": "b", "\t": "t", "\f": "f" }[ch]; }));
     if (Array.isArray(value)) return value.map(repairStrayLatexEscapes);
     if (value && typeof value === "object") {
       var out = {};
@@ -273,7 +284,10 @@
         emptyErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(data, null, 2);
         return { ok: false, err: emptyErr, retryable: true, recitation: reason === "RECITATION" };
       }
-      return { ok: true, value: repairStrayLatexEscapes(JSON.parse(candParts[0].text)) };
+      var rawTxt = candParts.map(function (p) { return p.thought ? "" : (p.text || ""); }).join(""), parsed = null;
+      try { parsed = JSON.parse(rawTxt); } catch (e1) { var mj = /{[sS]*}/.exec(rawTxt.replace(/^```(?:json)?|```$/gm, "")); try { parsed = mj ? JSON.parse(mj[0]) : null; } catch (e2) { parsed = null; } }
+      if (!parsed || typeof parsed !== "object") { var badErr = new Error("Réponse illisible de " + modelName + "."); badErr.status = res.status; badErr.detail = rawTxt.slice(0, 2000); return { ok: false, err: badErr, retryable: true, recitation: false }; }
+      return { ok: true, value: repairStrayLatexEscapes(parsed) };
     }
     var errBody = await res.json().catch(function () { return {}; });
     var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
@@ -281,9 +295,12 @@
     var httpErr = new Error(msg);
     httpErr.status = res.status;
     httpErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(errBody, null, 2);
+    if (res.status === 429 && /per ?day|perday|free_tier|daily/i.test(msg + JSON.stringify(errBody))) quotaMark(apiKey, modelName);
     return { ok: false, err: httpErr, retryable: retryable, rateLimit: res.status === 429 };
   }
-  async function attemptGeminiWithKey(apiKey, parts, schema, maxOutputTokens, timeoutMs) {
+  async function attemptGeminiWithKey(apiKey, parts, schema, maxOutputTokens, timeoutMs, opts) {
+    var MODELS = geminiModelsFor(opts).filter(function (m) { return !quotaOut(apiKey, m); });
+    if (!MODELS.length) { var qe = new Error(opts && opts.high ? QUOTA_HIGH_MESSAGE : "Le quota gratuit de Gemini est épuisé pour aujourd'hui. Il se recharge vers 9 h."); qe.status = 429; qe.rateLimited = true; qe.quotaDay = true; throw qe; }
     var lastErr = null;
     var hadRateLimit = false;
     var recitationRetries = 0;
@@ -293,9 +310,9 @@
     var OVERLOAD_WAITS = [8000, 20000];
     for (var round = 0; round <= OVERLOAD_WAITS.length; round++) {
       var hadOverload = false;
-      for (var i = 0; i < GEMINI_MODELS.length; i++) {
+      for (var i = 0; i < MODELS.length; i++) {
         if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
-        var r = await tryGeminiModel(apiKey, GEMINI_MODELS[i], parts, schema, recitationRetries, maxOutputTokens, timeoutMs);
+        var r = await tryGeminiModel(apiKey, MODELS[i], parts, schema, recitationRetries, maxOutputTokens, timeoutMs);
         if (r.ok) return r.value;
         lastErr = r.err;
         if (r.rateLimit) hadRateLimit = true;
@@ -310,13 +327,14 @@
     // modèle le moins capable de reformuler intelligemment un contenu très indexé en ligne — on retente
     // donc une dernière fois avec le modèle le PLUS capable (le premier de la liste) et la consigne de
     // reformulation la plus insistante, plutôt que d'abandonner sur l'essai le plus faible.
-    if (recitationRetries > 0 && GEMINI_MODELS.length > 1) {
-      var last = await tryGeminiModel(apiKey, GEMINI_MODELS[0], parts, schema, recitationRetries + 1, maxOutputTokens, timeoutMs);
+    if (recitationRetries > 0 && MODELS.length > 1) {
+      var last = await tryGeminiModel(apiKey, MODELS[0], parts, schema, recitationRetries + 1, maxOutputTokens, timeoutMs);
       if (last.ok) return last.value;
       lastErr = last.err;
     }
     var finalErr = lastErr || new Error("Erreur inconnue de l'API Gemini.");
     finalErr.rateLimited = hadRateLimit;
+    if (opts && opts.high && hadRateLimit && !MODELS.some(function (m) { return !quotaOut(apiKey, m); })) { finalErr.message = QUOTA_HIGH_MESSAGE; finalErr.quotaDay = true; }
     if (hadOverload && !hadRateLimit) finalErr.message = "Les serveurs de Google sont saturés en ce moment (ce n'est ni ta clé ni ton quota). Réessaie dans quelques minutes.";
     throw finalErr;
   }
@@ -325,20 +343,20 @@
   // plusieurs milliers de mots chacune) : sans un délai allongé en conséquence, une réponse volumineuse
   // qui met plus de 60s à s'écrire se fait couper court côté navigateur avant même que Gemini ait fini,
   // ce qui ressemble à un échec silencieux (ça recommence sur le modèle suivant, en boucle, très long).
-  async function callGemini(parts, schema, maxOutputTokens, timeoutMs) {
+  async function callGemini(parts, schema, maxOutputTokens, timeoutMs, opts) {
     var primaryKey = getApiKey();
     if (!primaryKey) { var e = new Error("Ajoute ta clé API Gemini dans les paramètres avant de continuer."); e.code = "NO_API_KEY"; throw e; }
     try {
-      return await attemptGeminiWithKey(primaryKey, parts, schema, maxOutputTokens, timeoutMs);
+      return await attemptGeminiWithKey(primaryKey, parts, schema, maxOutputTokens, timeoutMs, opts);
     } catch (err1) {
       var backupKey = getBackupApiKey();
-      if (!err1.rateLimited || !backupKey) throw (err1.rateLimited ? rateLimitFallbackError(err1.detail, false) : err1);
+      if (!err1.rateLimited || !backupKey) throw (err1.rateLimited && !err1.quotaDay ? rateLimitFallbackError(err1.detail, false) : err1);
       // Clé principale à quota sur ses 4 modèles : bascule entière sur la clé de secours (compte Google
       // différent, donc quota totalement indépendant) avant d'abandonner pour de bon.
       try {
-        return await attemptGeminiWithKey(backupKey, parts, schema, maxOutputTokens, timeoutMs);
+        return await attemptGeminiWithKey(backupKey, parts, schema, maxOutputTokens, timeoutMs, opts);
       } catch (err2) {
-        throw (err2.rateLimited ? rateLimitFallbackError(err2.detail, true) : err2);
+        throw (err2.rateLimited && !err2.quotaDay ? rateLimitFallbackError(err2.detail, true) : err2);
       }
     }
   }
@@ -354,10 +372,11 @@
   async function attemptGeminiSearchWithKey(apiKey, parts) {
     var lastErr = null;
     var hadRateLimit = false;
-    for (var i = 0; i < GEMINI_MODELS.length; i++) {
+    var MODELS = GEMINI_LITE_MODELS.concat(GEMINI_HIGH_MODELS).filter(function (m) { return !quotaOut(apiKey, m); });
+    for (var i = 0; i < MODELS.length; i++) {
       if (hadRateLimit) await sleep(4000); // laisse une chance à la limite par MINUTE de se libérer avant le modèle de secours suivant
       var body = JSON.stringify({ contents: [{ role: "user", parts: parts }], tools: [{ google_search: {} }] });
-      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent";
+      var endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELS[i] + ":generateContent";
       var res;
       try {
         res = await fetchWithTimeout(endpoint + "?key=" + encodeURIComponent(apiKey), { method: "POST", headers: { "content-type": "application/json" }, body: body }, 60000);
@@ -390,9 +409,9 @@
       var errBody = await res.json().catch(function () { return {}; });
       var msg = (errBody.error && errBody.error.message) || ("Erreur API Gemini (" + res.status + ")");
       var retryable = res.status === 503 || res.status === 429 || res.status === 404 || /overload|unavailable|high demand|no longer available|not found|deprecated/i.test(msg);
-      if (res.status === 429) hadRateLimit = true;
+      if (res.status === 429) { hadRateLimit = true; if (/per ?day|perday|free_tier|daily/i.test(JSON.stringify(errBody))) quotaMark(apiKey, MODELS[i]); }
       lastErr = new Error(msg);
-      lastErr.status = res.status; lastErr.detail = "Modèle : " + GEMINI_MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
+      lastErr.status = res.status; lastErr.detail = "Modèle : " + MODELS[i] + "\n\n" + JSON.stringify(errBody, null, 2);
       if (!retryable) throw lastErr;
     }
     var finalErr = lastErr || new Error("Erreur inconnue de l'API Gemini.");
