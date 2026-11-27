@@ -112,6 +112,7 @@
   function exoFigureFaults(f, svg) {
     var out = [], bad = function (s) { if (out.length < 12) out.push(s); };
     if (!svg) return ["la figure n'a pas pu être dessinée (données vides ou invalides)"];
+    if (f.bad && f.bad.length) out.push("lignes illisibles : " + f.bad.slice(0, 3).join(" / "));
     if (f.kind === "echelle" || f.kind === "repere") {
       var rep = f.kind === "repere", W = exoNum(f.width, 12), H = exoNum(f.height, 8), P = {}, els = exoElements(f);
       var x0 = rep ? exoNum(f.xMin, NaN) : 0, x1 = rep ? exoNum(f.xMax, NaN) : W, y0 = rep ? exoNum(f.yMin, NaN) : 0, y1 = rep ? exoNum(f.yMax, NaN) : H;
@@ -195,14 +196,15 @@
   }
   function exoRepair(list, timeoutMs) {
     var schema = { type: "object", properties: { results: { type: "array", items: { type: "object", properties: { index: { type: "integer" }, figure: EXO_FIGURE_SCHEMA }, required: ["index", "figure"] } } }, required: ["results"] };
+    var specText = function (sp) { return JSON.stringify(sp).slice(0, 4000); };
     return Promise.all(list.map(function (n) { return n.svg ? svgToPng(n.svg) : ""; })).then(function (pngs) {
       var parts = [{ text: "Des figures d'exercices ont été refusées. Refais chacune ENTIÈREMENT pour qu'elle soit exacte, propre et conforme à l'énoncé. Reprends les calculs de coordonnées à zéro, et déclare dans \"checks\" les propriétés qu'elle doit vérifier. Si « libre » pose problème, préfère « echelle » ou « repere » quand c'est possible.\n\n" + EXO_FIGURE_RULES }];
       list.forEach(function (n, k) {
-        parts.push({ text: "\n===== index " + k + (n.sol ? " (figure du CORRIGÉ : elle montre la réponse)" : "") + " =====\nÉNONCÉ :\n" + n.it.prompt + "\n\nCORRIGÉ :\n" + (n.it.solution || n.it.answer) + "\n\nFIGURE REFUSÉE :\n" + JSON.stringify(n.spec).slice(0, 5000) + "\n\nDÉFAUTS :\n- " + n.problems.join("\n- ") });
+        parts.push({ text: "\n===== index " + k + (n.sol ? " (figure du CORRIGÉ : elle montre la réponse)" : "") + " =====\nÉNONCÉ :\n" + n.it.prompt + "\n\nCORRIGÉ :\n" + (n.it.solution || n.it.answer) + "\n\nFIGURE REFUSÉE (données) :\n" + specText(n.spec) + "\n\nDÉFAUTS :\n- " + n.problems.join("\n- ") });
         if (pngs[k]) parts = parts.concat(geminiImageParts([pngs[k]]));
       });
       return Promise.race([callGemini(parts, schema, 32768, timeoutMs, { high: true }), new Promise(function (ok) { setTimeout(function () { ok(null); }, timeoutMs); })]);
-    }).then(function (d) { var by = {}; (d && d.results || []).forEach(function (r) { if (r && r.figure) by[r.index] = r.figure; }); return by; }).catch(function () { return {}; });
+    }).then(function (d) { var by = {}; (d && d.results || []).forEach(function (r) { var sp = r && exoParseFig(r.figure); if (sp) by[r.index] = sp; }); return by; }).catch(function () { return {}; });
   }
   async function exoVerifyFigures(items, rounds, deadlineMs) {
     var end = Date.now() + deadlineMs, list = [], left = function () { return Math.max(1000, end - Date.now()); };
@@ -215,15 +217,16 @@
       pending.forEach(function (n) { n.svg = exoFigureSvg(n.spec); n.problems = exoFigureFaults(n.spec, n.svg); });
       var clean = pending.filter(function (n) { return !n.problems.length; });
       if (r === 0) { clean.forEach(function (n) { var lk = n.it[n.sol ? "solLook" : "figLook"]; if (lk) { if (lk.ok) n.ok = true; else n.problems = lk.problems.length ? lk.problems : ["refusée à la relecture"]; } }); clean = clean.filter(function (n) { return !n.ok && !n.problems.length; }); }
-      var by = clean.length ? await exoLook(clean, false, Math.min(120000, left())) : {};
+      var by = clean.length ? await exoLook(clean, false, Math.min(300000, left())) : {};
       if (!by) break;
       clean.forEach(function (n, k) { var v = by[k]; if (v && v.ok && !(v.problems || []).length) n.ok = true; else n.problems = v && v.problems && v.problems.length ? v.problems : ["refusée au contrôle visuel" + (v && v.seen ? " : on y voit " + v.seen : "")]; });
       pending = pending.filter(function (n) { return !n.ok; });
       if (!pending.length || r === rounds || Date.now() >= end) break;
-      var fix = await exoRepair(pending, Math.min(120000, left())), got = 0;
+      var fix = await exoRepair(pending, Math.min(300000, left())), got = 0;
       pending.forEach(function (n, k) { if (fix[k] && fix[k].kind && fix[k].kind !== "aucune") { n.spec = fix[k]; got++; } });
       if (!got) break;
     }
+    window.EXO_FIG_LOG = list.map(function (n) { return (n.sol ? "corrigé" : "énoncé") + " " + (n.ok ? "OK" : "REFUS : " + (n.problems || []).join(" ; ")) + " ⟦" + String(n.it.prompt).slice(0, 50) + "⟧"; });
     var out = items.filter(function (it) { return !list.some(function (n) { return n.it === it && !n.sol && !n.ok; }); });
     out.forEach(function (it) {
       it.figureSvg = ""; it.solutionSvg = "";

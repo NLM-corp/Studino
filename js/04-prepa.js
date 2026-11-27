@@ -658,7 +658,7 @@
     return guides.then(function (gs) {
       genPhase(progressKey, "Création d'exercices inédits pour ta séance");
       var guide = gs.filter(Boolean).map(function (g) { return g.slice(0, 5000); }).join("\n\n");
-      var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) }], EXAM_PREP_FRESH_SCHEMA, 32768, 150000, { high: true });
+      var task = callGemini([{ text: buildExamPrepFreshPrompt(prep, dayEntry, courses, count, avoid, guide) }], EXAM_PREP_FRESH_SCHEMA, 16000, 150000, { high: true });
       var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 140000); });
       return Promise.race([task, timeout]);
     }).then(function (data) {
@@ -668,7 +668,7 @@
         if (!courses.some(exoVisual) || ok.some(function (x) { return x.figureSvg || x.solutionSvg; })) return ok;
         var co = near[0], l = co && locateCourse(co.id);
         if (!l) return ok;
-        return Promise.race([callGemini([{ text: buildExoPrompt(co, l.subject.name, l.chapter.name, "", [], 2) }], EXO_SCHEMA, 32768, 120000, { high: true }), new Promise(function (r) { setTimeout(function () { r(null); }, 120000); })]).then(function (d) {
+        return Promise.race([callGemini([{ text: buildExoPrompt(co, l.subject.name, l.chapter.name, "", [], 2) }], EXO_SCHEMA, 16000, 120000, { high: true }), new Promise(function (r) { setTimeout(function () { r(null); }, 120000); })]).then(function (d) {
           var vis = (d && d.exercises || []).map(function (x) { return exoItem(x, true); }).filter(function (x) { return x && (x.figureSpec || x.solutionSpec); });
           return exoReview(vis, 60000).then(function (r) { return exoVerifyFigures(r, 1, 120000); });
         }).then(function (vis) {

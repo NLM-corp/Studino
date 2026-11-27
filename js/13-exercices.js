@@ -7,32 +7,63 @@
     "d) CE QUI FAIT PROGRESSER : vise les erreurs que les élèves commettent vraiment, mélange des cas qui se ressemblent mais se traitent différemment, n'annonce pas quelle règle utiliser, varie les supports, augmente la difficulté.\n" +
     "d bis) NIVEAU D'UN VRAI CONTRÔLE DIFFICILE : le professeur ne fait pas de cadeau. JAMAIS d'exercice qui se résout en remplaçant directement les données dans une formule ou en appliquant une seule règle : ce n'est qu'une leçon déguisée. La grandeur ou l'idée demandée doit être au BOUT d'un raisonnement : au moins une donnée nécessaire n'est pas fournie et doit d'abord être trouvée autrement (calculée à partir d'autre chose, déduite du texte ou du document, mesurée, lue, convertie, obtenue par une autre notion du cours), et l'élève doit décider seul du chemin. Procédés à varier selon la matière : étapes cachées, raisonnement à rebours, données en trop à écarter, unités ou formes inhabituelles, informations dispersées dans le support, cas limite ou exception du cours, deux notions combinées, cas qui ressemble à un autre, conclusion à critiquer. N'annonce ni la méthode, ni la formule, ni la règle, et ne découpe pas le travail en micro-questions qui dictent le chemin : chaque question demande elle-même un vrai travail à plusieurs gestes. Pièges loyaux seulement : jamais une ambiguïté ou une devinette, et tout reste faisable avec le cours. Test : si un élève qui connaît juste la formule ou la règle trouve en une étape, complique-le.\n" +
     "d ter) ALLER PLUS LOIN QUE LA LEÇON : la leçon donne les outils, le contrôle demande de s'en servir dans une situation jamais vue. Échelle de difficulté : leçon < activité en classe (aidée par des rappels et de la méthode) < CONTRÔLE (aucun rappel, aucune méthode donnée). Vise le contrôle, et au-dessus pour les derniers exercices. Forme attendue : une situation concrète et complète, un document brut à exploiter, puis 2 à 5 questions SEULEMENT, denses et enchaînées : exploiter le document (y compris trouver soi-même ce qui permet de le lire : échelle, légende, unité, contexte, point de vue...), construire ou produire, comparer et interpréter, confronter à la théorie ou à la règle du cours (est-elle vérifiée ? avec quel écart ? pourquoi ?), puis une question finale de synthèse où l'élève réinvestit tout pour obtenir quelque chose de nouveau, sans aide. Si le cours contient des activités, exercices ou évaluations du professeur, prends-les comme niveau MINIMUM et dépasse-les, sans les recopier.\n" +
-    "e) FAISABLE : tout se résout avec le cours et les acquis des années précédentes de la même matière (que l'élève doit mobiliser seul). Nouveau = la situation, le document, l'enchaînement ; jamais une notion ou une formule d'un niveau supérieur que l'élève ne peut pas connaître. DIFFICILE NE VEUT PAS DIRE LONG : la difficulté vient de l'ANALYSE (comprendre la situation, voir le lien caché, choisir la bonne idée, éviter le piège, maîtriser la technique), jamais de la quantité. Interdits : répéter le même geste sur plusieurs cas, calculs à rallonge, énoncé bavard, questions de remplissage. Test : retire chaque question qui ne demande pas une idée nouvelle ; un élève doué et à l'aise doit finir vite, un élève qui applique sans réfléchir doit bloquer.\n" +
+    "e) FAISABLE : tout se résout avec le cours et les acquis des années précédentes de la même matière (que l'élève doit mobiliser seul). NIVEAU DE LA CLASSE : chaque notion, chaque terme technique, chaque temps, mode ou outil demandé doit figurer dans le cours fourni (ou être un acquis évident des classes précédentes). Si un mot technique de ta consigne ou de ton corrigé n'apparaît pas dans le cours, remplace-le ou retire la question. Tout est rédigé en français (aucun mot anglais comme « Sentence » ou « Step »). Nouveau = la situation, le document, l'enchaînement ; jamais une notion ou une formule d'un niveau supérieur que l'élève ne peut pas connaître. DIFFICILE NE VEUT PAS DIRE LONG : la difficulté vient de l'ANALYSE (comprendre la situation, voir le lien caché, choisir la bonne idée, éviter le piège, maîtriser la technique), jamais de la quantité. Interdits : répéter le même geste sur plusieurs cas, calculs à rallonge, énoncé bavard, questions de remplissage. Test : retire chaque question qui ne demande pas une idée nouvelle ; un élève doué et à l'aise doit finir vite, un élève qui applique sans réfléchir doit bloquer.\n" +
     "f) AUTONOMIE : l'énoncé est complet et faisable tel quel. Tout ce dont l'élève a besoin est VRAIMENT fourni (texte écrit en entier, tableau complet, figure dessinée). N'écris jamais « voir la figure » sans la fournir.\n" +
     "g) CORRIGÉ : la démarche étape par étape, pas seulement le résultat ; pour une mesure, la valeur lue, la conversion, puis un intervalle accepté ; pour une production libre, un exemple rédigé ET les critères de réussite.\n\n";
 
-  var EXO_FIGURE_RULES = "FIGURE (champ \"figure\") : OBLIGATOIRE dès que le savoir-faire travaillé s'exerce normalement sur un support visuel (à mesurer, lire, compléter, construire dessus), quelle que soit la matière. Le site la dessine lui-même exactement d'après tes coordonnées, et l'élève dispose à l'écran d'une règle graduée, d'un rapporteur et d'outils pour tracer dessus. Choisis \"kind\" :\n" +
-    "- \"aucune\" : pas de support visuel (texte, phrases, tableau Markdown...).\n" +
-    "- \"echelle\" : dessin à l'échelle où l'élève MESURE ou CONSTRUIT. Coordonnées en centimètres, origine en bas à gauche, y vers le haut, width et height en cm (16 × 11 au maximum). \"note\" donne l'échelle OU, mieux, seulement une longueur ou une grandeur réelle dans l'énoncé, pour que l'élève détermine l'échelle lui-même (note vide). N'écris AUCUNE longueur ni valeur que l'élève doit mesurer. Prévois au moins 1,5 cm entre deux points à mesurer, et assez de place libre pour ce qu'il doit tracer.\n" +
-    "- \"repere\" : axes gradués. Coordonnées dans l'unité des axes : renseigne xMin, xMax, yMin, yMax, xStep, yStep, xLabel, yLabel (avec unité), width et height en cm.\n" +
-    "- \"libre\" : schéma qui ne se mesure pas (carte, coupe, montage, organe, circuit...). Donne dans \"svg\" un SVG complet, fond blanc, sans texte superposé, sans la réponse.\n" +
-    "\"elements\" (echelle et repere) : type parmi point, croix (pointage), segment, fleche, ligne (brisée), courbe (lisse passant par les points), polygone, cercle (xs[0], ys[0], rayon r), barres (une barre par point), texte. xs et ys : listes de même longueur. label : court, sans LaTeX (M1, A, v...). color : mot anglais ou #rrggbb. dashed : pointillés. Calcule vraiment les coordonnées à partir de la situation physique, géométrique ou statistique, pour que les mesures donnent des résultats cohérents avec ton corrigé. La figure ne contient jamais la réponse.\n" +
-    "Autres types : fonction (champ expr, ex. \"0.5*x^2-3\", xs = [début, fin], ys = []) pour toute courbe qui a une équation, au lieu de points approximatifs ; angle et angle_droit (trois points, le sommet au milieu) ; codage (deux points, label 1, 2 ou 3 traits). Nomme chaque sommet important avec un élément point.\n" +
-    "CONTRÔLE : déclare dans \"checks\" TOUTES les propriétés que l'énoncé affirme ou utilise ; le site les vérifie par le calcul et refuse la figure si une seule est fausse. type parmi angle_droit (3 points, sommet au milieu), angle (idem, value en degrés), longueur (2 points, value), egal, parallele, perpendiculaire (4 points : deux segments), aligne, sur_cercle (centre puis points, value = rayon), milieu (le milieu puis les deux extrémités). points = noms des points placés. Une figure approximative est pire que pas de figure : « libre » seulement pour un schéma simple que tu sais dessiner juste et net (formes simples, traits droits, peu d'éléments, texte grand), jamais pour imiter une photo, une carte détaillée ou un organe réaliste.\n" +
+  var EXO_FIGURE_RULES = "FIGURE (champ \"figure\", et \"solutionFigure\" pour le schéma attendu dans le corrigé) : OBLIGATOIRE dès que le savoir-faire travaillé s'exerce normalement sur un support visuel (à mesurer, lire, compléter, construire dessus), quelle que soit la matière. Le site la dessine lui-même, exactement, d'après tes lignes, et l'élève a à l'écran une règle graduée, un rapporteur et des outils pour tracer dessus. Chaîne vide s'il n'y a pas de support visuel (texte, phrases, tableau Markdown).\n" +
+    "\"solutionFigure\" : écris SEULEMENT ce qu'il faut AJOUTER à la figure de l'énoncé pour montrer la réponse (vecteurs, constructions, tracés, noms), sans 1re ligne et sans répéter ce qui y est déjà : le site les superpose. Toute la construction attendue y figure (par exemple les vecteurs utilisés pour construire la différence, avec leurs noms). S'il n'y a pas de figure dans l'énoncé, écris une figure complète.\nÉcris la figure en LIGNES COURTES, une instruction par ligne, nombres décimaux simples (au plus 2 décimales, jamais de nombre à rallonge) :\n" +
+    "- 1re ligne : « echelle L H » (dessin à l'échelle où l'élève mesure ou construit : coordonnées en cm, origine en bas à gauche, y vers le haut, L ≤ 16, H ≤ 11) ou « repere L H xmin xmax xpas ymin ymax ypas » (axes gradués, coordonnées dans l'unité des axes) ou « libre » (schéma non mesurable : la ligne suivante est un SVG complet, simple et net, fond blanc).\n" +
+    "- « axes Nom de l'axe x (unité) | Nom de l'axe y (unité) » (repère), « note texte » (échelle ou précision ; pour qu'il trouve l'échelle lui-même, mets plutôt une longueur réelle dans l'énoncé), « grille » (petits carreaux).\n" +
+    "- Éléments : « point NOM x y », « croix NOM x y » (pointage), « segment NOM x1 y1 x2 y2 », « fleche NOM x1 y1 x2 y2 », « ligne NOM x1 y1 x2 y2 x3 y3… » (brisée), « courbe NOM x1 y1 x2 y2 … » (lisse), « polygone NOM x1 y1 x2 y2 x3 y3… », « cercle NOM cx cy r », « fonction NOM a b : expression en x » (ex. « fonction Cf -3 3 : 0.5*x^2-1 », pour toute courbe qui a une équation), « barres NOM x1 y1 x2 y2… », « angle NOM xA yA xB yB xC yC » (sommet B au milieu), « angle_droit - xA yA xB yB xC yC », « codage 2 x1 y1 x2 y2 » (traits d'égalité), « texte x y Le texte ». NOM court sans LaTeX (M1, A, v, F) ou « - » pour aucun. Option en fin de ligne : « couleur=red » (mot anglais ou #rrggbb), « pointilles ».\n" +
+    "- Contrôles : « verifie angle_droit B A C », « verifie angle B A C 60 », « verifie longueur A B 8 », « verifie egal A B C D », « verifie parallele A B C D », « verifie perpendiculaire A B C D », « verifie aligne A B C », « verifie sur_cercle O A B 3 » (centre, points, rayon), « verifie milieu I A B ». Déclare TOUTES les propriétés que l'énoncé affirme : le site les recalcule et refuse la figure si une seule est fausse.\n" +
+    "Exemple :\nrepere 12 8 0 1.4 0.2 0 8 1\naxes y (m) | t (s)\ncroix M0 0 0\ncroix M1 0.2 1.4\nfleche v1 0.2 1.4 0.4 2.6 couleur=red\n" +
+    "Calcule vraiment les coordonnées d'après la situation, pour que les mesures donnent les résultats de ton corrigé. La figure de l'énoncé ne contient jamais la réponse. Une figure approximative est pire que pas de figure : « libre » seulement pour un schéma simple que tu sais dessiner juste et net, jamais pour imiter une photo, une carte détaillée ou un organe réaliste.\n" +
     "SCHÉMA À PRODUIRE : quand les élèves doivent savoir faire eux-mêmes un schéma dans cette matière (tracer, compléter, légender, construire, représenter), fais-le-leur faire : donne le support à compléter dans \"figure\" ou demande-le sur papier blanc, et mets dans \"solutionFigure\" le schéma attendu, exact et complet.\n\n";
-
-  var EXO_FIGURE_SCHEMA = {
-    type: "object",
-    properties: {
-      kind: { type: "string", description: "aucune, echelle, repere ou libre" },
-      width: { type: "number" }, height: { type: "number" }, note: { type: "string" }, grid: { type: "boolean" },
-      xMin: { type: "number" }, xMax: { type: "number" }, yMin: { type: "number" }, yMax: { type: "number" }, xStep: { type: "number" }, yStep: { type: "number" }, xLabel: { type: "string" }, yLabel: { type: "string" },
-      elements: { type: "array", items: { type: "object", properties: { type: { type: "string" }, xs: { type: "array", items: { type: "number" } }, ys: { type: "array", items: { type: "number" } }, r: { type: "number" }, label: { type: "string" }, color: { type: "string" }, dashed: { type: "boolean" }, expr: { type: "string" } }, required: ["type", "xs", "ys"] } },
-      checks: { type: "array", items: { type: "object", properties: { type: { type: "string" }, points: { type: "array", items: { type: "string" } }, value: { type: "number" } }, required: ["type", "points"] } },
-      svg: { type: "string" }
-    },
-    required: ["kind"]
-  };
+  var EXO_FIGURE_SCHEMA = { type: "string", description: "Figure en lignes courtes (voir FIGURE), ou chaîne vide." };
+  function exoMergeFig(base, add) {
+    if (add && typeof add === "object") return add;
+    var txt = String(add || "").trim(); if (!txt) return null;
+    if (!base || base.kind === "libre" || /^(echelle|échelle|repere|repère|libre)\b/i.test(txt) && !base) return exoParseFig(txt);
+    var body = /^(echelle|échelle|repere|repère)\b/i.test(txt) ? txt.split("\n").slice(1).join("\n") : txt;
+    var extra = exoParseFig((base.kind === "repere" ? "repere 10 10 0 1 1 0 1 1" : "echelle 10 10") + "\n" + body); if (!extra) return null;
+    var out = JSON.parse(JSON.stringify(base)), same = function (a, b) { return a.type === b.type && String(a.label || "") === String(b.label || "") && JSON.stringify(a.xs) === JSON.stringify(b.xs) && JSON.stringify(a.ys) === JSON.stringify(b.ys); };
+    extra.elements.forEach(function (e) {
+      var named = (e.type === "point" || e.type === "croix") && e.label && out.elements.some(function (o) { return (o.type === "point" || o.type === "croix") && o.label === e.label; });
+      if (!named && !out.elements.some(function (o) { return same(o, e); })) out.elements.push(e);
+    });
+    out.checks = (out.checks || []).concat(extra.checks || []); if (extra.bad) out.bad = (out.bad || []).concat(extra.bad);
+    return out;
+  }
+  function exoParseFig(src) {
+    if (src && typeof src === "object") return src;
+    var lines = String(src || "").replace(/\r/g, "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
+    if (!lines.length) return null;
+    var num = function (t) { var v = parseFloat(String(t).replace(",", ".")); return isFinite(v) && Math.abs(v) < 1e6 && String(t).replace(/[^0-9]/g, "").length < 12 ? v : NaN; };
+    var head = lines[0].split(/\s+/), kind = head[0].toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""), f = { kind: kind, elements: [], checks: [] };
+    if (/^aucun/.test(kind)) return null;
+    if (kind === "libre") { var svg = lines.slice(1).join("\n"); return /<svg/i.test(svg) ? { kind: "libre", svg: svg } : null; }
+    if (kind === "echelle") { f.width = num(head[1]); f.height = num(head[2]); }
+    else if (kind === "repere") { f.width = num(head[1]); f.height = num(head[2]); f.xMin = num(head[3]); f.xMax = num(head[4]); f.xStep = num(head[5]); f.yMin = num(head[6]); f.yMax = num(head[7]); f.yStep = num(head[8]); }
+    else return null;
+    lines.slice(1).forEach(function (l) {
+      var low = l.toLowerCase(), w = l.split(/\s+/), cmd = w[0].toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[ée]/g, "e");
+      if (cmd === "axes") { var ax = l.slice(4).split("|"); f.xLabel = (ax[0] || "").trim(); f.yLabel = (ax[1] || "").trim(); return; }
+      if (cmd === "note") { f.note = l.slice(4).trim(); return; }
+      if (cmd === "grille") { f.grid = true; return; }
+      if (cmd === "verifie") { var pts = w.slice(2).filter(function (t) { return isNaN(num(t)); }), val = w.slice(2).map(num).filter(function (v) { return isFinite(v); }); f.checks.push({ type: (w[1] || "").toLowerCase(), points: pts, value: val.length ? val[val.length - 1] : undefined }); return; }
+      var color = "", dashed = /\bpointill/i.test(low), rest = w.slice(1).filter(function (t) { var m = /^couleur=(\S+)/i.exec(t); if (m) { color = m[1]; return false; } return !/^pointill/i.test(t); });
+      if (cmd === "texte") { f.elements.push({ type: "texte", xs: [num(rest[0])], ys: [num(rest[1])], label: rest.slice(2).join(" "), color: color }); return; }
+      if (cmd === "codage") { var cn = rest.slice(1).map(num); f.elements.push({ type: "codage", label: rest[0], xs: [cn[0], cn[2]], ys: [cn[1], cn[3]], color: color }); return; }
+      if (cmd === "fonction") { var colon = l.indexOf(":"); if (colon < 0) return; var pre = l.slice(0, colon).split(/\s+/).slice(1); f.elements.push({ type: "fonction", label: pre[0] === "-" ? "" : pre[0], xs: [num(pre[1]), num(pre[2])], ys: [], expr: l.slice(colon + 1).replace(/couleur=\S+|pointill\S*/gi, "").trim(), color: color, dashed: dashed }); return; }
+      var label = rest[0] === "-" ? "" : rest[0], ns = rest.slice(1).map(num), ok = ns.every(function (v) { return isFinite(v); });
+      if (!ok || !ns.length) { f.bad = (f.bad || []).concat([l]); return; }
+      if (cmd === "cercle") { f.elements.push({ type: "cercle", label: label, xs: [ns[0]], ys: [ns[1]], r: ns[2], color: color, dashed: dashed }); return; }
+      var xs = [], ys = []; for (var i = 0; i + 1 < ns.length; i += 2) { xs.push(ns[i]); ys.push(ns[i + 1]); }
+      f.elements.push({ type: cmd, label: label, xs: xs, ys: ys, color: color, dashed: dashed });
+    });
+    return f;
+  }
   var EXO_SCHEMA = {
     type: "object",
     properties: {
@@ -46,7 +77,7 @@
         solution: { type: "string", description: "Corrigé complet, question par question, une étape par ligne." }
       }, required: ["skill", "prompt", "figure", "solution"] } },
       applications: { type: "array", items: { type: "object", properties: {
-        prompt: { type: "string", description: "Entraînement court (2 à 4 minutes) mais pas direct : au moins deux étapes, dont une donnée à trouver soi-même, support compris." },
+        prompt: { type: "string", description: "Entraînement court (2 à 4 minutes) : UNE seule question (deux au maximum), pas directe : au moins deux gestes, dont une donnée à trouver soi-même, support compris." },
         figure: EXO_FIGURE_SCHEMA,
         answer: { type: "string" },
         explanation: { type: "string", description: "La démarche, et l'erreur fréquente à éviter." }
@@ -163,7 +194,7 @@
       COURSE_LANGUAGE_RULE + exoGuideText(guide) + EXO_RULES + EXO_FIGURE_RULES +
       (onlyVisual ? "PASSE SPÉCIALE SCHÉMAS : il manque des exercices avec support visuel. Produis " + onlyVisual + " exercices, TOUS avec une \"figure\" (kind différent de « aucune ») indispensable pour répondre, dont au moins un où l'élève produit ou complète lui-même un schéma, et un tableau \"applications\" vide. Ignore les quantités ci-dessous.\n" : exoVisual(course) ? "Ce chapitre utilise des supports visuels : au moins LA MOITIÉ des exercices et des applications ont une figure indispensable pour répondre, et au moins un exercice fait produire ou compléter un schéma.\n" : "") +
       (avoid && avoid.length ? "Exercices déjà donnés, à ne pas refaire même reformulés :\n- " + avoid.join("\n- ") + "\n\n" : "") +
-      "À produire : \"skills\", \"visuals\", puis 5 à 7 \"exercises\" (8 à 15 minutes chacun pour un élève à l'aise, courts mais exigeants, supports et gestes différents ; le premier est déjà du niveau d'un contrôle, les deux derniers du niveau le plus dur qu'un professeur exigeant puisse donner), puis 8 à 12 \"applications\" courtes qui visent chacune un geste précis, en au moins deux étapes, avec leur support. Chaque savoir-faire important est travaillé plusieurs fois, sur des supports différents.\n" +
+      "À produire : \"skills\", \"visuals\", puis 4 \"exercises\" (8 à 15 minutes chacun pour un élève à l'aise, courts mais exigeants, supports et gestes différents ; le premier est déjà du niveau d'un contrôle, les deux derniers du niveau le plus dur qu'un professeur exigeant puisse donner), puis 6 \"applications\" courtes qui visent chacune un geste précis, en au moins deux étapes, avec leur support. Chaque savoir-faire important est travaillé plusieurs fois, sur des supports différents.\n" +
       "Mise en page : Markdown, un texte ou corpus à étudier en bloc de citation (« > » à chaque ligne), une question par ligne numérotée. Formules en LaTeX entre $...$, jamais de commande de couleur.\n\n" +
       COURSE_POSED_OPERATION_RULE + DRAWING_QUESTION_RULE +
       "DOCUMENT PRINCIPAL « " + course.title + " » — nature probable : " + EXO_ROLES[exoRole(course.title)].label + "\n\n" + stripFigureMarkdown(course.transcription || "") + "\n\n" + exoDocsText(course) +
@@ -183,7 +214,7 @@
     var specSvg = function (sp) { return sp ? exoFigureSvg(sp) : ""; };
     return Promise.all(items.map(function (it) { return Promise.all([svgToPng(specSvg(it.figureSpec) || it.figureSvg || ""), svgToPng(specSvg(it.solutionSpec))]); })).then(function (pngs) {
       var parts = [{ text: "Tu es un professeur relecteur très exigeant. Fais chaque exercice ci-dessous toi-même, comme l'élève, uniquement avec ce qui lui est fourni, puis compare à son corrigé.\n\n" + EXO_RULES +
-        "Pour chaque exercice :\n- \"rejette\" s'il est infaisable, s'il se résout en recopiant la leçon.\n- \"corrige\" aussi s'il se résout en une seule étape (formule ou règle appliquée directement) : complique l'énoncé selon les règles d bis et d ter et refais le corrigé ; si la figure ne le permet pas, \"rejette\".\n" +
+        "Pour chaque exercice :\n- \"rejette\" s'il est infaisable, s'il se résout en recopiant la leçon.\n- \"corrige\" (en retirant ou remplaçant) toute question qui utilise une notion, un terme technique, un temps ou un outil ABSENT du cours ou au-dessus du niveau de la classe, et tout mot qui n'est pas en français.\n- \"corrige\" aussi s'il se résout en une seule étape (formule ou règle appliquée directement), Y COMPRIS pour une application courte (elle doit demander au moins deux gestes, dont une donnée à obtenir soi-même : une mesure, une conversion, une lecture, une étape intermédiaire) : complique l'énoncé selon les règles d bis et d ter et refais le corrigé ; si la figure ne le permet pas, \"rejette\".\n" +
         "- \"corrige\" si le corrigé est faux ou incomplet, si l'énoncé donne ce que l'élève devrait obtenir lui-même, ou s'il manque une donnée : réécris alors en entier l'énoncé et/ou le corrigé. Pour une mesure sur figure, sers-toi des valeurs EXACTES listées (calculées par le site), pas d'une estimation à l'œil. Les figures sont jugées à part (champs figure...) : ne rejette pas un exercice à cause d'un défaut de dessin, il sera redessiné. Tu ne peux pas modifier la figure : l'énoncé corrigé doit rester compatible avec elle.\n- \"ok\" sinon, avec prompt et solution vides.\n\nLes corrigés et énoncés restent en Markdown, formules en LaTeX entre $...$, dans la langue de l'exercice." }];
       parts.push({ text: "\nFIGURES : pour chaque figure (énoncé ou corrigé), décris-la d'abord dans figureSeen sans regarder l'énoncé, puis juge-la avec la plus grande sévérité : objets de la bonne nature et au bon endroit (un triangle a 3 côtés, un angle droit est droit...), conforme à l'énoncé mot par mot, rien en trop, traits nets et propres, rien de superposé ou coupé, conventions de la discipline respectées, l'élève peut faire tout ce qu'on lui demande avec, et la figure de l'énoncé ne donne pas la réponse. Au moindre doute : false, avec les défauts précis.\n" + exoLookPrompt(false).split("\n").slice(-1)[0] });
       items.forEach(function (it, k) {
@@ -210,6 +241,9 @@
   }
   function exoItem(x, withSolution) {
     if (!x || !String(x.prompt || "").trim()) return null;
+    var solSrc = x.solutionFigure;
+    x.figure = exoParseFig(x.figure);
+    x.solutionFigure = exoMergeFig(x.figure, solSrc);
     var has = function (f) { return f && f.kind && f.kind !== "aucune"; };
     var it = { id: uid(), prompt: x.prompt, figureSvg: "", solutionSvg: "", geo: exoGeometry(x.figure) };
     if (has(x.figure)) { it.figureSpec = x.figure; it.figureSvg = exoFigureSvg(x.figure); }
@@ -228,15 +262,15 @@
     var refresh = function () { var p = parseHash(); if (p[0] === "course" && p[1] === course.id) render(); };
     if (manual) refresh();
     var avoid = (course.exercises || []).filter(function (x) { return x.v === 2; }).map(function (x) { return String(x.prompt).replace(/\s+/g, " ").slice(0, 140); }).slice(-25);
-    var make = function (guide, imgs, onlyVisual) { return callGemini([{ text: buildExoPrompt(course, subjectName, chapterName, guide, avoid, onlyVisual) }].concat(imgs), EXO_SCHEMA, 65536, 240000, { high: true }); };
+    var make = function (guide, imgs, onlyVisual) { return callGemini([{ text: buildExoPrompt(course, subjectName, chapterName, guide, avoid, onlyVisual) }].concat(imgs), EXO_SCHEMA, 24000, 200000, { high: true }); };
     return exoGuide(course, subjectName, chapterName).then(function (guide) {
       return exoDocImages(course).then(function (imgs) {
         return make(guide, imgs, 0).then(function (data) {
           var items = function (d, k, sol) { return (d[k] || []).map(function (x) { return exoItem(x, sol); }).filter(Boolean); };
-          var check = function (l, ms) { return exoReview(l, ms).then(function (ok) { return exoVerifyFigures(ok, 1, 400000); }); };
+          var check = function (l, ms) { return exoReview(l, ms).then(function (ok) { return exoVerifyFigures(ok, 1, 700000); }); };
           var visual = (data.visuals || []).length > 0 || exoVisual(course);
           var allEx = items(data, "exercises", true), allApps = items(data, "applications", false);
-          return check(allEx.concat(allApps), 180000).then(function (all) {
+          return check(allEx.concat(allApps), 330000).then(function (all) {
             var exs = all.filter(function (x) { return x.solution != null; }), apps = all.filter(function (x) { return x.solution == null; });
             var need = visual ? Math.max(2, Math.ceil(exs.length / 2)) - exs.filter(function (x) { return x.figureSvg || x.solutionSvg; }).length : 0;
             if (need <= 0) return { exs: exs, apps: apps };

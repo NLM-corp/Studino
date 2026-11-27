@@ -279,11 +279,13 @@
           OTHER: "Gemini a refusé de répondre pour une raison non précisée"
         };
         var reasonMsg = reason && reasonLabels[reason];
+        if (reason === "MAX_TOKENS") reasonMsg = "la réponse était trop longue et a été coupée";
         var emptyErr = new Error(reasonMsg ? "Génération refusée par Gemini : " + reasonMsg + "." : "Réponse vide de l'API.");
         emptyErr.status = res.status;
         emptyErr.detail = "Modèle : " + modelName + "\n\n" + JSON.stringify(data, null, 2);
         return { ok: false, err: emptyErr, retryable: true, recitation: reason === "RECITATION" };
       }
+      if (cand.finishReason === "MAX_TOKENS") { var cutErr = new Error("Réponse coupée (trop longue) de " + modelName + "."); cutErr.status = res.status; return { ok: false, err: cutErr, retryable: true, recitation: false }; }
       var rawTxt = candParts.map(function (p) { return p.thought ? "" : (p.text || ""); }).join(""), parsed = null;
       try { parsed = JSON.parse(rawTxt); } catch (e1) { var mj = /{[sS]*}/.exec(rawTxt.replace(/^```(?:json)?|```$/gm, "")); try { parsed = mj ? JSON.parse(mj[0]) : null; } catch (e2) { parsed = null; } }
       if (!parsed || typeof parsed !== "object") { var badErr = new Error("Réponse illisible de " + modelName + "."); badErr.status = res.status; badErr.detail = rawTxt.slice(0, 2000); return { ok: false, err: badErr, retryable: true, recitation: false }; }

@@ -1140,7 +1140,19 @@
       var finalizeLaunch = function (finalPool) {
         epStartingSessionFor = prepId + "::" + date;
         render();
-        addFreshExercises(prep, dayEntry, finalPool, prepId + "::" + date, plan.fresh).then(finalizeLaunchBase);
+        var started = false, freshP = addFreshExercises(prep, dayEntry, finalPool.slice(), prepId + "::" + date, plan.fresh);
+        var go = function (pool2) { if (started) return; started = true; finalizeLaunchBase(pool2); };
+        freshP.then(function (fresh) {
+          if (!started) { go(fresh); return; }
+          var s = epSession; if (!s || s.prepId !== prepId || s.date !== date || s.done) return;
+          var news = fresh.filter(function (it) { return it.fresh && !s.pool.some(function (p) { return p.id === it.id; }); });
+          if (!news.length) return;
+          for (var i = s.pool.length - 1; i > s.idx && news.length; i--) if (s.pool[i].kind === "exercise" && !s.pool[i].fresh) s.pool[i] = news.shift();
+          s.pool = s.pool.concat(news.slice(0, Math.max(0, plan.fresh - s.pool.filter(function (p) { return p.fresh; }).length)));
+          epSaveActiveSession(s);
+          toast("✨ Nouveaux exercices ajoutés à ta séance");
+        });
+        setTimeout(function () { go(finalPool); }, 4000);
       };
       prep.itemUseCount = prep.itemUseCount || {};
       // Un item déjà rencontré lors d'une séance précédente de cette même prépa est réécrit (valeurs et
